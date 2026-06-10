@@ -1,0 +1,132 @@
+/* ─── DasCNC Design System ─────────────────────────────────── */
+
+:root {
+  /* Brand */
+  --brand-50:  #EEF2FF;
+  --brand-100: #C7D2FE;
+  --brand-200: #A5B4FC;
+  --brand-400: #6366F1;
+  --brand-500: #4F46E5;
+  --brand-600: #3730A3;
+  --brand-700: #2D2776;
+  --brand-900: #1A1650;
+
+  /* Surfaces */
+  --bg-page:    #0F0F12;
+  --bg-surface: #17171C;
+  --bg-raised:  #1E1E26;
+  --bg-overlay: #252530;
+  --bg-hover:   #2A2A36;
+
+  /* Borders */
+  --border-subtle:   rgba(255,255,255,0.06);
+  --border-default:  rgba(255,255,255,0.10);
+  --border-strong:   rgba(255,255,255,0.18);
+  --border-brand:    rgba(99,102,241,0.5);
+
+  /* Text */
+  --text-primary:   #F0F0F5;
+  --text-secondary: #A0A0B0;
+  --text-tertiary:  #606070;
+  --text-brand:     #818CF8;
+
+  /* Status colors */
+  --green-bg:   rgba(16,185,129,0.12);
+  --green-text: #34D399;
+  --green-dot:  #10B981;
+
+  --amber-bg:   rgba(245,158,11,0.12);
+  --amber-text: #FCD34D;
+  --amber-dot:  #F59E0B;
+
+  --red-bg:     rgba(239,68,68,0.12);
+  --red-text:   #F87171;
+  --red-dot:    #EF4444;
+
+  --blue-bg:    rgba(99,102,241,0.12);
+  --blue-text:  #A5B4FC;
+  --blue-dot:   #6366F1;
+
+  --purple-bg:  rgba(168,85,247,0.12);
+  --purple-text:#C084FC;
+
+  /* Layout */
+  --sidebar-w: 220px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  /* Typography */
+  --font-display: 'Sora', sans-serif;
+  --font-body:    'DM Sans', sans-serif;
+  --font-mono:    'DM Mono', monospace;
+}
+
+/* ─── Reset ──────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #root { height: 100%; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Scrollbars ─────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 99px; }
+
+/* ─── Inputs & Buttons (base reset) ─────────────────────── */
+input, select, button, textarea {
+  font-family: var(--font-body);
+  font-size: 13px;
+  outline: none;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+button { cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+
+/* ─── Utility: Animations ────────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(0.8); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.fade-up {
+  animation: fadeUp 0.4s ease both;
+}
+
+/* ─── Skeleton loader ────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-raised) 25%,
+    var(--bg-overlay) 50%,
+    var(--bg-raised) 75%
+  );
+  background-size: 400px 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: var(--radius-sm);
+}
