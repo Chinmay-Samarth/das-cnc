@@ -700,6 +700,42 @@ button:hover:not(:disabled) {
   font-weight: 700;
 }
 
+.status-chip.absent {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+
+.status-chip.late {
+  background: #fef3c7;
+  border-color: #fcd34d;
+  color: #b45309;
+}
+
+.status-chip.present {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #16a34a;
+}
+
+.status-chip.completed {
+  background: #dbeafe;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.employee-detail-grid{
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px 0px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fbff;
+  padding: 14px;
+  margin-top: 14px;
+
+}
+
 .employee-status-chip {
   display: inline-flex;
   align-items: center;
@@ -770,6 +806,10 @@ button:hover:not(:disabled) {
 
 .employees-table tr:hover td {
   background: #f8fbff;
+}
+
+.employee-details-attendance{
+  margin-top: 14px;
 }
 
 .sort-indicator {
@@ -1711,6 +1751,36 @@ textarea {
   max-width: 1100px;
 }
 
+.master-section-remove{
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 10px;
+  background: #e2e8f0;
+  color: #0f172a;
+  font-size: 22px;
+  line-height: 1;
+  background-color: #bd2d12;
+  align-self: center;
+}
+
+.master-section-card-header{
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 14px;
+}
+
+.master-section-name{
+  flex: 2;
+  margin-bottom: 0;
+}
+
+.master-section-list{
+  margin-top: 14px;
+  margin-bottom: 14px;
+}
+
 .master-builder-header {
   display: flex;
   justify-content: space-between;
@@ -2032,6 +2102,13 @@ textarea {
   min-width: 0;
 }
 
+.record-section-block{
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fbff;
+  padding: 12px 14px;
+}
+
 .record-drawer-name-input {
   font-size: 1.25rem;
   font-weight: 700;
@@ -2148,6 +2225,42 @@ textarea {
 }
 .master-field-remove:hover:not(:disabled){
   background-color: #991b1b;
+}
+
+.section-table{
+  background: #f8fbff; /* slate-100 */
+  border: 1px solid #cbd5e1; /* slate-300 */
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.section-table th{
+  text-align: center;
+  font-size: 1.1rem;
+  font-weight: 500;
+  padding: 12px 16px;
+  border-bottom: 1px solid #cbd5e1;
+  text-transform: uppercase;
+  color: #77748b;
+}
+
+.section-table td{
+  padding: 12px 16px;
+  text-align: center;
+}
+
+
+.section-table tbody tr:not(:last-child) {
+  border-bottom: 1px solid #cbd5e1;
+}
+
+.section-table tbody tr:hover {
+  background: #e2e8f0;
+}
+
+.page-shell{
+  padding: 14px;
 }
 
 @media (max-width: 900px) {

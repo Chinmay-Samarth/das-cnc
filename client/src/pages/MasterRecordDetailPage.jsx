@@ -3,12 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { formatDate } from '../components/MasterBuilder/utils';
 import RecordDrawer from '../components/MasterRecord/RecordDrawer';
-import {
-  formatRecordFieldValue,
-  formatRuleCondition,
-  getRecordValueRow,
-  loadRelatedRecordNames,
-} from '../components/MasterRecord/displayUtils';
+import { formatRecordFieldValue, formatRuleCondition, getRecordValueRow, loadRelatedRecordNames,} from '../components/MasterRecord/displayUtils';
 
 function DetailField({ label, value }) {
   return (
@@ -35,6 +30,80 @@ function FieldValueDisplay({ field, record, relatedRecordNames }) {
   return <DetailField label={field.label || field.field_key} value={formatted.text} />;
 }
 
+function SectionValueCell({ field, rowValue, relatedRecordNames }) {
+  if (!rowValue) return '—';
+
+  const formatted = formatRecordFieldValue(field, rowValue, relatedRecordNames);
+
+  if (formatted.kind === 'image') {
+    return formatted.url ? (
+      <img src={formatted.url} alt={formatted.alt} className="category-thumb" />
+    ) : (
+      '—'
+    );
+  }
+
+  return formatted.text;
+}
+
+function SectionDisplay({ section, record, relatedRecordNames }) {
+  const fields = useMemo(
+    () => [...(section.master_section_fields || [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)),
+    [section.master_section_fields]
+  );
+
+  const rows = useMemo(() => {
+    const sectionRows = record?.record_section_rows || [];
+    return sectionRows.filter((item) => item.section_id === section.id) || [];
+  }, [record?.record_section_rows, section.id]);
+
+
+  if (rows.length === 0) {
+    return (
+      <div className="component-detail-card">
+        <h3>{section.name}</h3>
+        <p className="muted">No rows added.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="component-detail-card">
+      <h3>{section.name}</h3>
+      {section.description ? <p className="muted">{section.description}</p> : null}
+      <div className="record-section-table-wrap m">
+        <table className="record-section-table section-table">
+          <thead className=''>
+            <tr>
+              {fields.map((field) => (
+                <th className="" key={field.id}>
+                  {field.label || field.field_key}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id} className=''>
+                {fields.map((field) => {
+                  const cellValue = row.record_section_values?.find(
+                    (item) => item.section_field_id === field.id
+                  );
+                  return (
+                    <td key={field.id} className=''>
+                      <SectionValueCell field={field} rowValue={cellValue} relatedRecordNames={relatedRecordNames} />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function MasterRecordDetailPage() {
   const { masterId, recordId } = useParams();
   const navigate = useNavigate();
@@ -48,6 +117,10 @@ export default function MasterRecordDetailPage() {
 
   const fields = useMemo(
     () => [...(master?.master_fields || [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)),
+    [master]
+  );
+  const sections = useMemo(
+    () => [...(master?.master_sections || [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)),
     [master]
   );
   const rules = master?.master_rules || [];
@@ -163,6 +236,29 @@ export default function MasterRecordDetailPage() {
                 </div>
               )}
             </section>
+
+            {/* Sections  */}
+
+            <section className="component-detail-section">
+              <h2>Sections</h2>
+              <p>{}</p>
+              {sections.length === 0 ? (
+                <p className="muted">No sections configured for this master.</p>
+              ) : (
+                <div className="component-detail-stack">
+                  {sections.map((section) => (
+                    <SectionDisplay
+                      key={section.id}
+                      section={section}
+                      record={record}
+                      relatedRecordNames={relatedRecordNames}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {/* end */}
 
             <section className="component-detail-section">
               <h2>Additional Fields</h2>

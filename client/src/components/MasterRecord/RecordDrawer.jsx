@@ -4,9 +4,11 @@ import { newKey } from '../MasterBuilder/utils';
 import CategoriesTab from './CategoriesTab';
 import FieldsTab, { hasBlockingRules } from './FieldsTab';
 import RuleOverridesTab from './RuleOverridesTab';
+import SectionsTab from './SectionsTab';
 
 const TABS = [
   { id: 'fields', label: 'Fields' },
+  { id: 'sections', label: 'Sections' },
   { id: 'categories', label: 'Extra Fields' },
   { id: 'overrides', label: 'Rule Overrides' },
 ];
@@ -41,6 +43,50 @@ function overridesFromRecord(recordOverrides) {
   return map;
 }
 
+function sectionRowsFromRecord(recordSectionRows) {
+  const map = {};
+  (recordSectionRows || []).forEach((row) => {
+    const sectionId = row.section_id;
+    if (!map[sectionId]) map[sectionId] = [];
+
+    const values = {};
+    (row.record_section_values || []).forEach((item) => {
+      values[item.section_field_id] = {
+        value: item.value ?? '',
+        image_url: item.image_url || '',
+        related_record_id: item.related_record_id || null,
+      };
+    });
+
+    map[sectionId].push({
+      _key: newKey(),
+      sort_order: row.sort_order ?? map[sectionId].length,
+      values,
+    });
+  });
+
+  Object.keys(map).forEach((sectionId) => {
+    map[sectionId].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  });
+
+  return map;
+}
+
+function sectionsToPayload(sectionRows) {
+  return Object.entries(sectionRows).flatMap(([sectionId, rows]) =>
+    rows.map(({ _key, sort_order, values }) => ({
+      section_id: sectionId,
+      sort_order,
+      values: Object.entries(values).map(([sectionFieldId, value]) => ({
+        section_field_id: sectionFieldId,
+        value: value.value ?? null,
+        image_url: value.image_url || null,
+        related_record_id: value.related_record_id || null,
+      })),
+    }))
+  );
+}
+
 export default function RecordDrawer({ masterId, master, recordId, onClose, onSaved }) {
   const isNew = !recordId;
   const fields = useMemo(
@@ -48,6 +94,7 @@ export default function RecordDrawer({ masterId, master, recordId, onClose, onSa
     [master.master_fields]
   );
   const rules = master.master_rules || [];
+  const masterSections = master.master_sections || [];
 
   const [activeTab, setActiveTab] = useState('fields');
   const [loading, setLoading] = useState(!isNew);
@@ -58,12 +105,15 @@ export default function RecordDrawer({ masterId, master, recordId, onClose, onSa
   const [code, setCode] = useState('');
   const [values, setValues] = useState({});
   const [categories, setCategories] = useState([]);
+  const [sectionRows, setSectionRows] = useState({});
   const [overrides, setOverrides] = useState({});
 
   const [categoryUploadErrors, setCategoryUploadErrors] = useState({});
   const [uploadingCategories, setUploadingCategories] = useState({});
   const [fieldUploadErrors, setFieldUploadErrors] = useState({});
   const [uploadingFields, setUploadingFields] = useState({});
+  const [sectionUploadErrors, setSectionUploadErrors] = useState({});
+  const [uploadingSections, setUploadingSections] = useState({});
 
   useEffect(() => {
     if (!recordId) {
@@ -71,11 +121,14 @@ export default function RecordDrawer({ masterId, master, recordId, onClose, onSa
       setCode('');
       setValues({});
       setCategories([]);
+      setSectionRows({});
       setOverrides({});
       setCategoryUploadErrors({});
       setUploadingCategories({});
       setFieldUploadErrors({});
       setUploadingFields({});
+      setSectionUploadErrors({});
+      setUploadingSections({});
       setLoading(false);
       return undefined;
     }
@@ -94,6 +147,7 @@ export default function RecordDrawer({ masterId, master, recordId, onClose, onSa
         setCode(record.code || '');
         setValues(valuesFromRecord(record.record_values));
         setCategories((record.record_categories || []).map((item) => ({ ...item, _key: newKey() })));
+        setSectionRows(sectionRowsFromRecord(record.record_section_rows));
         setOverrides(overridesFromRecord(record.record_rule_overrides));
       } catch (err) {
         console.error('Failed to load record:', err);
@@ -138,6 +192,29 @@ export default function RecordDrawer({ masterId, master, recordId, onClose, onSa
       }));
     } finally {
       setUploadingCategories((current) => ({ ...current, [itemKey]: false }));
+    }
+  }
+
+  async function handleSectionImageUpload(cellKey, file, onSuccess) {
+    if (!file) return;
+
+    try {
+      setUploadingSections((current) => ({ ...current, [cellKey]: true }));
+      setSectionUploadErrors((current) => ({ ...current, [cellKey]: '' }));
+      const formData = new FormData();
+      formData.append('file', file);
+      const { data } = await api.post('/masters/upload/section-image', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      onSuccess(data.url, data.fileName);
+    } catch (err) {
+      console.error('Section image upload failed:', err);
+      setSectionUploadErrors((current) => ({
+        ...current,
+        [cellKey]: err.response?.data?.error || 'Unable to upload image.',
+      }));
+    } finally {
+      setUploadingSections((current) => ({ ...current, [cellKey]: false }));
     }
   }
 
@@ -224,6 +301,7 @@ export default function RecordDrawer({ masterId, master, recordId, onClose, onSa
 
       await Promise.all([
         api.put(`/masters/${masterId}/records/${savedRecordId}/values`, valuesPayload),
+        api.put(`/masters/${masterId}/records/${savedRecordId}/sections`, sectionsToPayload(sectionRows)),
         api.put(`/masters/${masterId}/records/${savedRecordId}/categories`, categoriesPayload),
         api.put(`/masters/${masterId}/records/${savedRecordId}/overrides`, overridesPayload),
       ]);
@@ -305,6 +383,17 @@ export default function RecordDrawer({ masterId, master, recordId, onClose, onSa
                   onImageUpload={handleFieldImageUpload}
                   uploadErrors={fieldUploadErrors}
                   uploadingFields={uploadingFields}
+                />
+              ) : null}
+              {activeTab === 'sections' ? (
+                <SectionsTab
+                  masterSections={masterSections}
+                  sectionRows={sectionRows}
+                  setSectionRows={setSectionRows}
+                  saving={saving}
+                  onImageUpload={handleSectionImageUpload}
+                  uploadErrors={sectionUploadErrors}
+                  uploadingCells={uploadingSections}
                 />
               ) : null}
               {activeTab === 'categories' ? (

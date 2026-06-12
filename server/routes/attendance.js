@@ -574,4 +574,67 @@ router.get(
   }
 );
 
+// ─────────────────────────────────────────────
+// GET /api/attendance/employee/:id/recent
+// ─────────────────────────────────────────────
+router.get(
+  '/employee/:id/recent',
+  verifyEmployeeAuth,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const to = new Date().toISOString().slice(0, 10);
+      const from = new Date(Date.now() - 1 * 86400000)
+        .toISOString()
+        .slice(0, 10);
+
+      const {
+        data: rows,
+        error
+      } = await supabase
+        .from('attendance_records')
+        .select(`
+          shift_date,
+          status,
+          punched_in_at,
+          punched_out_at,
+          minutes_worked,
+          overtime_minutes,
+          supervisor_note,
+          shifts(name)
+        `)
+        .eq('employee_id', id)
+        .gte('shift_date', from)
+        .lte('shift_date', to)
+        .order('shift_date', { ascending: false });
+
+      if (error) throw error;
+
+      const formatted = rows.map((r) => ({
+        shift_date: r.shift_date,
+        shift: r.shifts?.name || null,
+        status: r.status,
+        punched_in_at: toIST(r.punched_in_at),
+        punched_out_at: toIST(r.punched_out_at),
+        minutes_worked: r.minutes_worked,
+        overtime_minutes: r.overtime_minutes,
+        supervisor_note: r.supervisor_note,
+      }));
+
+      return res.json({
+        employee_id: id,
+        from,
+        to,
+        records: formatted,
+      });
+    } catch (err) {
+      console.error('Recent employee attendance error:', err);
+      return res.status(500).json({
+        error: 'Internal server error',
+        message: err.message,
+      });
+    }
+  }
+);
+
 module.exports = router;

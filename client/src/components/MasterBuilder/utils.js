@@ -159,6 +159,62 @@ export function compareFields(fields) {
   return fields.filter((field) => field.type === 'number' || field.type === 'date');
 }
 
+export function emptySection(sortOrder = 0) {
+  return {
+    _key: newKey(),
+    id: null,
+    name: '',
+    description: '',
+    sort_order: sortOrder,
+    fields: [],
+  };
+}
+
+export function mapSectionFieldFromServer(field) {
+  return {
+    _key: field.id || newKey(),
+    _keyManual: true,
+    id: field.id,
+    label: field.label || '',
+    field_key: field.field_key || '',
+    type: field.type || 'text',
+    required: Boolean(field.required),
+    options: Array.isArray(field.options) ? field.options : [],
+    related_master_id: field.related_master_id || null,
+    sort_order: field.sort_order ?? 0,
+  };
+}
+
+export function mapSectionFromServer(section) {
+  return {
+    _key: section.id || newKey(),
+    id: section.id,
+    name: section.name || '',
+    description: section.description || '',
+    sort_order: section.sort_order ?? 0,
+    fields: (section.master_section_fields || [])
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+      .map(mapSectionFieldFromServer),
+  };
+}
+
+export function sectionsToPayload(sections) {
+  return sections.map((section, sectionIndex) => ({
+    name: section.name || null,
+    description: section.description || null,
+    sort_order: section.sort_order ?? sectionIndex,
+    fields: (section.fields || []).map((field, fieldIndex) => ({
+      label: field.label || null,
+      field_key: field.field_key || null,
+      type: field.type || 'text',
+      required: Boolean(field.required),
+      options: field.type === 'select' ? field.options : null,
+      related_master_id: field.type === 'relation' ? field.related_master_id || null : null,
+      sort_order: field.sort_order ?? fieldIndex,
+    })),
+  }));
+}
+
 function evaluateOperator(lhs, operator, rhs) {
   switch (operator) {
     case '<':

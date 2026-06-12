@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import api from '../api/client';
+import { toDisplayTime } from '../attendance/useDailyAttendance';
 
 const PLACEHOLDER_AVATAR = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect fill="%23E5E7EB" width="100%25" height="100%25"/><text x="50%25" y="54%25" dominant-baseline="middle" text-anchor="middle" font-size="48" fill="%23717A83" font-family="system-ui, sans-serif">?</text></svg>';
 
@@ -21,10 +22,29 @@ export default function EmployeeDetailsPage() {
     is_active: 'true',
   });
   const [photo, setPhoto] = useState(null);
+  const [attendanceRecords, setAttendanceRecords] = useState([]);
+  const [attendanceLoading, setAttendanceLoading] = useState(true);
+  const [attendanceError, setAttendanceError] = useState(null);
   const [tab, setTab] = useState('details');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+
+  const getStatusChipClass = (status) => {
+    const normalized = String(status || '').toUpperCase();
+    switch (normalized) {
+      case 'ABSENT':
+        return 'absent';
+      case 'LATE':
+        return 'late';
+      case 'PRESENT':
+        return 'present';
+      case 'COMPLETED':
+        return 'completed';
+      default:
+        return '';
+    }
+  };
 
   useEffect(() => {
     if (location.pathname.endsWith('/edit')) {
@@ -80,6 +100,40 @@ export default function EmployeeDetailsPage() {
     };
   }, [id]);
 
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadAttendanceSnapshots() {
+      try {
+        setAttendanceLoading(true);
+        setAttendanceError(null);
+
+        const { data } = await api.get(`/attendance/employee/${id}/recent`);
+        if (!mounted) return;
+
+        setAttendanceRecords(data.records || []);
+      } catch (err) {
+        console.error('Failed to load attendance snapshots:', err);
+        if (!mounted) return;
+        setAttendanceError(err.response?.data?.error || 'Unable to load attendance snapshots.');
+      } finally {
+        if (!mounted) return;
+        setAttendanceLoading(false);
+      }
+    }
+
+    if (id) {
+      loadAttendanceSnapshots();
+    } else {
+      setAttendanceRecords([]);
+      setAttendanceLoading(false);
+    }
+
+    return () => {
+      mounted = false;
+    };
+  }, [id]);
+
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
@@ -125,7 +179,7 @@ export default function EmployeeDetailsPage() {
   };
 
   return (
-    <main className="app-shell employee-details-page">
+    <main className="app-shell employee-details-page masters-page component-details-page">
       <header className="app-header">
         <div className="header-title-block">
           <p className="eyebrow">Workforce management</p>
@@ -135,7 +189,7 @@ export default function EmployeeDetailsPage() {
       </header>
 
       <section className="card form-card">
-        <div className="tab-row" style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
+        <div className="tab-row" style={{ display: 'flex', gap: '12px', marginBottom: '24px' }} >
           <button
             type="button"
             className={tab === 'details' ? 'primary-button' : 'secondary-button'}
@@ -177,42 +231,90 @@ export default function EmployeeDetailsPage() {
                   style={{ width: '160px', height: '160px', objectFit: 'cover', borderRadius: '12px', border: '1px solid #d1d5db', backgroundColor: '#e5e7eb' }}
                 />
               </div>
-              <div className="space-y-10">
+              <div className=" employee-detail-grid">
 
                 <div className=" ">
                   <p class="text-xl font-medium">Full Name</p>
-                  <p class="font-medium ">{employee.full_name}</p>
+                  <p class="font-bold ">{employee.full_name}</p>
                 </div>
 
                 <div class="">
                   <p class="text-xl font-medium">Employee Code</p>
-                  <p class="font-medium ">{employee.employee_code}</p>
+                  <p class="font-bold ">{employee.employee_code}</p>
                 </div>
 
                 <div>
                   <p class="text-xl font-medium">Role</p>
-                  <p class="font-medium ">{employee.role}</p>
+                  <p class="font-bold ">{employee.role}</p>
                 </div>
                 <div>
                   <p class="text-xl font-medium">Status</p>
-                  <p class="font-medium ">{employee.status}</p>
+                  <p class="font-bold ">{employee.status}</p>
                 </div>
                 <div>
                   <p class="text-xl font-medium">Department</p>
-                  <p class="font-medium ">{employee.department || "Not assigned"}</p>
+                  <p class="font-bold ">{employee.department || "Not assigned"}</p>
                 </div>
                 <div>
                   <p class="text-xl font-medium">Shift</p>
-                  <p class="font-medium ">{employee.shift || "Not assigned"}</p>
+                  <p class="font-bold ">{employee.shift || "Not assigned"}</p>
                 </div>
                 {employee.created_at ? (
                   <div>
                     <p class="text-xl font-medium">Created At</p>
-                  <p class="font-medium ">{new Date(employee.created_at).toLocaleString()}</p>
+                  <p class="font-bold ">{new Date(employee.created_at).toLocaleString()}</p>
                   </div>
                 ) : null}
               </div>
             </div>
+
+            <section className="card employee-details-attendance">
+              <div className="section-header ">
+                <h2>Latest attendance snapshots</h2>
+                <span className="count-chip">{attendanceRecords.length}</span>
+              </div>
+
+              {attendanceLoading ? (
+                <p className="muted">Loading recent attendance...</p>
+              ) : attendanceError ? (
+                <p className="error-message">{attendanceError}</p>
+              ) : attendanceRecords.length === 0 ? (
+                <p className="muted">No attendance records found for the last 2 days.</p>
+              ) : (
+                <div className="attendance-table-wrap">
+                  <table className="attendance-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Shift</th>
+                        <th>In</th>
+                        <th>Out</th>
+                        <th>Status</th>
+                        <th>Minutes</th>
+                        <th>OT</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {attendanceRecords.map((row) => (
+                        <tr key={`${row.shift_date}-${row.punched_in_at || ''}-${row.punched_out_at || ''}`}>
+                          <td>{row.shift_date}</td>
+                          <td>{row.shift || '--'}</td>
+                          <td>{toDisplayTime(row.punched_in_at)}</td>
+                          <td>{toDisplayTime(row.punched_out_at)}</td>
+                          <td>
+                            <span className={`status-chip ${getStatusChipClass(row.status)}`}>
+                              {row.status || '--'}
+                            </span>
+                          </td>
+                          <td>{row.minutes_worked ?? '--'}</td>
+                          <td>{row.overtime_minutes ?? '--'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
           </>
         ) : (
           <form onSubmit={handleSubmit}>

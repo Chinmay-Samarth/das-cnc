@@ -4,16 +4,20 @@ import api from '../api/client';
 import { useMastersNav } from '../context/MastersNavContext';
 import FieldsTab from '../components/MasterBuilder/FieldsTab';
 import RulesTab from '../components/MasterBuilder/RulesTab';
+import SectionsTab from '../components/MasterBuilder/SectionsTab';
 import {
   emptyField,
   fieldsToPayload,
   mapFieldFromServer,
   mapRuleFromServer,
+  mapSectionFromServer,
   rulesToPayload,
+  sectionsToPayload,
 } from '../components/MasterBuilder/utils';
 
 const TABS = [
   { id: 'fields', label: 'Fields' },
+  { id: 'sections', label: 'Sections' },
   { id: 'rules', label: 'Rules' },
 ];
 
@@ -33,6 +37,7 @@ export default function MasterBuilderPage() {
   const [description, setDescription] = useState('');
   const [icon, setIcon] = useState('');
   const [fields, setFields] = useState([]);
+  const [sections, setSections] = useState([]);
   const [rules, setRules] = useState([]);
   const [allMasters, setAllMasters] = useState([]);
 
@@ -60,6 +65,7 @@ export default function MasterBuilderPage() {
       setDescription('');
       setIcon('');
       setFields([]);
+      setSections([]);
       setRules([]);
       setFieldsSaved(false);
       setLoading(false);
@@ -80,6 +86,7 @@ export default function MasterBuilderPage() {
         setDescription(master.description || '');
         setIcon(master.icon || '');
         setFields((master.master_fields || []).map(mapFieldFromServer));
+        setSections((master.master_sections || []).map(mapSectionFromServer));
         setRules((master.master_rules || []).map(mapRuleFromServer));
         setFieldsSaved(true);
       } catch (err) {
@@ -136,6 +143,12 @@ export default function MasterBuilderPage() {
       const savedFields = (fieldsData.fields || []).map(mapFieldFromServer);
       setFields(savedFields);
       setFieldsSaved(true);
+
+      const { data: sectionsData } = await api.put(
+        `/masters/${savedMasterId}/sections`,
+        sectionsToPayload(sections)
+      );
+      setSections((sectionsData.sections || []).map(mapSectionFromServer));
 
       const { data: rulesData } = await api.put(
         `/masters/${savedMasterId}/rules`,
@@ -216,6 +229,14 @@ export default function MasterBuilderPage() {
               <FieldsTab
                 fields={fields}
                 setFields={setFields}
+                allMasters={allMasters}
+                currentMasterId={masterId}
+              />
+            ) : null}
+            {activeTab === 'sections' ? (
+              <SectionsTab
+                sections={sections}
+                setSections={setSections}
                 allMasters={allMasters}
                 currentMasterId={masterId}
               />
