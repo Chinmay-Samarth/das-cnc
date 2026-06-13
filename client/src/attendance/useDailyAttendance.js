@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/client';
 
 export function toDisplayTime(value) {
@@ -18,35 +18,36 @@ export default function useDailyAttendance(initialDate = null) {
 
   // queryDate is the date string (YYYY-MM-DD) used for API queries.
   const [queryDate, setQueryDate] = useState(initialDate);
+  const mountedRef = useRef(true);
+
+  const loadDailyAttendance = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError('');
+
+      const url = '/attendance/daily';
+      const params = queryDate ? { params: { date: queryDate } } : {};
+      const { data } = await api.get(url, params);
+
+      if (!mountedRef.current) return;
+      setDaily(data);
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setError(err?.response?.data?.error || 'Failed to load attendance dashboard.');
+    } finally {
+      if (!mountedRef.current) return;
+      setLoading(false);
+    }
+  }, [queryDate]);
 
   useEffect(() => {
-    let mounted = true;
-
-    async function loadDailyAttendance() {
-      try {
-        setLoading(true);
-        setError('');
-
-        // include date query param only when queryDate is set
-        const url = queryDate ? '/attendance/daily' : '/attendance/daily';
-        const params = queryDate ? { params: { date: queryDate } } : {};
-
-        const { data } = await api.get(url, params);
-        if (!mounted) return;
-        setDaily(data);
-      } catch (err) {
-        if (!mounted) return;
-        setError(err?.response?.data?.error || 'Failed to load attendance dashboard.');
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    }
-
+    mountedRef.current = true;
     loadDailyAttendance();
+
     return () => {
-      mounted = false;
+      mountedRef.current = false;
     };
-  }, [queryDate]);
+  }, [loadDailyAttendance]);
 
   const absentees = useMemo(() => {
     const records = daily?.records || [];
@@ -70,6 +71,7 @@ export default function useDailyAttendance(initialDate = null) {
     error,
     // setter to allow components to change which date is queried
     setDate: setQueryDate,
+    refresh: loadDailyAttendance,
     absentees,
     latestRecords,
     presentCount: daily?.summary?.present ?? 0,

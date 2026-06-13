@@ -5,7 +5,8 @@ import useDailyAttendance, { toDisplayTime } from './useDailyAttendance';
 
 export default function AttendancePage() {
   const [isExporting, setIsExporting] = useState(false);
-  const { daily, loading, error, absentees, latestRecords, presentCount, absentCount, totalCount, setDate } =
+  const [syncing, setSyncing] = useState(false);
+  const { daily, loading, error, absentees, latestRecords, presentCount, absentCount, totalCount, setDate, refresh } =
     useDailyAttendance();
 
   // local selectedDate mirrors the current query date shown in the date input
@@ -110,6 +111,19 @@ export default function AttendancePage() {
     }
   }
 
+  async function handleSyncBiometric() {
+    try {
+      setSyncing(true);
+      await api.post('/sync/biometric');
+      await refresh();
+      } catch (err) {
+      console.error('Biometric sync failed:', err);
+      alert('Failed to sync biometric attendance. Please try again.');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   return (
     <main className="app-shell attendance-page">
       <header className="app-header">
@@ -132,15 +146,22 @@ export default function AttendancePage() {
           </div>
         </div>
       </header>
-      <div className="section-header">
-        {/* Attendance download button */}
+      <div className="section-header" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         <button
-        type="button"
-        className="primary-button"
-        onClick={downloadAttendanceExcel}
-        disabled={loading || isExporting}
+          type="button"
+          className="primary-button"
+          onClick={downloadAttendanceExcel}
+          disabled={loading || isExporting}
         >
-        {isExporting ? 'Preparing Excel...' : 'Download Attendance Excel'}
+          {isExporting ? 'Preparing Excel...' : 'Download Attendance Excel'}
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={handleSyncBiometric}
+          disabled={loading || syncing}
+        >
+          {syncing ? 'Syncing biometric...' : 'Refresh Attendance'}
         </button>
       </div>
 

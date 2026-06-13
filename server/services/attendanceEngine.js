@@ -30,6 +30,15 @@ function timeToMinutes(timeStr) {
   return h * 60 + m;
 }
 
+function localTimestampToISO(timestamp) {
+  const parsed = parseLocalTimestamp(timestamp);
+
+  return (
+    `${parsed.year}-${String(parsed.month).padStart(2, '0')}-${String(parsed.day).padStart(2, '0')} ` +
+    `${String(parsed.hours).padStart(2, '0')}:${String(parsed.minutes).padStart(2, '0')}:00`
+  );
+}
+
 function isCrossesMidnightShift(shift) {
   const startMins = timeToMinutes(shift.start_time);
   const endMins = timeToMinutes(shift.end_time);
@@ -191,13 +200,14 @@ async function processBiometricEvent(payload) {
   }
 
   const { employee_code, punch_id, captured_at, raw_payload } = payload;
+  const normalizedCapturedAt = localTimestampToISO(captured_at);
 
   try {
     // 1. Save raw biometric log
     const newBiometricLog = {
       employee_code,
       punch_id,
-      captured_at,
+      captured_at: normalizedCapturedAt,
       raw_payload: raw_payload ?? null,
     };
 
@@ -233,7 +243,7 @@ async function processBiometricEvent(payload) {
     if (shiftError) throw shiftError;
 
     // 4. Resolve shift_date (the core night-shift fix)
-    const punchTime = captured_at;
+    const punchTime = normalizedCapturedAt;
     const resolved  = resolveShiftAndDate(punchTime, emshift);
 
     if (!resolved) {
@@ -310,9 +320,9 @@ function inferExpectedEventType(hour, crossesMidnight) {
 }
 
 function inferBiometricEventType(existingRecord,crossesMidnight,punchTime) {
-  const hour = new Date(punchTime).getHours();
+  const { hours } = parseLocalTimestamp(punchTime);
 
-  const expected = inferExpectedEventType(hour,crossesMidnight);
+  const expected = inferExpectedEventType(hours,crossesMidnight);
 
   // First punch of the day
   if (!existingRecord) {

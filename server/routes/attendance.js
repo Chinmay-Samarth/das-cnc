@@ -116,7 +116,7 @@ router.post(
         await processBiometricEvent({
           employee_code,
           punch_id,
-          captured_at: new Date(captured_at),
+          captured_at,
           event_type: req.body.event_type
         });
 
