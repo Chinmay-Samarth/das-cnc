@@ -14,6 +14,7 @@ import ComponentDetailPage from './pages/ComponentDetailPage';
 import MasterPage from './pages/MasterPage';
 import MasterRecordDetailPage from './pages/MasterRecordDetailPage';
 import InvoicesPage from './pages/InvoicesPage';
+import InvoiceDetails from './components/Invoices/InvoiceDetails';
 
 function RequireAuth() {
   const { user, loading } = useAuth();
@@ -68,10 +69,12 @@ export default function App() {
             <Route path="/components" element={<ComponentsPage />} />
             <Route path="/components/:id" element={<ComponentDetailPage />} />
             <Route path="/invoices" element={<InvoicesPage />} />
+            <Route path= "/invoices/:id" element={<InvoiceDetails/>}></Route>
             <Route path="/masters/new" element={<MasterBuilderPage />} />
             <Route path="/masters/:masterId/configure" element={<MasterBuilderPage />} />
             <Route path="/masters/:masterId/records/:recordId" element={<MasterRecordDetailPage />} />
             <Route path="/masters/:masterId" element={<MasterPage />} />
+
           </Route>
         </Route>
 

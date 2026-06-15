@@ -7,9 +7,12 @@ const express    = require('express');
 const cron       = require('node-cron');
 const { markAbsentees } = require('./services/attendanceEngine');
 const {syncBiometricData} = require('./services/biometricSync')
+const cors = require("cors")
  
 const app = express();
 app.use(express.json());
+
+app.use(cors())
  
 // CORS — restrict to your frontend domain in production
 app.use((req, res, next) => {
@@ -25,6 +28,7 @@ app.use('/api/attendance', require('./routes/attendance'));
 app.use('/api/employees', require('./routes/employees'));
 app.use('/api/components', require('./routes/components'));
 app.use('/api/masters', require('./routes/masters'));
+app.use('/api/invoices', require('./routes/invoices'))
 // app.use('/api/machines',   require('./routes/machines'));    // next module
  
 // Health check

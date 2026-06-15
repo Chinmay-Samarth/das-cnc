@@ -1,4 +1,5 @@
 import useDailyAttendance, { toDisplayTime } from '../attendance/useDailyAttendance';
+import { useNavigate } from 'react-router-dom';
 
 export default function HomePage() {
   const {
@@ -11,6 +12,7 @@ export default function HomePage() {
     totalCount,
   } = useDailyAttendance();
 
+  const navigate = useNavigate();
   return (
     <main className="app-shell attendance-page">
       <header className="app-header">
@@ -64,7 +66,7 @@ export default function HomePage() {
               </thead>
               <tbody>
                 {latestRecords.slice(0, 6).map((row) => (
-                  <tr key={`${row.employee_code}-${row.local_in}-${row.local_out}`}>
+                  <tr key={`${row.employee_code}-${row.local_in}-${row.local_out}`} onClick={()=>{navigate(`/employees/${row.id}`)}}>
                     <td>
                       <strong>{row.full_name}</strong>
                       <div className="table-subtext">{row.employee_code}</div>

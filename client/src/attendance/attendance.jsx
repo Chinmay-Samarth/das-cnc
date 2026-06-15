@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import * as XLSX from 'xlsx';
 import api from '../api/client';
 import useDailyAttendance, { toDisplayTime } from './useDailyAttendance';
+import { useNavigate } from 'react-router-dom';
+
+
 
 export default function AttendancePage() {
   const [isExporting, setIsExporting] = useState(false);
@@ -11,6 +14,8 @@ export default function AttendancePage() {
 
   // local selectedDate mirrors the current query date shown in the date input
   const [selectedDate, setSelectedDate] = useState('');
+
+  const navigate = useNavigate();
 
   useEffect(() => {
     // initialize selected date when daily payload arrives
@@ -255,7 +260,7 @@ export default function AttendancePage() {
               </thead>
               <tbody>
                 {latestRecords.map((row) => (
-                  <tr key={`${row.employee_code}-${row.local_in}-${row.local_out}`}>
+                  <tr key={`${row.employee_code}-${row.local_in}-${row.local_out}`} onClick={()=>{navigate(`/employees/${row.id}`)}}>
                     <td>
                       <strong>{row.full_name}</strong>
                       <div className="table-subtext">{row.employee_code}</div>

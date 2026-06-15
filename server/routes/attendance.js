@@ -300,6 +300,7 @@ router.get('/daily', verifyEmployeeAuth, async (req, res) => {
     let query = supabase
       .from('employees')
       .select(`
+        id,
         employee_code,
         full_name,
         role,
@@ -339,6 +340,7 @@ router.get('/daily', verifyEmployeeAuth, async (req, res) => {
       }
 
       rows.push({
+        id: emp.id,
         employee_code: emp.employee_code,
         full_name: emp.full_name,
         role: emp.role,
@@ -581,10 +583,11 @@ router.get(
   '/employee/:id/recent',
   verifyEmployeeAuth,
   async (req, res) => {
+    const today = new Date()
     try {
       const { id } = req.params;
       const to = new Date().toISOString().slice(0, 10);
-      const from = new Date(Date.now() - 1 * 86400000)
+      const from = new Date(today.setDate(1))
         .toISOString()
         .slice(0, 10);
 

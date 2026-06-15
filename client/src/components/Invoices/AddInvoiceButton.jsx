@@ -15,10 +15,11 @@ export default function AddInvoiceButton({ onUploaded }) {
 
     try {
       setUploading(true);
-      await api.post('/invoices/upload', form, {
+      const {data} = await api.post('/invoices/upload', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       if (onUploaded) onUploaded();
+      console.log(data.doc)
     } catch (err) {
       console.error('Upload failed', err);
       alert(err.response?.data?.error || err.message || 'Upload failed');

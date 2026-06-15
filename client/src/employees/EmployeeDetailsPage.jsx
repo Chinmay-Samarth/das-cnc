@@ -184,7 +184,7 @@ export default function EmployeeDetailsPage() {
         <div className="header-title-block">
           <p className="eyebrow">Workforce management</p>
           <h1>Employee details</h1>
-          <p className="muted">Review the selected employee’s full profile and make changes when necessary.</p>
+          {/* <p className="muted">Review the selected employee’s full profile and make changes when necessary.</p> */}
         </div>
       </header>
 
@@ -224,7 +224,6 @@ export default function EmployeeDetailsPage() {
           <>
             <div className="employee-details-grid">
               <div style={{ gridColumn: 'span 2' }}>
-                <p className='text-xl font-medium'>Photo</p>
                 <img
                   src={employee.img_url || PLACEHOLDER_AVATAR}
                   alt={employee.img_url ? `${employee.full_name} photo` : 'No photo available'}
@@ -270,7 +269,7 @@ export default function EmployeeDetailsPage() {
 
             <section className="card employee-details-attendance">
               <div className="section-header ">
-                <h2>Latest attendance snapshots</h2>
+                <h2>Attendance</h2>
                 <span className="count-chip">{attendanceRecords.length}</span>
               </div>
 
