@@ -52,7 +52,7 @@ function summarizeMonth(record, totalWorkingDays){
   });
 
   const attendedDays = summary.present + summary.completed + summary.late;
-  const absent = Math.max(totalWorkingDays - attendedDays,0) - 1
+  const absent = Math.max(totalWorkingDays - attendedDays,0) 
 
   const score  = totalWorkingDays > 0? Math.min(100, Math.round((attendedDays/totalWorkingDays)*100)): 0;
 
