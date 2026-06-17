@@ -482,10 +482,10 @@ router.get(
         status: r.status,
 
         punched_in_at:
-          toIST(r.punched_in_at),
+          r.punched_in_at,
 
         punched_out_at:
-          toIST(r.punched_out_at),
+          r.punched_out_at,
 
         minutes_worked:
           r.minutes_worked,
@@ -580,16 +580,41 @@ router.get(
 // GET /api/attendance/employee/:id/recent
 // ─────────────────────────────────────────────
 router.get(
-  '/employee/:id/recent',
+  '/employee/:id/monthly',
   verifyEmployeeAuth,
   async (req, res) => {
     const today = new Date()
+    const last_dates = {
+      "1" : 31,
+      "2" : 27,
+      "3" : 31,
+      "4" : 30,
+      "5" : 31,
+      "6" : 30,
+      "7" : 31,
+      "8" : 31,
+      "9" : 30,
+      "10" : 31,
+      "11" : 30,
+      "12" : 31,
+      
+    }
+
+    
+    let month = req.query.month
+    const lastDate = last_dates[month.toString()]
+    
+    if (month <10) {
+      month = `0${month}`
+    }
+
+
+    const year = req.query.year
     try {
       const { id } = req.params;
-      const to = new Date().toISOString().slice(0, 10);
-      const from = new Date(today.setDate(1))
-        .toISOString()
-        .slice(0, 10);
+
+      const to = `${year}-${month}-${lastDate}`
+      const from = `${year}-${month}-01`
 
       const {
         data: rows,

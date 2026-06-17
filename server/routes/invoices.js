@@ -32,120 +32,134 @@ function verifyEmployeeAuth(req, res, next) {
   }
 }
 
-router.post("/upload", verifyEmployeeAuth, upload.single('invoice'), async (req,res)=>{
-    try {
-      const file = req.file
+async function processInvoiceOCR(invoiceId, inputSource, publicUrl){
 
-      if(!file){
-        return res.status(400).json({
-          error: "No file Uploaded"
-        })
+  console.log('***reached processInvoiceOCR***')
+  
+
+  const modelParams = {
+    modelId: "2a4ccdd5-e3e3-4801-bba2-6bbca01bae4f",
+    // Options: set to `true` or `false` to override defaults
+    // Enhance extraction accuracy with Retrieval-Augmented Generation.
+    rag: true,
+    // Extract the full text content from the document as strings.
+    rawText: false,
+    // Calculate bounding box polygons for all fields.
+    polygon: false,
+    // Boost the precision and accuracy of all extractions.
+    // Calculate confidence scores for all fields.
+    confidence: false,
+  }
+  const apiResponse = await mindeeClient.enqueueAndGetResult(
+    Mindee.product.Extraction,
+    inputSource,
+    modelParams
+  )
+
+  // const doc = apiResponse.document.inference.prediction
+  const doc = apiResponse.rawHttp.inference.result.fields
+
+
+  let supplier_GSTIN
+  if(doc.supplier_company_registration !== undefined){
+
+    doc.supplier_company_registration.items.forEach((item) => {  
+      if(item.fields.type.value === "GSTIN"){
+        supplier_GSTIN = item.fields.number.value
       }
+    })
+  }
+  let irn 
+  doc.reference_numbers.items.forEach((item)=>{
+    if (item.value.length === 64){
+      irn = item.value
+    }
+  })
 
-      // uploading raw file to supabase first 
-      const fileName = `invoices/${Date.now()}_${file.originalname}`;
+  // 
+  const invoiceData = {
+    status: "pending",
+    file_url: publicUrl,
+    supplier_name: doc.supplier_name?.value || null,
+    invoice_number: doc.invoice_number?.value || null,
+    invoice_date: doc.date?.value || null,
+    due_date: doc.due_date?.value || null,
+    base_amount: doc.total_net?.value || null,
+    total_amount: doc.total_amount?.value || null,
+    tax_amount: doc.total_tax?.value || null,
+    line_items: doc.line_items.items?.map(item => ({
+      description: item.fields.description.value,
+      quantity: item.fields.quantity.value,
+      unit_price: item.fields.unit_price.value,
+      total: item.fields.total_price.value,
+    })) || [],
+    tax_items: doc.taxes.items?.map(item =>({
+      rate: item.fields.rate.value,
+      base: item.fields.base.value,
+      amount: item.fields.base.value
+    })),
+    raw_ocr_response: doc,
+    customer_GSTIN: doc.customer_company_registration.items[0].fields.number.value,
+    supplier_GSTIN : supplier_GSTIN,
+    supplier_address: doc.supplier_address.fields.address.value,
+    supplier_address_state: doc.supplier_address.fields.state.value,
+    IRN: irn,
+  }
+  const {data: invoice, error:dbError} = await supabase
+  .from('invoices')
+  .update(invoiceData)
+  .eq('id', invoiceId)
 
-      const {data: storageData, error:storageError} = await supabase.storage
-          .from('invoices')
-          .upload(fileName, file.buffer, {contentType: file.mimetype});
 
-      if (storageError) throw storageError
-      const { data: { publicUrl } } = await supabase.storage
-          .from('invoices')
-          .getPublicUrl(fileName);
+  if (dbError) throw dbError
+}
 
-      // !ADD MINDEE CODE HERE 
-
-      const buffer = file.buffer
-      const inputSource = new Mindee.BufferInput({buffer, filename : fileName})
-
-      const modelParams = {
-        modelId: "2a4ccdd5-e3e3-4801-bba2-6bbca01bae4f",
-        // Options: set to `true` or `false` to override defaults
-        // Enhance extraction accuracy with Retrieval-Augmented Generation.
-        rag: true,
-        // Extract the full text content from the document as strings.
-        rawText: false,
-        // Calculate bounding box polygons for all fields.
-        polygon: false,
-        // Boost the precision and accuracy of all extractions.
-        // Calculate confidence scores for all fields.
-        confidence: false,
-      };
-
-      const apiResponse = await mindeeClient.enqueueAndGetResult(
-        Mindee.product.Extraction,
-        inputSource,
-        modelParams
-      );
-
-      console.dir(apiResponse.rawHttp.inference, {depth: null})
-
-      // const doc = apiResponse.document.inference.prediction
-      const doc = apiResponse.rawHttp.inference.result.fields
-
-      let supplier_GSTIN
-
-      doc.supplier_company_registration.items.forEach((item) => {  
-        if(item.fields.type.value === "GSTIN"){
-          supplier_GSTIN = item.fields.number.value
-        }
-      });
-
-      console.log(supplier_GSTIN)
-
-      let irn
-
-      doc.reference_numbers.items.forEach((item)=>{
-        if (item.value.length === 64){
-          irn = item.value
-        }
+router.post("/upload", verifyEmployeeAuth, upload.single('invoice'), async (req,res)=>{
+  try {
+    const file = req.file
+    if(!file){
+      return res.status(400).json({
+        error: "No file Uploaded"
       })
-      // 
-      const invoiceData = {
-        file_url: publicUrl,
-        supplier_name: doc.supplier_name?.value || null,
-        invoice_number: doc.invoice_number?.value || null,
-        invoice_date: doc.date?.value || null,
-        due_date: doc.due_date?.value || null,
-        base_amount: doc.total_net?.value || null,
-        total_amount: doc.total_amount?.value || null,
-        tax_amount: doc.total_tax?.value || null,
-        line_items: doc.line_items.items?.map(item => ({
-          description: item.fields.description.value,
-          quantity: item.fields.quantity.value,
-          unit_price: item.fields.unit_price.value,
-          total: item.fields.total_price.value,
-        })) || [],
-        tax_items: doc.taxes.items?.map(item =>({
-          rate: item.fields.rate.value,
-          base: item.fields.base.value,
-          amount: item.fields.base.value
-        })),
-        raw_ocr_response: doc,
-        customer_GSTIN: doc.customer_company_registration.items[0].fields.number.value,
-        supplier_GSTIN : supplier_GSTIN,
-        supplier_address: doc.supplier_address.fields.address.value,
-        IRN: irn,
-      };
-
-      const {data: invoice, error:dbError} = await supabase
-      .from('invoices')
-      .upsert(invoiceData)
-      .select()
-      .single()
-
-      if (dbError) throw dbError
-
-      console.dir(apiResponse, {depth:null, colors:true})
-
-      res.json({success: true, invoice })
-
     }
-    catch(err){
-        console.error("Invoice processing error ",err)
-        res.status(500).json({error: err.message})
-    }
+    // uploading raw file to supabase first 
+
+    const fileName = `invoices/${Date.now()}_${file.originalname}`;
+
+    const buffer = file.buffer
+    const inputSource = new Mindee.BufferInput({buffer: buffer, filename : fileName})
+
+    const {data: storageData, error:storageError} = await supabase.storage
+        .from('invoices')
+        .upload(fileName, file.buffer, {contentType: file.mimetype});
+
+
+    if (storageError) throw storageError
+    const { data: { publicUrl } } = await supabase.storage
+        .from('invoices')
+        .getPublicUrl(fileName);
+
+
+    const {data: invoice, error:dbErorr} = await supabase
+    .from('invoices')
+    .insert({status:'extracting', file_url: publicUrl})
+    .select()
+    .single() 
+
+    if (dbErorr) throw dbErorr
+
+    
+
+    res.json({status: "extracting", id: invoice.id})
+    
+    await processInvoiceOCR(invoice.id, inputSource, publicUrl).catch(err => {
+    console.error('Invoice processing error', err);
+    })
+  }
+  catch(err){
+      console.error("Invoice processing error ",err)
+      res.status(500).json({error: err.message})
+  }
 })
 
 router.get('/list', verifyEmployeeAuth, async (req,res)=>{

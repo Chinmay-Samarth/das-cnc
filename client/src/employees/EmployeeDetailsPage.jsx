@@ -1,9 +1,112 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import api from '../api/client';
-import { toDisplayTime } from '../attendance/useDailyAttendance';
+import { toDisplayTime, toISODateString } from '../attendance/useDailyAttendance';
+import ImageLightbox from '../components/shared/ImageLightBox';
+import AttendanceGauge from '../components/shared/Attendancegauge';
 
 const PLACEHOLDER_AVATAR = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect fill="%23E5E7EB" width="100%25" height="100%25"/><text x="50%25" y="54%25" dominant-baseline="middle" text-anchor="middle" font-size="48" fill="%23717A83" font-family="system-ui, sans-serif">?</text></svg>';
+
+function countWorkingDaysInMonth(monthDate, cutoffDate = null, startDate){
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const daysInMonth = new Date (year, month +1, 0).getDate()
+
+
+  let firstDayToCount = 0;
+
+  if (
+    startDate &&
+    startDate.getFullYear() === year &&
+    startDate.getMonth() === month
+  ) {
+    firstDayToCount = startDate.getDate() + 1;
+  }
+
+  let lastDayToCount = daysInMonth;
+  if (cutoffDate && cutoffDate.getFullYear() === year && cutoffDate.getMonth() === month){
+    lastDayToCount = Math.min(daysInMonth, cutoffDate.getDate())
+  }
+
+  let count = 0;
+  for(let day = firstDayToCount; day<=lastDayToCount; day+=1){
+    const isSunday = new Date(year,month,day).getDay() === 0;
+    if(!isSunday) count+=1
+  }
+
+  return count
+}
+
+function summarizeMonth(record, totalWorkingDays){
+  const summary = {
+    present: 0,
+    completed: 0,
+    late: 0,
+  }
+
+  record.forEach(row => {
+    const status = String(row.status || '').toUpperCase()
+    if (status=== "PRESENT") summary.present +=1
+    else if (status === "COMPLETED") summary.completed +=1
+    else if (status === "LATE") summary.late +=1
+  });
+
+  const attendedDays = summary.present + summary.completed + summary.late;
+  const absent = Math.max(totalWorkingDays - attendedDays,0) - 1
+
+  const score  = totalWorkingDays > 0? Math.min(100, Math.round((attendedDays/totalWorkingDays)*100)): 0;
+
+  return {...summary, attendedDays, absent, totalWorkingDays,score}
+}
+
+function startOfMonth(date){
+  return new Date(date.getFullYear(), date.getMonth(),1)
+
+}
+
+function shiftMonth(date,delta){
+  return new Date(date.getFullYear(), date.getMonth() + 1, 1)
+}
+
+function isSameMonth(a,b){
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()
+}
+
+
+function formatMonthLabel(date) {
+  return date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+}
+
+function StatTile({label,value,accent}){
+  return (
+    <div
+      style={{
+        border: '1px solid #e5e7eb',
+        borderTop: `3px solid ${accent}`,
+        borderRadius: '10px',
+        padding: '14px 16px',
+        background: '#fafafa',
+      }}
+    >
+      <p className="text-xs uppercase font-medium" style={{ margin: 0, letterSpacing: '0.06em', color: '#6b7280' }}>
+        {label}
+      </p>
+      <p
+        className="font-bold"
+        style={{
+          margin: '4px 0 0',
+          fontSize: '26px',
+          lineHeight: 1,
+          color: '#111827',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        }}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
 
 export default function EmployeeDetailsPage() {
   const navigate = useNavigate();
@@ -21,6 +124,7 @@ export default function EmployeeDetailsPage() {
     password: '',
     is_active: 'true',
   });
+  const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
   const [photo, setPhoto] = useState(null);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [attendanceLoading, setAttendanceLoading] = useState(true);
@@ -29,6 +133,7 @@ export default function EmployeeDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [lightBox, setLightBox] = useState(null)
 
   const getStatusChipClass = (status) => {
     const normalized = String(status || '').toUpperCase();
@@ -57,6 +162,7 @@ export default function EmployeeDetailsPage() {
   useEffect(() => {
     let mounted = true;
 
+
     async function loadEmployee() {
       try {
         setLoading(true);
@@ -84,6 +190,8 @@ export default function EmployeeDetailsPage() {
             is_active: loadedEmployee.is_active ? 'true' : 'false',
           });
         }
+
+        
       } catch (err) {
         console.error('Failed to load employee details:', err);
         if (!mounted) return;
@@ -103,15 +211,20 @@ export default function EmployeeDetailsPage() {
   useEffect(() => {
     let mounted = true;
 
-    async function loadAttendanceSnapshots() {
+    async function loadMonthlyttendance() {
       try {
         setAttendanceLoading(true);
         setAttendanceError(null);
 
-        const { data } = await api.get(`/attendance/employee/${id}/recent`);
+        const { data } = await api.get(`/attendance/employee/${id}/monthly`, {
+          params :{
+            month: selectedMonth.getMonth() +1,
+            year: selectedMonth.getFullYear()
+          }
+        });
         if (!mounted) return;
 
-        setAttendanceRecords(data.records || []);
+        setAttendanceRecords(data.records || [])
       } catch (err) {
         console.error('Failed to load attendance snapshots:', err);
         if (!mounted) return;
@@ -123,7 +236,7 @@ export default function EmployeeDetailsPage() {
     }
 
     if (id) {
-      loadAttendanceSnapshots();
+      loadMonthlyttendance();
     } else {
       setAttendanceRecords([]);
       setAttendanceLoading(false);
@@ -132,7 +245,23 @@ export default function EmployeeDetailsPage() {
     return () => {
       mounted = false;
     };
-  }, [id]);
+  }, [id, selectedMonth]);
+
+  const employeeJoinDate = employee?.created_at
+  ? new Date(employee.created_at)
+  : null;
+
+  const totalWorkingDays = useMemo(()=> countWorkingDaysInMonth(selectedMonth, new Date(), employeeJoinDate), [selectedMonth, employeeJoinDate]);
+   
+  const attendanceSummary = useMemo(
+    ()=> summarizeMonth(attendanceRecords, totalWorkingDays),
+    [attendanceRecords, totalWorkingDays]
+  )
+
+  const employeeJoinMonth = employee?.created_at ? startOfMonth(new Date(employee.created_at)): null;
+  const isPrevMonthDisabled = employeeJoinMonth ? selectedMonth <= employeeJoinMonth : false;
+  const isNextMonthDisabled = isSameMonth(selectedMonth, new Date())
+
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -227,114 +356,187 @@ export default function EmployeeDetailsPage() {
                 <img
                   src={employee.img_url || PLACEHOLDER_AVATAR}
                   alt={employee.img_url ? `${employee.full_name} photo` : 'No photo available'}
-                  style={{ width: '160px', height: '160px', objectFit: 'cover', borderRadius: '12px', border: '1px solid #d1d5db', backgroundColor: '#e5e7eb' }}
+                  style={{ width: '160px', height: '160px', objectFit: 'cover', borderRadius: '12px', border: '1px solid #d1d5db', backgroundColor: '#e5e7eb',cursor: "pointer" }}
+                  onClick={()=>{setLightBox({ src: employee.img_url, alt: employee.full_name })}}
                 />
+
+                {lightBox && (
+                  <ImageLightbox
+                  src={lightBox.src}
+                  alt={lightBox.alt}
+                  onClose={() => setLightBox(null)}
+                />
+                )}
+
               </div>
               <div className=" employee-detail-grid">
 
                 <div className=" ">
-                  <p class="text-xl font-medium">Full Name</p>
-                  <p class="font-bold ">{employee.full_name}</p>
+                  <p className="text-xl font-medium">Full Name</p>
+                  <p className="font-bold ">{employee.full_name}</p>
                 </div>
 
-                <div class="">
-                  <p class="text-xl font-medium">Employee Code</p>
-                  <p class="font-bold ">{employee.employee_code}</p>
+                <div className="">
+                  <p className="text-xl font-medium">Employee Code</p>
+                  <p className="font-bold ">{employee.employee_code}</p>
                 </div>
 
                 <div>
-                  <p class="text-xl font-medium">Role</p>
-                  <p class="font-bold ">{employee.role}</p>
+                  <p className="text-xl font-medium">Role</p>
+                  <p className="font-bold ">{employee.role}</p>
                 </div>
                 <div>
-                  <p class="text-xl font-medium">Status</p>
-                  <p class="font-bold ">{employee.status}</p>
+                  <p className="text-xl font-medium">Status</p>
+                  <p className="font-bold ">{employee.status}</p>
                 </div>
                 <div>
-                  <p class="text-xl font-medium">Department</p>
-                  <p class="font-bold ">{employee.department || "Not assigned"}</p>
+                  <p className="text-xl font-medium">Department</p>
+                  <p className="font-bold ">{employee.department || "Not assigned"}</p>
                 </div>
                 <div>
-                  <p class="text-xl font-medium">Shift</p>
-                  <p class="font-bold ">{employee.shift || "Not assigned"}</p>
+                  <p className="text-xl font-medium">Shift</p>
+                  <p className="font-bold ">{employee.shift || "Not assigned"}</p>
                 </div>
                 {employee.created_at ? (
                   <div>
-                    <p class="text-xl font-medium">Created At</p>
-                  <p class="font-bold ">{new Date(employee.created_at).toLocaleString()}</p>
+                    <p className="text-xl font-medium">Created At</p>
+                  <p className="font-bold ">{new Date(employee.created_at).toLocaleString()}</p>
                   </div>
                 ) : null}
               </div>
             </div>
 
             <section className="card employee-details-attendance">
-              <div className="section-header ">
-                <h2>Attendance</h2>
+              <div className="section-header "
+              style={{display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px"}}>
+                <h2>Attendance &amp; report</h2>
                 <span className="count-chip">{attendanceRecords.length}</span>
+                <p className="text-sm" style={{ margin: '2px 0 0', color: '#6b7280' }}>
+                    {attendanceLoading
+                      ? 'Loading...'
+                      : `${attendanceSummary.totalWorkingDays} working days ${
+                          isNextMonthDisabled ? 'so far this month' : 'this month'
+                        } (Mon\u2013Sat)`}
+                  </p>
               </div>
 
+              <div className="flex items-center gap-2" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => setSelectedMonth((prev) => shiftMonth(prev, -1))}
+                    disabled={isPrevMonthDisabled}
+                    aria-label="Previous month"
+                  >
+                    &lsaquo;
+                  </button>
+                  <span className="font-semibold" style={{ minWidth: '150px', textAlign: 'center', display: 'inline-block' }}>
+                    {formatMonthLabel(selectedMonth)}
+                  </span>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => setSelectedMonth((prev) => shiftMonth(prev, 1))}
+                    disabled={isNextMonthDisabled}
+                    aria-label="Next month"
+                  >
+                    &rsaquo;
+                  </button>
+                </div>
+
               {attendanceLoading ? (
-                <p className="muted">Loading recent attendance...</p>
+                <p className="muted">Loading attendance for {formatMonthLabel(selectedMonth)}...</p>
               ) : attendanceError ? (
                 <p className="error-message">{attendanceError}</p>
-              ) : attendanceRecords.length === 0 ? (
-                <p className="muted">No attendance records found for the last 2 days.</p>
               ) : (
-                <div className="attendance-table-wrap">
-                  <table className="attendance-table">
-                    <thead>
-                      <tr>
-                        <th>Date</th>
-                        <th>Shift</th>
-                        <th>In</th>
-                        <th>Out</th>
-                        <th>Status</th>
-                        <th>Minutes</th>
-                        <th>OT</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {attendanceRecords.map((row) => (
-                        <tr key={`${row.shift_date}-${row.punched_in_at || ''}-${row.punched_out_at || ''}`}>
-                          <td>{row.shift_date}</td>
-                          <td>{row.shift || '--'}</td>
-                          <td>{toDisplayTime(row.punched_in_at)}</td>
-                          <td>{toDisplayTime(row.punched_out_at)}</td>
-                          <td>
-                            <span className={`status-chip ${getStatusChipClass(row.status)}`}>
-                              {row.status || '--'}
-                            </span>
-                          </td>
-                          <td>{row.minutes_worked ?? '--'}</td>
-                          <td>{row.overtime_minutes ?? '--'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      alignItems: 'center',
+                      gap: '28px',
+                      borderBottom: '1px solid #e5e7eb',
+                      paddingBottom: '24px',
+                      marginBottom: '24px',
+                    }}
+                  >
+                    <AttendanceGauge score={attendanceSummary.score} size={220} />
+
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                        gap: '12px',
+                        flex: '1 1 320px',
+                      }}
+                    >
+                      <StatTile label="Present" value={attendanceSummary.present + attendanceSummary.completed} accent="#059669" />
+                      <StatTile label="Late" value={attendanceSummary.late} accent="#d97706" />
+                      <StatTile label="Absent" value={attendanceSummary.absent} accent="#dc2626" />
+                    </div>
+                  </div>
+
+                  {attendanceRecords.length === 0 ? (
+                    <p className="muted">No attendance records found for {formatMonthLabel(selectedMonth)}.</p>
+                  ) : (
+                    <div className="attendance-table-wrap">
+                      <table className="attendance-table">
+                        <thead>
+                          <tr>
+                            <th>Date</th>
+                            <th>Shift</th>
+                            <th>In</th>
+                            <th>Out</th>
+                            <th>Status</th>
+                            <th>Minutes</th>
+                            <th>OT</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {attendanceRecords.map((row) => (
+                            <tr key={`${row.shift_date}-${row.punched_in_at || ''}-${row.punched_out_at || ''}`}>
+                              <td>{toISODateString(row.shift_date)}</td>
+                              <td>{row.shift || '--'}</td>
+                              <td>{toDisplayTime(row.punched_in_at)}</td>
+                              <td>{toDisplayTime(row.punched_out_at)}</td>
+                              <td>
+                                <span className={`status-chip ${getStatusChipClass(row.status)}`}>
+                                  {row.status || '--'}
+                                </span>
+                              </td>
+                              <td>{row.minutes_worked ?? '--'}</td>
+                              <td>{row.overtime_minutes ?? '--'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
               )}
             </section>
           </>
         ) : (
           <form onSubmit={handleSubmit}>
-            {error ? <p class="error-message">{error}</p> : null}
+            {error ? <p className="error-message">{error}</p> : null}
 
-            <div class="flex flex-col md:flex-row gap-8 items-start">
+            <div className="flex flex-col md:flex-row gap-8 items-start">
 
             {employee.img_url ? (
               <div style={{ marginBottom: '16px' }}>
-                <p class="text-xl font-medium mb-3">Current photo</p>
+                <p className="text-xl font-medium mb-3">Current photo</p>
                 <img
                   src={employee.img_url}
                   alt={`${employee.full_name} current photo`}
                   style={{ width: '140px', height: '140px', objectFit: 'cover', borderRadius: '12px', border: '1px solid #d1d5db' }}
-                  class='w-36 h-36 object-cover rounded-xl border border-gray-300'
+                  className='w-36 h-36 object-cover rounded-xl border border-gray-300'
                   />
               </div>
             ) : null}
 
             <label htmlFor="photo" className=''>
-              <p class="text-xl font-medium mb-3">Photo</p>
+              <p className="text-xl font-medium mb-3">Photo</p>
               <input
                 id="photo"
                 type="file"
@@ -342,7 +544,7 @@ export default function EmployeeDetailsPage() {
                 name="photo"
                 onChange={handleFileChange}
                 disabled={submitting}
-                class='w-10'
+                className='w-10'
                 />
             </label>
 
@@ -361,7 +563,7 @@ export default function EmployeeDetailsPage() {
                 onChange={handleChange}
                 required
                 disabled={submitting}
-                class=''
+                className=''
               />
             </label>
 

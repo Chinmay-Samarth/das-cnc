@@ -4,6 +4,7 @@ import api from '../api/client';
 import { formatDate } from '../components/MasterBuilder/utils';
 import RecordDrawer from '../components/MasterRecord/RecordDrawer';
 import { formatRecordFieldValue, formatRuleCondition, getRecordValueRow, loadRelatedRecordNames,} from '../components/MasterRecord/displayUtils';
+import ImageLightbox from '../components/shared/ImageLightBox'
 
 function DetailField({ label, value }) {
   return (
@@ -17,12 +18,23 @@ function DetailField({ label, value }) {
 function FieldValueDisplay({ field, record, relatedRecordNames }) {
   const valueRow = getRecordValueRow(record, field.id);
   const formatted = formatRecordFieldValue(field, valueRow, relatedRecordNames);
+  const [lightBox, setLightBox]= useState(null)
 
   if (formatted.kind === 'image') {
     return (
       <div className="component-detail-field">
         <p className="component-detail-label">{field.label || field.field_key}</p>
-        <img src={formatted.url} alt={formatted.alt} className="category-thumb" />
+        <img src={formatted.url} alt={formatted.alt} className="category-thumb" 
+        onClick={()=> setLightBox({src: formatted.url, alt: formatted.alt})}/>
+
+        {
+          lightBox && (
+            <ImageLightbox
+            src={lightBox.src}
+            alt={lightBox.alt}
+            onClose={()=>{setLightBox(null)}}/>
+          )
+        }
       </div>
     );
   }
@@ -37,10 +49,16 @@ function SectionValueCell({ field, rowValue, relatedRecordNames }) {
 
   if (formatted.kind === 'image') {
     return formatted.url ? (
-      <img src={formatted.url} alt={formatted.alt} className="category-thumb" />
-    ) : (
-      '—'
-    );
+      <img src={formatted.url} alt={formatted.alt} className="category-thumb" 
+      onClick={()=> setLightBox({src: formatted.url, alt: formatted.alt})}/>
+      
+    ) : ('—');
+    {lightBox && (
+      <ImageLightbox
+      src={lightBox.src}
+      alt={light.alt}
+      onClose={()=>{setLightBox(null)}}/>
+    )}
   }
 
   return formatted.text;
@@ -272,7 +290,15 @@ export default function MasterRecordDetailPage() {
                         item.image_url ? (
                           <div className="">
                             <DetailField label={item.key} value={null}/>
-                            <img src={item.image_url} alt={item.key || 'Category image'} className="category-thumb" />
+                            <img src={item.image_url} alt={item.key || 'Category image'} className="category-thumb"
+                            onClick={()=>{setLightBox({src: item.image_url, alt: item.key || "Category Image"})}} />
+
+                            {lightBox && (
+                              <ImageLightbox
+                              src={lightBox.src}
+                              alth={lightBox.alt}
+                              onClose={()=>{setLightBox(null)}}/>
+                            )}
                           </div>
                         ) : (
                           <p className="muted">No image</p>

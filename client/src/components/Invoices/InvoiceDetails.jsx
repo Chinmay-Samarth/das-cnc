@@ -33,6 +33,8 @@ export default function InvoiceDetails() {
   const [pdfWidth, setPdfWidth]   = useState(null);
   const [numPages, setNumPages]   = useState(null);
   const [invoice, setInvoice] = useState(null);
+  const [lineItems, setLineItems] = useState([])
+  const [taxLines, setTaxLines] = useState([])
 
   const onDocLoad = useCallback(({ numPages }) => setNumPages(numPages), []);
 
@@ -60,7 +62,6 @@ export default function InvoiceDetails() {
         const loadInvoice = await invoiceRes.data.invoice
         setInvoice(loadInvoice)
 
-        console.log(loadInvoice)
 
         setFields([
           {label: 'Vendor Name', value: loadInvoice.supplier_name},
@@ -71,8 +72,21 @@ export default function InvoiceDetails() {
           {label: 'Supplier Address', value: loadInvoice.supplier_address},
           {label: 'IRN', value: loadInvoice.IRN},
         ])
+        setLineItems(loadInvoice.line_items)
 
-          
+        if(loadInvoice.supplier_address_state === null){
+          loadInvoice.supplier_address_state = 'Karnataka'
+        }
+
+        if (loadInvoice.supplier_address_state === 'Karnataka' 
+          || loadInvoice.supplier_address_state.toLowerCase().includes("Bangalore".toLowerCase())
+          || loadInvoice.supplier_address_state.toLowerCase().includes("Bengaluru".toLowerCase())){
+          setTaxLines((loadInvoice.tax_items ?? []).filter(t => t.rate === 0.09))
+        }
+        else{
+          setTaxLines((loadInvoice.tax_items ?? []).filter(t => t.rate === 0.18))
+        }
+
       }
       catch(err){
         console.error("Failed to load invoice details", err)
@@ -90,6 +104,7 @@ export default function InvoiceDetails() {
       mounted = false
     };
   },[id])
+
 
   if (loading) return <div style={styles.stateScreen}>Loading invoice…</div>;
   if (error)   return <div style={styles.stateScreen}>Error: {error}</div>;
@@ -139,7 +154,64 @@ export default function InvoiceDetails() {
                 </div>
               )
             )}
-          </div>
+            {/* ── Line items ── */}
+            {lineItems.length > 0 && (
+              <>
+                <div style={styles.divider} />
+                <div style={styles.sectionLabel}>Items</div>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      {['Description', 'Qty', 'Rate', 'Total'].map(h => (
+                        <th key={h} style={styles.th}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lineItems.map((item, i) => (
+                      <tr key={i}>
+                        <td style={styles.td}>{item.description ?? '—'}</td>
+                        <td style={{ ...styles.td, ...styles.tdNum }}>{fmt(item.quantity)}</td>
+                        <td style={{ ...styles.td, ...styles.tdNum }}>₹{fmt(item.unit_price)}</td>
+                        <td style={{ ...styles.td, ...styles.tdNum }}>₹{fmt(item.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+
+            {/* ── Tax breakdown ── */}
+            {taxLines.length > 0 && (
+              <>
+                <div style={styles.divider} />
+                <div style={styles.sectionLabel}>Tax breakdown</div>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      {['Type', 'Rate', 'Base', 'Amount'].map(h => (
+                        <th key={h} style={styles.th}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {taxLines.map((tax, i) => (
+                      <tr key={i}>
+                        <td style={styles.td}>{tax.rate === 0.09 ? (i === 0 ? 'CGST' : 'SGST') : 'IGST'}</td>
+                        <td style={{ ...styles.td, ...styles.tdNum }}>{(tax.rate * 100).toFixed(0)}%</td>
+                        <td style={{ ...styles.td, ...styles.tdNum }}>
+                          {tax.base != null ? `₹${fmt(tax.base)}` : `₹${fmt(invoice.base_amount)}`}
+                        </td>
+                        <td style={{ ...styles.td, ...styles.tdNum }}>
+                          {tax.amount != null ? `₹${fmt(tax.rate * tax.base )}` : `₹${fmt(tax.rate * invoice.base_amount )}`}
+                        </td>
+                      </tr>
+                    ))}
+                          </tbody>
+                        </table>
+                      </>
+                    )}
+                    </div>
 
           {/* Totals */}
           <div style={styles.totalsBlock}>
@@ -225,6 +297,37 @@ export default function InvoiceDetails() {
 }
 
 const styles = {
+
+  sectionLabel: {
+  fontSize: 11, color: '#9ca3af',
+  textTransform: 'uppercase', letterSpacing: '0.05em',
+  padding: '4px 16px 6px',
+},
+table: {
+  width: '100%',
+  borderCollapse: 'collapse',
+  fontSize: 12,
+},
+th: {
+  padding: '4px 8px 4px 16px',
+  textAlign: 'left',
+  color: '#9ca3af',
+  fontWeight: 500,
+  fontSize: 11,
+  borderBottom: '1px solid #f3f4f6',
+},
+td: {
+  padding: '5px 8px 5px 16px',
+  color: '#374151',
+  borderBottom: '1px solid #f9fafb',
+  verticalAlign: 'top',
+},
+tdNum: {
+  textAlign: 'right',
+  fontFamily: 'monospace',
+  paddingRight: 16,
+  color: '#111827',
+},
   // ── page wrapper ──
   pageWrapper: {
     display: 'flex',
@@ -260,7 +363,7 @@ const styles = {
   // ── split layout ──
   root: {
     display: 'grid',
-    gridTemplateColumns: '280px 1fr',
+    gridTemplateColumns: '360px 1fr',
     flex: 1,             // fills remaining height after topBar
     overflow: 'hidden',  // clips children, no page scroll
   },
@@ -364,3 +467,4 @@ const styles = {
     height: '80vh', fontSize: 14, color: '#6b7280',
   },
 };
+

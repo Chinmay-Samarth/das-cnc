@@ -11,6 +11,10 @@ export function toDisplayTime(value) {
   });
 }
 
+export function toISODateString(date) {
+  return new Date(date).toLocaleDateString('en-CA');
+}
+
 export default function useDailyAttendance(initialDate = null) {
   const [daily, setDaily] = useState(null);
   const [loading, setLoading] = useState(true);

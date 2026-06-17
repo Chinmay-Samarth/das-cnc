@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import AddInvoiceButton from '../components/Invoices/AddInvoiceButton';
 import InvoiceDetails from '../components/Invoices/InvoiceDetails';
 import { useNavigate } from 'react-router-dom';
@@ -8,6 +8,14 @@ const fmt = (val) => isNaN(Number(val)) || val == null
 ? '—'
 : Number(val).toLocaleString('en-IN')
 
+const sortBy = (rows, key, asc) => {
+  return [...rows].sort((a, b) => {
+    const left = String(a[key] || '').toLowerCase();
+    const right = String(b[key] || '').toLowerCase();
+    if (left === right) return 0;
+    return asc ? (left < right ? -1 : 1) : left > right ? -1 : 1;
+  });
+};
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState([]);
@@ -15,6 +23,8 @@ export default function InvoicesPage() {
   const [error, setError] = useState('');
   const [selected, setSelected] = useState(null);
   const [search, setSearch] = useState("")
+  const [sortKey, setSortKey] = useState("invoice_date")
+  const [sortAsc, setSortAsc] = useState(false)
   const navigate = useNavigate()
 
   async function loadInvoices() {
@@ -40,6 +50,34 @@ export default function InvoicesPage() {
     console.log(invoices)
   }, []);
 
+  const filteredInvoices = useMemo(()=>{
+    const query = search.trim().toLowerCase();
+    const matches = invoices.filter((invoice)=>{
+      if(!query) return true;
+      return[
+        invoice.supplier_name,
+        invoice.invoice_number,
+        invoice.invoice_date,
+        invoice.total_amount,
+        invoice.due_date
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(query);
+    })
+
+    return sortBy(matches, sortKey, sortAsc)
+  })
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortAsc((current) => !current);
+    } else {
+      setSortKey(key);
+      setSortAsc(true);
+    }
+  };
+
   return (
     <main className="app-shell ">
       <header className="app-header">
@@ -58,16 +96,16 @@ export default function InvoicesPage() {
 
           <div className="employees-actions">
             {/*//! Add filering function */}
-            {/* <input
+            <input
               type="search"
               placeholder="Search invoices..."
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               className="search-input"
               aria-label="Search invoices"
-            /> */}
+            />
             <div>
-              <AddInvoiceButton onUploaded={() => loadInvoices()} />
+              <AddInvoiceButton onUploaded={async() => await loadInvoices()} />
             </div>
           </div>
         </div>
@@ -81,15 +119,20 @@ export default function InvoicesPage() {
             <table className="employees-table">
               <thead>
                 <tr>
-                  <th onClick={()=> null}>Vendor <span className="sort-indicator"></span></th>
-                  <th onClick={()=> null}>Invoice # <span className="sort-indicator"></span></th>
-                  <th onClick={()=> null}>Date <span className="sort-indicator"></span></th>
-                  <th onClick={()=> null}>Total <span className="sort-indicator"></span></th>
-                  <th onClick={()=> null}>Due Date <span className="sort-indicator"></span></th>
+                  <th onClick={()=> handleSort('supplier_name')}>
+                    Vendor <span className="sort-indicator">{sortKey === 'supplier_name' ? (sortAsc ? ' ▲' : ' ▼') : ''}</span></th>
+                  <th onClick={()=> handleSort('invoice_number')}>
+                    Invoice # <span className="sort-indicator">{sortKey === 'invoice_number' ? (sortAsc ? ' ▲' : ' ▼') : ''}</span></th>
+                  <th onClick={()=> handleSort('invoice_date')}>
+                    Date <span className="sort-indicator">{sortKey ==='invoice_date' ? (sortAsc ? ' ▲' : ' ▼') : ''}</span></th>
+                  <th onClick={()=> handleSort('total_amount')}>
+                    Total <span className="sort-indicator">{sortKey === 'total_amount' ? (sortAsc ? ' ▲' : ' ▼') : ''}</span></th>
+                  <th onClick={()=> handleSort('due_date')}>
+                    Due Date <span className="sort-indicator">{sortKey === 'due_date' ? (sortAsc ? ' ▲' : ' ▼') : ''}</span></th>
                 </tr>
               </thead>
               <tbody>
-                {invoices.map((item) => (
+                {filteredInvoices.map((item) => (
                   <tr 
                   key={item.id} 
                   role='button'
@@ -104,7 +147,7 @@ export default function InvoicesPage() {
                     <td>{item.supplier_name || '—'}</td>
                     <td>{item.invoice_number || '—'}</td>
                     <td>{item.invoice_date || item.created_at || '—'}</td>
-                    <td>₹{fmt(item.total_amount) || '—'}</td>
+                    <td >₹{fmt(item.total_amount) || '—'}</td>
                     <td>{item.due_date || '-'}</td>
                   </tr>
                 ))}
