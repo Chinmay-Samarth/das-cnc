@@ -10,8 +10,11 @@ const fmt = (val) => isNaN(Number(val)) || val == null
 
 const sortBy = (rows, key, asc) => {
   return [...rows].sort((a, b) => {
-    const left = String(a[key] || '').toLowerCase();
-    const right = String(b[key] || '').toLowerCase();
+    const getValue = (row) => key === 'supplier_name'
+      ? row.suppliers?.name ?? row.supplier_name ?? ''
+      : row[key] ?? '';
+    const left = String(getValue(a)).toLowerCase();
+    const right = String(getValue(b)).toLowerCase();
     if (left === right) return 0;
     return asc ? (left < right ? -1 : 1) : left > right ? -1 : 1;
   });
@@ -32,6 +35,7 @@ export default function InvoicesPage() {
     try {
       setLoading(true);
       const { data } = await api.get('/invoices/list');
+      console.dir(data[0], {depth: null})
       setInvoices(data);
     } catch (err) {
       console.error('Failed to load invoices', err);
@@ -55,7 +59,7 @@ export default function InvoicesPage() {
     const matches = invoices.filter((invoice)=>{
       if(!query) return true;
       return[
-        invoice.supplier_name,
+        invoice.suppliers?.name,
         invoice.invoice_number,
         invoice.invoice_date,
         invoice.total_amount,
@@ -67,7 +71,7 @@ export default function InvoicesPage() {
     })
 
     return sortBy(matches, sortKey, sortAsc)
-  })
+  },[invoices, search, sortKey, sortAsc])
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -144,7 +148,7 @@ export default function InvoicesPage() {
                     }
                   }}
                   style={{ cursor: 'pointer' }}>
-                    <td>{item.supplier_name || '—'}</td>
+                    <td>{item.suppliers?.name || '—'}</td>
                     <td>{item.invoice_number || '—'}</td>
                     <td>{item.invoice_date || item.created_at || '—'}</td>
                     <td >₹{fmt(item.total_amount) || '—'}</td>

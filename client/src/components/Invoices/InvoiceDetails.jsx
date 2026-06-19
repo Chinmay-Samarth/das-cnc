@@ -64,23 +64,23 @@ export default function InvoiceDetails() {
 
 
         setFields([
-          {label: 'Vendor Name', value: loadInvoice.supplier_name},
+          {label: 'Vendor Name', value: loadInvoice.suppliers.name},
           {label: 'Invoice Number', value: loadInvoice.invoice_number},
           {label: 'Invoice Date', value: loadInvoice.invoice_date},
           {label: 'Due Date', value: loadInvoice.due_date},
-          {label: 'Vendor GSTIN', value: loadInvoice.supplier_GSTIN},
-          {label: 'Supplier Address', value: loadInvoice.supplier_address},
+          {label: 'Vendor GSTIN', value: loadInvoice.suppliers.GSTIN},
+          {label: 'Supplier Address', value: loadInvoice.suppliers.billing_address},
           {label: 'IRN', value: loadInvoice.IRN},
         ])
         setLineItems(loadInvoice.line_items)
 
-        if(loadInvoice.supplier_address_state === null){
-          loadInvoice.supplier_address_state = 'Karnataka'
+        if(loadInvoice.suppliers.state === null){
+          loadInvoice.suppliers.state = 'Karnataka'
         }
 
-        if (loadInvoice.supplier_address_state === 'Karnataka' 
-          || loadInvoice.supplier_address_state.toLowerCase().includes("Bangalore".toLowerCase())
-          || loadInvoice.supplier_address_state.toLowerCase().includes("Bengaluru".toLowerCase())){
+        if (loadInvoice.suppliers.state === 'Karnataka' 
+          || loadInvoice.suppliers.state.toLowerCase().includes("Bangalore".toLowerCase())
+          || loadInvoice.suppliers.state.toLowerCase().includes("Bengaluru".toLowerCase())){
           setTaxLines((loadInvoice.tax_items ?? []).filter(t => t.rate === 0.09))
         }
         else{

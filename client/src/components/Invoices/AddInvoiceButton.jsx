@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import api from '../../api/client';
 
 const POLL_INTERVAL = 3000;
-const MAX_POLLS = 20;
+const MAX_POLLS = 40;
 
 const STAGES = {
   idle: {pct:0, label:"Idle"},
@@ -20,15 +20,17 @@ export default function AddInvoiceButton({ onUploaded }) {
 
   const handleClick = () => inputRef.current?.click();
 
-  const pollInvoice = (async(invoiceId)=>{
+  const pollInvoice = async (invoiceId) => {
     for (let i=0; i<MAX_POLLS; i++){
       await new Promise(r => setTimeout(r,POLL_INTERVAL))
       const {data} = await api.get(`/invoices/${invoiceId}`)
-      setStatus(data.status);
-      if (data.status !== 'extracting' && data.status !== "saving") return data;
+      const invoice = data.invoice;
+      const nextStatus = invoice?.status ?? 'extracting';
+      setStatus(nextStatus);
+      if (nextStatus !== 'extracting' && nextStatus !== "saving") return invoice;
     }
     throw new Error('Processing timeout. Check back shortly.')
-  })
+  }
 
   const handleChange = async (e) => {
     const file = e.target.files?.[0];
@@ -48,12 +50,16 @@ export default function AddInvoiceButton({ onUploaded }) {
       setStatus(data.status ?? 'extracting')
       const finalInvoice = await pollInvoice(invoiceId);
       
+      if(!finalInvoice){
+        throw new Error('Invoice processing response unavailable')
+      }
+
       if(finalInvoice.status === "error"){
         throw new Error('OCR Processing failed')
       }
 
       setStatus('done')
-      if(onUploaded) onUploaded()
+      if(onUploaded) await onUploaded(finalInvoice)
     } catch (err) {
       console.error('Upload failed', err);
       alert(err.response?.data?.error || err.message || 'Upload failed');

@@ -4,6 +4,7 @@ const Mindee = require("mindee")
 const {createClient} = require("@supabase/supabase-js")
 const jwt = require("jsonwebtoken");
 const { invoice } = require("mindee/src/v1/product");
+const {createSupplierFromInvoice} = require('../services/supplierEngine')
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -15,6 +16,15 @@ const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
 const upload = multer({ storage: multer.memoryStorage()});
 const router = express.Router();
 const mindeeClient = new Mindee.Client({ apiKey: process.env.MINDEE_API_KEY });
+
+async function updateInvoiceStatus(invoiceId, status) {
+  const { error } = await supabase
+    .from('invoices')
+    .update({ status })
+    .eq('id', invoiceId);
+
+  if (error) throw error;
+}
 
 function verifyEmployeeAuth(req, res, next) {
   try {
@@ -59,6 +69,8 @@ async function processInvoiceOCR(invoiceId, inputSource, publicUrl){
   // const doc = apiResponse.document.inference.prediction
   const doc = apiResponse.rawHttp.inference.result.fields
 
+  await updateInvoiceStatus(invoiceId, 'saving')
+
 
   let supplier_GSTIN
   if(doc.supplier_company_registration !== undefined){
@@ -76,11 +88,40 @@ async function processInvoiceOCR(invoiceId, inputSource, publicUrl){
     }
   })
 
+  const {data: existingSupplier, error: esError } = await supabase
+  .from('suppliers')
+  .select('id')
+  .eq('GSTIN', supplier_GSTIN)
+  .maybeSingle()
+
+  if(esError) throw esError
+
+  let supplierId
+
+  if(existingSupplier !== null) {
+    supplierId = existingSupplier.id
+  }
+  else{
+    const supplierPayLoad = {
+      name: doc.supplier_name?.value || null,
+      GSTIN: supplier_GSTIN,
+      state: doc.supplier_address.fields.state.value || null,
+      IFSC: doc.supplier_payment_details.items[0].fields.swift.value || null,
+      account_number: doc.supplier_payment_details.items[0].fields.account_number.value || null,
+      email: doc.supplier_payment_details.supplier_email?.value ?? null,
+      billing_address: doc.supplier_address.fields.address.value || null
+    }
+
+    const data = await createSupplierFromInvoice(supplierPayLoad)
+
+    supplierId = data[0].id
+  }
+
+
   // 
   const invoiceData = {
     status: "pending",
     file_url: publicUrl,
-    supplier_name: doc.supplier_name?.value || null,
     invoice_number: doc.invoice_number?.value || null,
     invoice_date: doc.date?.value || null,
     due_date: doc.due_date?.value || null,
@@ -100,18 +141,16 @@ async function processInvoiceOCR(invoiceId, inputSource, publicUrl){
     })),
     raw_ocr_response: doc,
     customer_GSTIN: doc.customer_company_registration.items[0].fields.number.value,
-    supplier_GSTIN : supplier_GSTIN,
-    supplier_address: doc.supplier_address.fields.address.value,
-    supplier_address_state: doc.supplier_address.fields.state.value,
     IRN: irn,
+    supplier_id: supplierId
   }
   const {data: invoice, error:dbError} = await supabase
   .from('invoices')
   .update(invoiceData)
   .eq('id', invoiceId)
 
-
   if (dbError) throw dbError
+
 }
 
 router.post("/upload", verifyEmployeeAuth, upload.single('invoice'), async (req,res)=>{
@@ -152,8 +191,13 @@ router.post("/upload", verifyEmployeeAuth, upload.single('invoice'), async (req,
 
     res.json({status: "extracting", id: invoice.id})
     
-    await processInvoiceOCR(invoice.id, inputSource, publicUrl).catch(err => {
-    console.error('Invoice processing error', err);
+    await processInvoiceOCR(invoice.id, inputSource, publicUrl).catch(async err => {
+      console.error('Invoice processing error', err);
+      try {
+        await updateInvoiceStatus(invoice.id, 'error');
+      } catch (statusErr) {
+        console.error('Unable to mark invoice processing as failed', statusErr);
+      }
     })
   }
   catch(err){
@@ -167,7 +211,8 @@ router.get('/list', verifyEmployeeAuth, async (req,res)=>{
 
     const{data:invoices, error }= await supabase
     .from('invoices')
-    .select("*")
+    .select(`*,
+      suppliers(name)`)
     .order("created_at", {ascending: false})
     
     if (error) return res.status(500).json({erorr : error.message})
@@ -184,7 +229,15 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
     const invoiceId = req.params.id;
     const { data, error } = await supabase
       .from('invoices')
-      .select(`*`)
+      .select(`*,
+        suppliers(
+        id, 
+        name,
+        billing_address,
+        account_number,
+        ifsc,
+        GSTIN,
+        state)`)
       .eq('id', invoiceId)
       .maybeSingle();
 
