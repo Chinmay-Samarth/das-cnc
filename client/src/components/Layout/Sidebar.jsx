@@ -6,6 +6,8 @@ const navItems = [
   { to: '/home', label: 'Home' },
   { to: '/attendance', label: 'Attendance' },
   { to: '/employees', label: 'Employees' },
+  { to: '/suppliers', label: 'Suppliers' },
+  { to: '/customers', label: 'Customers'},
   { to: '/invoices', label: 'Invoices' },
   { to: '/components', label: 'Components' },
 ];

@@ -736,6 +736,17 @@ button:hover:not(:disabled) {
 
 }
 
+.address-card{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 15px 0px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fbff;
+  padding: 14px;
+  margin-top: 14px;
+}
+
 .employee-status-chip {
   display: inline-flex;
   align-items: center;
@@ -1667,7 +1678,7 @@ textarea {
 
 .component-detail-label {
   margin: 0;
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1676,10 +1687,12 @@ textarea {
 
 .component-detail-value {
   margin: 0;
-  font-size: 15px;
+  font-size: 14px;
   color: #0f172a;
   white-space: pre-wrap;
 }
+
+
 
 .component-detail-stack {
   display: grid;

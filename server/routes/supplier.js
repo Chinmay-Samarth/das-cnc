@@ -2,8 +2,7 @@ const express = require('express')
 const jwt = require('jsonwebtoken')
 const multer = require('multer')
 const {createClient} = require('@supabase/supabase-js');
-const { off } = require('cluster');
-const { stat } = require('fs');
+const path = require('path');
 
 const router = express.Router();
 const supabase = createClient(
@@ -108,7 +107,7 @@ router.post('/', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>{
             PAN_no,
             contact_person,
             contact_number,
-            iso_certificate_url,
+            email,
             customer_recommended,
             bank_name,
             account_number,
@@ -144,14 +143,15 @@ router.post('/', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>{
             official_address: official_address,
             billing_address: billing_address || null,
             GSTIN: GSTIN,
-            PAN_no: PAN_no || null,
+            pan_no: PAN_no || null,
             contact_person: contact_person || null,
             contact_number: contact_number || null,
-            customer_recommended: customer_recommended,
+            email: email || null,
+            customer_recommended: customer_recommended === 'true' || customer_recommended === true,
             bank_name: bank_name,
             account_number: account_number,
             account_type: account_type || null,
-            IFSC: IFSC,
+            ifsc: IFSC,
             payment_details: payment_details || null
         }
 
@@ -165,15 +165,15 @@ router.post('/', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>{
         const createdSupplier = newSupplier[0]
 
         if(req.file){
-            const certUrl = await uploadCertificatePhoto(createdSupplier, req.file)
-            if (photoUrl){
+            const certUrl = await uploadCertificatePhoto(createdSupplier.id, req.file)
+            if (certUrl){
                 const {error: certificateError} = await supabase
                 .from('suppliers')
                 .update({iso_certificate_url: certUrl})
                 .eq('id', createdSupplier.id)
-            }
 
-            if (certificateError) throw certificateError
+                if (certificateError) throw certificateError
+            }
 
             createdSupplier.iso_certificate_url = certUrl
         }
@@ -186,6 +186,73 @@ router.post('/', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>{
     catch(err){
         console.error("Supplier Creation error", err)
         return res.status(500).json({error: "Unable to create Supplier"})
+    }
+})
+
+router.put('/:id', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>{
+    try {
+        const supplierId = req.params.id
+        const {
+            name,
+            official_address,
+            billing_address,
+            GSTIN,
+            PAN_no,
+            contact_person,
+            contact_number,
+            email,
+            customer_recommended,
+            bank_name,
+            account_number,
+            account_type,
+            IFSC,
+            payment_details
+        } = req.body
+
+        if (!name || !GSTIN || !account_number ){
+            return res.status(400).json({
+                error: 'name, GSTIN, account number are required'
+            })
+        }
+
+        const updatePayload = {
+            name: name,
+            official_address: official_address || null,
+            billing_address: billing_address || null,
+            GSTIN: GSTIN,
+            pan_no: PAN_no || null,
+            contact_person: contact_person || null,
+            contact_phone: contact_number || null,
+            email: email || null,
+            customer_recommended: customer_recommended === 'true' || customer_recommended === true,
+            bank_name: bank_name || null,
+            account_number: account_number,
+            account_type: account_type || null,
+            ifsc: IFSC || null,
+            payment_details: payment_details || null
+        }
+
+        if(req.file){
+            updatePayload.iso_certificate_url = await uploadCertificatePhoto(supplierId, req.file)
+        }
+
+        const {data: updatedSupplier, error:updateError} = await supabase
+        .from('suppliers')
+        .update(updatePayload)
+        .eq('id', supplierId)
+        .select()
+        .single()
+
+        if(updateError) throw updateError
+
+        return res.json({
+            message: 'Supplier Updated Successfully',
+            supplier: updatedSupplier,
+        })
+    }
+    catch(err){
+        console.error("Supplier update error", err)
+        return res.status(500).json({error: "Unable to update Supplier"})
     }
 })
 
