@@ -29,10 +29,8 @@ function verifyEmployeeAuth(req, res, next) {
   }
 }
 
-async function uploadEmployeePhoto(employeeId, file) {
-  if (!file) {
-    return null;
-  }
+async function uploadFile(employeeId, file) {
+  if (!file) return null;
 
   const extension = path.extname(file.originalname).toLowerCase() || '.jpg';
   const filePath = `${employeeId}${extension}`;
@@ -73,7 +71,7 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
         id,
         employee_code,
         full_name,
-        role,
+        job_description,
         is_active,
         img_url,
         departments(name),
@@ -90,7 +88,7 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
       id: employee.id,
       employee_code: employee.employee_code,
       full_name: employee.full_name,
-      role: employee.role,
+      job_description: employee.job_description,
       department: employee.departments?.name || null,
       shift: employee.shifts?.name || null,
       status: employee.is_active ? 'Active' : 'Inactive',
@@ -146,16 +144,7 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
     const employeeId = req.params.id;
     const { data, error } = await supabase
       .from('employees')
-      .select(`
-        id,
-        employee_code,
-        full_name,
-        role,
-        is_active,
-        department_id,
-        shift_id,
-        created_at,
-        img_url,
+      .select(`*,
         departments(name),
         shifts(name)
       `)
@@ -174,7 +163,7 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
       id: data.id,
       employee_code: data.employee_code,
       full_name: data.full_name,
-      role: data.role,
+      job_description: data.job_description,
       department: data.departments?.name || null,
       shift: data.shifts?.name || null,
       status: data.is_active ? 'Active' : 'Inactive',
@@ -183,6 +172,20 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
       department_id: data.department_id,
       shift_id: data.shift_id,
       img_url: data.img_url || null,
+      temporary_address: data.temporary_address || null,
+      permanent_address: data.permanent_address || null,
+      bank_name: data.bank_name || null,
+      bank_account_number: data.bank_account_number || null,
+      ifsc: data.ifsc || null,
+      basic_salary: data.basic_salary || null,
+      PA : data.PA || null,
+      PT: data.PT || null,
+      allowance : data.allowance || null,
+      aadhar_url : data.aadhar_url || null,
+      marks_card_url : data.marks_card_url || null,
+      work_experience_url: data.work_experience_url || null,
+      thumb_impression_url : data.thumb_impression_url || null,
+      ESI_no: data.ESI_no || null
     };
 
     return res.json({ employee });
@@ -192,15 +195,32 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
   }
 });
 
-router.post('/', verifyEmployeeAuth, upload.single('photo'), async (req, res) => {
+router.post('/', verifyEmployeeAuth, upload.fields([
+  {name: 'photo', maxCount: 1},
+  {name: 'aadhar', maxCount: 1},
+  {name: 'marks_card', maxCount: 1},
+  {name: 'work_experience', maxCount: 1},
+  {name: 'thumb_impression', maxCount: 1},
+
+]), async (req, res) => {
   try {
     const {
       employee_code,
       full_name,
-      role,
+      job_description,
       department_id,
       shift_id,
       password,
+      temporary_address,
+      permanent_address,
+      bank_name,
+      bank_account_number,
+      ifsc,
+      PT,
+      basic_salary,
+      PA,
+      allowance,
+      ESI_no
     } = req.body;
 
     if (!employee_code || !full_name || !role) {
@@ -228,11 +248,20 @@ router.post('/', verifyEmployeeAuth, upload.single('photo'), async (req, res) =>
     const insertPayload = {
       employee_code: employee_code.toUpperCase(),
       full_name,
-      role,
+      job_description,
       department_id: department_id || null,
       shift_id: shift_id || null,
       password: password || null,
       is_active: true,
+      temporary_address: temporary_address|| null,
+      permanent_address: permanent_address||null,
+      bank_name: bank_name || null,
+      bank_account_number: bank_account_number || null,
+      ifsc: ifsc || null,
+      basic_salary: basic_salary || null,
+      PA: PA || null,
+      allowance: allowance || null,
+      ESI_no
     };
 
     const { data: newEmployee, error: insertError } = await supabase
@@ -246,20 +275,36 @@ router.post('/', verifyEmployeeAuth, upload.single('photo'), async (req, res) =>
 
     const createdEmployee = newEmployee[0];
 
-    if (req.file) {
-      const photoUrl = await uploadEmployeePhoto(createdEmployee.id, req.file);
-      if (photoUrl) {
-        const { error: photoUpdateError } = await supabase
-          .from('employees')
-          .update({ img_url: photoUrl })
-          .eq('id', createdEmployee.id);
+    if(req.file){
+      const photo = req.files?.photo?.[0]
+      const aadhar = req.files?.aadhar?.[0]
+      const marksCard = req.files?.marksCard?.[0]
+      const workExperience  = req.files?.workExperience?.[0]
+      const thumbImpression = req.files?.thumbImpression?.[0]
 
-        if (photoUpdateError) {
-          throw photoUpdateError;
-        }
+      const photoUrl = await uploadFile(createdEmployee.id, photo)
+      const aadharUrl = await uploadFile(createdEmployee.id, aadhar)
+      const markCardUrl = await uploadFile(createdEmployee.id, marksCard)
+      const workExperienceUrl = await uploadFile(createdEmployee.id, workExperience)
+      const thumbExperienceUrl = await uploadFile(createdEmployee.id, thumbImpression)
 
-        createdEmployee.img_url = photoUrl;
-      }
+      const {error: filesUploadError} = await supabase
+      .from('employees')
+      .update({ img_url: photoUrl,
+        aadhar_url: aadharUrl,
+        marks_card_url: markCardUrl,
+        work_experience_url: workExperienceUrl,
+        thumb_impression_url: thumbExperienceUrl
+      })
+      .eq('id', createdEmployee.id)
+
+      if (filesUploadError) throw filesUploadError
+
+      createdEmployee.img_url = photoUrl
+      createdEmployee.aadhar_url = aadharUrl
+      createdEmployee.marks_card_url = markCardUrl
+      createdEmployee.work_experience_url = workExperienceUrl
+      createdEmployee.thumb_impression_url = thumbExperienceUrl
     }
 
     return res.status(201).json({
@@ -272,17 +317,34 @@ router.post('/', verifyEmployeeAuth, upload.single('photo'), async (req, res) =>
   }
 });
 
-router.put('/:id', verifyEmployeeAuth, upload.single('photo'), async (req, res) => {
+router.put('/:id', verifyEmployeeAuth, upload.fields([
+  {name: 'photo', maxCount: 1},
+  {name: 'aadhar', maxCount: 1},
+  {name: 'marks_card', maxCount: 1},
+  {name: 'work_experience', maxCount: 1},
+  {name: 'thumb_impression', maxCount: 1},
+
+]), async (req, res) => {
   try {
     const employeeId = req.params.id;
     const {
       employee_code,
       full_name,
-      role,
+      job_description,
       department_id,
       shift_id,
       password,
       is_active,
+      ESI_no,
+      temporary_address,
+      permanent_address,
+      bank_name,
+      bank_account_number,
+      ifsc,
+      basic_salary,
+      PT,
+      PA,
+      allowance
     } = req.body;
 
     const updatePayload = {};
@@ -307,17 +369,62 @@ router.put('/:id', verifyEmployeeAuth, upload.single('photo'), async (req, res) 
     }
 
     if (full_name) updatePayload.full_name = full_name;
-    if (role) updatePayload.role = role;
+    if (job_description) updatePayload.job_description = job_description;
     if (department_id !== undefined) updatePayload.department_id = department_id || null;
     if (shift_id !== undefined) updatePayload.shift_id = shift_id || null;
     if (password !== undefined) updatePayload.password = password || null;
     if (is_active !== undefined) updatePayload.is_active = parseBoolean(is_active);
+    if(ESI_no !== undefined) updatePayload.ESI_no = ESI_no || null;
+    if(temporary_address !== undefined) updatePayload.temporary_address = temporary_address || null;
+    if(permanent_address!== undefined) updatePayload.permanent_address = permanent_address || null;
+    if(bank_name !== undefined) updatePayload.bank_name = bank_name || null;
+    if(bank_account_number !== undefined) updatePayload.bank_account_number = bank_account_number || null;
+    if(ifsc !== undefined) updatePayload.ifsc = ifsc || null;
+    if(basic_salary!==undefined) updatePayload.basic_salary = basic_salary || null;
+    if(PA!==undefined) updatePayload.PA = PA || null;
+    if(PT!==undefined) updatePayload.PT = PT || null;
+    if (allowance!== undefined) updatePayload.allowance = allowance || null;
+    
+    const photo = req.files?.photo?.[0];
+    const aadhar = req.files?.aadhar?.[0];
+    const marksCard = req.files?.marks_card?.[0];
+    const workExperience = req.files?.work_experience?.[0];
+    const thumbImpression = req.files?.thumb_impression?.[0];
 
-    if (req.file) {
-      const photoUrl = await uploadEmployeePhoto(employeeId, req.file);
-      if (photoUrl) {
-        updatePayload.img_url = photoUrl;
-      }
+    if (photo) {
+      updatePayload.img_url = await uploadEmployeeDocument(
+        employeeId,
+        photo,
+      );
+    }
+
+    if (aadhar) {
+      updatePayload.aadhar_url = await uploadEmployeeDocument(
+        employeeId,
+        aadhar,
+      );
+    }
+
+    if (marksCard) {
+      updatePayload.marks_card_url = await uploadEmployeeDocument(
+        employeeId,
+        marksCard,
+      );
+    }
+
+    if (workExperience) {
+      updatePayload.work_experience_url = await uploadEmployeeDocument(
+        employeeId,
+        workExperience,
+
+      );
+    }
+
+    if (thumbImpression) {
+      updatePayload.thumb_impression_url = await uploadEmployeeDocument(
+        employeeId,
+        thumbImpression,
+      );
     }
 
     if (Object.keys(updatePayload).length === 0) {

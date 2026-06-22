@@ -628,16 +628,27 @@ button:hover:not(:disabled) {
 
 .summary-metrics-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
 .summary-metric {
+  display: grid;
+  align-items: center;
+  /* border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fbff; */
+  padding: 1vh;
+}
+
+.attendance-metric{
+  padding: 10px;
+  background-color: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
-  background: #f8fbff;
-  padding: 14px;
 }
+
+
 
 .summary-metric h2 {
   margin: 4px 0 0;

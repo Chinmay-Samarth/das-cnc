@@ -113,3 +113,4 @@ export default function AttendanceGauge({ score = 0, size = 220 }) {
     </div>
   );
 }
+

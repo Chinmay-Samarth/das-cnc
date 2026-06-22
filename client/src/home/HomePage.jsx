@@ -1,5 +1,9 @@
 import useDailyAttendance, { toDisplayTime } from '../attendance/useDailyAttendance';
 import { useNavigate } from 'react-router-dom';
+import AttendanceGauge from '../components/shared/Attendancegauge';
+import StatTile from '../components/shared/StatTile';
+
+
 
 export default function HomePage() {
   const {
@@ -11,6 +15,8 @@ export default function HomePage() {
     absentCount,
     totalCount,
   } = useDailyAttendance();
+
+  const score = Math.min(100, Math.round((presentCount / totalCount) * 100)) 
 
   const navigate = useNavigate();
   return (
@@ -28,21 +34,25 @@ export default function HomePage() {
           <h2>Daily Attendance Summary</h2>
           <span className="count-chip">{daily?.date || 'Today'}</span>
         </div>
-          {/* <p className="muted">Live from daily attendance register ({daily?.date || 'Today'})</p> */}
         <div className="summary-metrics-grid">
           <div className="summary-metric">
-            <p className="kpi-label">Present</p>
-            <h2>{presentCount}</h2>
+            <AttendanceGauge score={score} size={220}/>
           </div>
+
           <div className="summary-metric">
-            <p className="kpi-label">Absent</p>
-            <h2>{absentCount}</h2>
+            <StatTile label="Present" value={presentCount} accent="#059669"/>
           </div>
+
           <div className="summary-metric">
-            <p className="kpi-label">Total Workforce</p>
-            <h2>{totalCount}</h2>
+            <StatTile label="Absent" value={absentCount} accent="#dc2626"/>
+          </div>
+
+          <div className="summary-metric">
+            <StatTile label="Total Workforce" value={totalCount} accent="#1b54cf"/>
           </div>
         </div>
+          {/* <p className="muted">Live from daily attendance register ({daily?.date || 'Today'})</p> */}
+
 
         <div className="section-header">
           <h2>Latest Punch Snapshot</h2>

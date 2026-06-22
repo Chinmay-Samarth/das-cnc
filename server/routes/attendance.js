@@ -303,7 +303,7 @@ router.get('/daily', verifyEmployeeAuth, async (req, res) => {
         id,
         employee_code,
         full_name,
-        role,
+        job_description,
         department:departments(name),
         shift:shifts(name,start_time),
         attendance_records!attendance_records_employee_id_fkey (
@@ -343,7 +343,7 @@ router.get('/daily', verifyEmployeeAuth, async (req, res) => {
         id: emp.id,
         employee_code: emp.employee_code,
         full_name: emp.full_name,
-        role: emp.role,
+        role: emp.job_description,
 
         department:
           emp.department?.name || null,

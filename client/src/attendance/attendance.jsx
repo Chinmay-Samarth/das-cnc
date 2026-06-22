@@ -3,14 +3,17 @@ import * as XLSX from 'xlsx';
 import api from '../api/client';
 import useDailyAttendance, { toDisplayTime } from './useDailyAttendance';
 import { useNavigate } from 'react-router-dom';
-
-
+import AttendanceGauge from '../components/shared/Attendancegauge';
+import StatTile from '../components/shared/StatTile';
 
 export default function AttendancePage() {
   const [isExporting, setIsExporting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const { daily, loading, error, absentees, latestRecords, presentCount, absentCount, totalCount, setDate, refresh } =
     useDailyAttendance();
+
+
+  const score =Math.min(100, Math.round((presentCount / totalCount) * 100)) 
 
   // local selectedDate mirrors the current query date shown in the date input
   const [selectedDate, setSelectedDate] = useState('');
@@ -170,44 +173,22 @@ export default function AttendancePage() {
         </button>
       </div>
 
-      <section className="attendance-grid">
-        <article className="card kpi-card headcount-combined-card">
-          <p className="kpi-label">Overview</p>
-          <div className="headcount-combined-grid">
-            <div>
-              <p className="muted">Present</p>
-              <h2>{presentCount}</h2>
-            </div>
-            <div>
-              <p className="muted">Absent</p>
-              <h2>{absentCount}</h2>
-            </div>
-            <div>
-              <p className="muted">Total Workforce</p>
-              <h2>{totalCount}</h2>
-            </div>
-          </div>
-          <p className="status-pill">{daily?.date || 'Today'}</p>
-        </article>
 
-        <article className="card kpi-card">
-          <p className="kpi-label">Present</p>
-          <h2>{presentCount}</h2>
-          <p className="muted">On-site and marked present today</p>
-        </article>
+      <div className="summary-metrics-grid attendance-metric">  
+        <div className="summary-metric ">
+          <AttendanceGauge score={score} size={220}/>
+        </div>
+        <div className="summary-metric">
+          <StatTile value={presentCount} label="Present" accent="#059669" className="attendance-stat"/>
+        </div>
+        <div className="summary-metric">
+          <StatTile value={absentCount} label="Absent" accent="#dc2626" />
+        </div>
+        <div className="summary-metric">
+          <StatTile value={totalCount} label="Total Workforce" accent="#1b54cf" />
+        </div>
+      </div>
 
-        <article className="card kpi-card">
-          <p className="kpi-label">Absent</p>
-          <h2>{absentCount}</h2>
-          <p className="muted">Employees missing attendance today</p>
-        </article>
-
-        <article className="card kpi-card">
-          <p className="kpi-label">Total Workforce</p>
-          <h2>{totalCount}</h2>
-          <p className="status-pill">{daily?.date || 'Today'}</p>
-        </article>
-      </section>
 
       <section className="card">
         <div className="section-header">

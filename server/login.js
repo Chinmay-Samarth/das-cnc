@@ -66,14 +66,7 @@ router.post('/login', async (req, res) => {
 
     const { data: employee, error } = await supabase
       .from('employees')
-      .select(`
-        id,
-        employee_code,
-        full_name,
-        role,
-        password,
-        password_hash,
-        is_active,
+      .select(`*,
         departments(name),
         shifts(name)
       `)
