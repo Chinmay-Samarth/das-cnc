@@ -14,7 +14,7 @@ export default function AddEmployeePage() {
   const [formData, setFormData] = useState({
     employee_code: '',
     full_name: '',
-    role: 'OPERATOR',
+    job_description: 'OPERATOR',
     department_id: '',
     shift_id: '',
     password: '',
@@ -72,7 +72,7 @@ export default function AddEmployeePage() {
       const payload = new FormData();
       payload.append('employee_code', formData.employee_code.trim());
       payload.append('full_name', formData.full_name.trim());
-      payload.append('role', formData.role);
+      payload.append('job_description', formData.job_description);
       payload.append('department_id', formData.department_id || '');
       payload.append('shift_id', formData.shift_id || '');
       payload.append('password', formData.password || '');
@@ -134,12 +134,12 @@ export default function AddEmployeePage() {
             />
           </label>
 
-          <label htmlFor="role">
-            Role <span style={{ color: '#b91c1c' }}>*</span>
+          <label htmlFor="job_description">
+            Job Description <span style={{ color: '#b91c1c' }}>*</span>
             <select
-              id="role"
-              name="role"
-              value={formData.role}
+              id="job_description"
+              name="job_description"
+              value={formData.job_description}
               onChange={handleChange}
               required
               disabled={submitting}

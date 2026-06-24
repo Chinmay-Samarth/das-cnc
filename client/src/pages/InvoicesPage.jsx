@@ -124,7 +124,7 @@ export default function InvoicesPage() {
               <thead>
                 <tr>
                   <th onClick={()=> handleSort('supplier_name')}>
-                    Vendor <span className="sort-indicator">{sortKey === 'supplier_name' ? (sortAsc ? ' ▲' : ' ▼') : ''}</span></th>
+                    Vendor </th>
                   <th onClick={()=> handleSort('invoice_number')}>
                     Invoice # <span className="sort-indicator">{sortKey === 'invoice_number' ? (sortAsc ? ' ▲' : ' ▼') : ''}</span></th>
                   <th onClick={()=> handleSort('invoice_date')}>

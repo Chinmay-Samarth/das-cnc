@@ -223,9 +223,9 @@ router.post('/', verifyEmployeeAuth, upload.fields([
       ESI_no
     } = req.body;
 
-    if (!employee_code || !full_name || !role) {
+    if (!employee_code || !full_name || !job_description) {
       return res.status(400).json({
-        error: 'employee_code, full_name, and role are required',
+        error: 'employee_code, full_name, and Job description are required',
       });
     }
 

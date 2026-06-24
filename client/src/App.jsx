@@ -11,16 +11,17 @@ import SupplierDetailsPage from './suppliers/SupplierDetailsPage';
 import HomePage from './home/HomePage';
 import { MastersNavProvider } from './context/MastersNavContext';
 import AppLayout from './components/Layout/AppLayout';
-import MasterBuilderPage from './pages/MasterBuilderPage';
 import ComponentsPage from './pages/ComponentsPage';
 import ComponentDetailPage from './pages/ComponentDetailPage';
-import MasterPage from './pages/MasterPage';
-import MasterRecordDetailPage from './pages/MasterRecordDetailPage';
 import InvoicesPage from './pages/InvoicesPage';
 import InvoiceDetails from './components/Invoices/InvoiceDetails';
 import CustomersPage from './customers/CustomersPage';
 import CustomerDetailsPage from './customers/CustomerDetailsPage';
 import AddCustomerPage from './customers/AddCustomerPage';
+import MasterPage from './masters/MasterPage';
+import MasterBuilderPage from './masters/MasterBuilderPage';
+import MasterRecordDetailPage from './masters/MasterRecordDetailPage';
+import MasterRecordEditPage from './masters/MasterRecordEditPage';
 
 function RequireAuth() {
   const { user, loading } = useAuth();
@@ -85,11 +86,11 @@ export default function App() {
             <Route path="/customers/:id" element={<CustomerDetailsPage/>}/>
             <Route path="/customers/add" element={<AddCustomerPage/>}/>
             <Route path="/customers/:id/edit" element={<CustomerDetailsPage/>}/>
-            <Route path="/masters/new" element={<MasterBuilderPage />}/>
-            <Route path="/masters/:masterId/configure" element={<MasterBuilderPage />} />
-            <Route path="/masters/:masterId/records/:recordId" element={<MasterRecordDetailPage />} />
-            <Route path="/masters/:masterId" element={<MasterPage />} />
-
+            <Route path="/masters/:slug/records/:id/edit" element={<MasterRecordEditPage />} />
+            <Route path="/masters/:slug/records/:id" element={<MasterRecordDetailPage />} />
+            <Route path="/masters/:slug" element={<MasterPage/>}/>
+            <Route path="/masters/config/new" element={<MasterBuilderPage/>}/>
+            <Route path='/masters/config/:id' element={<MasterBuilderPage/>}/>
           </Route>
         </Route>
 

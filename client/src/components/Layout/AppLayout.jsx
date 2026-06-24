@@ -40,7 +40,7 @@ export default function AppLayout() {
             Close
           </button>
         </div>
-        <Sidebar onNavigate={closeMobileNav} />
+        <Sidebar onNavigate={closeMobileNav}  />
       </aside>
 
       <div className="app-main">

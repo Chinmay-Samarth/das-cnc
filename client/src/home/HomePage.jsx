@@ -25,7 +25,7 @@ export default function HomePage() {
         <div className="header-title-block">
           {/* <p className="eyebrow">Operations Home Board</p> */}
           <h1>Home</h1>
-          
+          <button onClick={()=> navigate('/masters/config/new')}>Add Master</button>
         </div>
       </header>
 

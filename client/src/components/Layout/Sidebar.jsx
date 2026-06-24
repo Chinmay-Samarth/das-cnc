@@ -1,6 +1,8 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../auth/authContext';
 import { useMastersNav } from '../../context/MastersNavContext';
+import { useEffect, useState } from 'react';
+import api from "../../api/client"
 
 const navItems = [
   { to: '/home', label: 'Home' },
@@ -9,13 +11,18 @@ const navItems = [
   { to: '/suppliers', label: 'Suppliers' },
   { to: '/customers', label: 'Customers'},
   { to: '/invoices', label: 'Invoices' },
-  { to: '/components', label: 'Components' },
+
 ];
 
 export default function Sidebar({ onNavigate }) {
   const location = useLocation();
   const { user, logout } = useAuth();
-  const { masters, loading } = useMastersNav();
+
+  const [masters, setMasters] = useState([])
+
+  useEffect(()=>{
+    api.get('/masters').then(res => setMasters(res.data))
+  },[])
 
   return (
     <>
@@ -36,44 +43,17 @@ export default function Sidebar({ onNavigate }) {
             {item.label}
           </NavLink>
         ))}
-      </nav>
-
-      <div className="sidebar-masters">
-        <div className="sidebar-masters-header">
-          <p className="sidebar-section-label">Masters</p>
+        {masters.map((m)=>(
           <NavLink
-            to="/masters/new"
-            className={({ isActive }) => `sidebar-add-master${isActive ? ' is-active' : ''}`}
-            onClick={onNavigate}
+          key={m.slug}
+          to={`/masters/${m.slug}`}
+          className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
+          onClick={(onNavigate)}
           >
-            + Add Master
+            {m.name}
           </NavLink>
-        </div>
-
-        <nav className="sidebar-masters-list">
-          {loading ? (
-            <p className="sidebar-muted">Loading masters…</p>
-          ) : masters.length === 0 ? (
-            <p className="sidebar-muted">No masters yet</p>
-          ) : (
-            masters.map((master) => (
-              <NavLink
-                key={master.id}
-                to={`/masters/${master.id}`}
-                className={({ isActive }) => {
-                  const onMaster =
-                    isActive || location.pathname.startsWith(`/masters/${master.id}/`);
-                  return `sidebar-link sidebar-master-link${onMaster ? ' is-active' : ''}`;
-                }}
-                onClick={onNavigate}
-              >
-                {master.icon ? <span className="sidebar-master-icon">{master.icon}</span> : null}
-                <span className="sidebar-master-name">{master.name}</span>
-              </NavLink>
-            ))
-          )}
-        </nav>
-      </div>
+        ))}
+      </nav>
 
       <div className="sidebar-footer">
         <span className="sidebar-user">{user?.name}</span>
