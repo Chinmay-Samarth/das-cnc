@@ -167,7 +167,18 @@ router.get('/', wrap(async (req, res) => {
     .from('masters')
     .select('id, name, slug, description, icon, source_type')
     .eq('is_active', true)
-    .eq('source_type', 'dynamic')
+    .order('name')
+ 
+  if (error) throw { status: 500, message: error.message }
+  res.json(data)
+}))
+
+router.get('/sidebar', wrap(async (req, res) => {
+  const { data, error } = await supabase
+    .from('masters')
+    .select('id, name, slug, description, icon, source_type')
+    .eq('is_active', true)
+    .eq("source_type","dynamic")
     .order('name')
  
   if (error) throw { status: 500, message: error.message }
@@ -599,12 +610,14 @@ router.put('/:slug/records/:id', upload.any(), wrap(async (req, res) => {
     if (!section?.is_repeatable) continue
  
     for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-      const { data: sectionRow } = await supabase
+      const { data: sectionRow, error:sectionError } = await supabase
         .from('record_section_rows')
         .insert({ record_id: id, section_id: section.id, row_order: rowIndex })
         .select().single()
  
-      const cellInserts = []
+
+      if (sectionError) throw sectionError
+      const cellInserts  = []
       for (const [fieldSlug, value] of Object.entries(rows[rowIndex])) {
         const field = fieldMap[`${sectionSlug}__${fieldSlug}`]
         if (!field) continue
@@ -631,12 +644,13 @@ router.put('/:slug/records/:id', upload.any(), wrap(async (req, res) => {
  
       if (cellInserts.length) {
         const { error } = await supabase.from('record_section_values').insert(cellInserts)
+        console.log(error)
         if (error) throw { status: 500, message: error.message }
       }
     }
   }
  
-  res.json({ id })
+  return res.status(200).json({ id })
 }))
  
 // DELETE /api/masters/:slug/records/:id

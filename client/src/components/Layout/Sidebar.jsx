@@ -21,7 +21,10 @@ export default function Sidebar({ onNavigate }) {
   const [masters, setMasters] = useState([])
 
   useEffect(()=>{
-    api.get('/masters').then(res => setMasters(res.data))
+    api.get('/masters/sidebar').then(res => {
+      console.log(res.data)
+      setMasters(res.data)
+    })
   },[])
 
   return (
@@ -50,7 +53,7 @@ export default function Sidebar({ onNavigate }) {
           className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
           onClick={(onNavigate)}
           >
-            {m.name}
+            {m.name.replace(/\s*Master$/i, "")}
           </NavLink>
         ))}
       </nav>
