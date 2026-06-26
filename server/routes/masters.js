@@ -370,6 +370,8 @@ router.get('/:slug/records/:id', wrap(async (req, res) => {
 //        or "file__<section_slug>__<row_index>__<field_slug>" for repeatable
 router.post('/:slug/records', upload.any(), wrap(async (req, res) => {
   const master = await getMaster(req.params.slug)
+
+  console.log("i reached post option")
  
   if (master.source_type === 'legacy') {
     throw { status: 400, message: 'Legacy masters use their own routes (/api/suppliers or /api/customers)' }
@@ -441,20 +443,21 @@ router.post('/:slug/records', upload.any(), wrap(async (req, res) => {
     } else {
       // multi_file — collect all files for this field
       const existing = flatInserts.find(r => r.field_id === field.id)
+      console.log(existing)
       if (existing) {
-        existing.file_urls = [...(existing.file_urls || []), uploaded]
+        existing.file_urls.push(uploaded.url)
+        console.log('im in existing', flatInserts)
       } else {
-        row.file_urls = [uploaded]
+        row.file_urls = [uploaded.url]
         flatInserts.push(row)
-        continue
+        console.log('Im the culprit', flatInserts)
       }
     }
- 
-    flatInserts.push(row)
   }
  
   if (flatInserts.length) {
     const { error } = await supabase.from('record_values').insert(flatInserts)
+    console.dir(error, {depth: null})
     if (error) throw { status: 500, message: error.message }
   }
  
@@ -533,9 +536,9 @@ router.put('/:slug/records/:id', upload.any(), wrap(async (req, res) => {
   if (master.source_type === 'legacy') {
     throw { status: 400, message: 'Use legacy routes for this master' }
   }
- 
+
   const { id } = req.params
- 
+
   // Verify record exists
   const { data: existing, error: chkErr } = await supabase
     .from('master_records')
@@ -543,91 +546,118 @@ router.put('/:slug/records/:id', upload.any(), wrap(async (req, res) => {
     .eq('id', id)
     .eq('master_id', master.id)
     .single()
- 
+
   if (chkErr || !existing) throw { status: 404, message: 'Record not found' }
- 
-  // Wipe existing values — re-insert fresh
-  await supabase.from('record_values').delete().eq('record_id', id)
-  await supabase.from('record_section_rows').delete().eq('record_id', id)
-  // record_section_values cascade-deletes with record_section_rows
- 
-  // Update timestamp
-  await supabase
-    .from('master_records')
-    .update({ updated_at: new Date().toISOString() })
-    .eq('id', id)
- 
-  // Re-use POST logic by faking the record
-  req.params.slug = master.slug
+
+  // Parse body
   const body       = JSON.parse(req.body.data || '{}')
   const flatData   = body.flat       || {}
   const repeatData = body.repeatable || {}
   const files      = req.files       || []
- 
-  const sections = await getMasterSchema(master.id)
-  const fieldMap  = {}
+
+  // Build schema maps
+  const sections   = await getMasterSchema(master.id)
+  const fieldMap   = {}
   const sectionMap = {}
   for (const section of sections) {
     sectionMap[section.slug] = section
     for (const field of section.fields) fieldMap[`${section.slug}__${field.slug}`] = field
   }
- 
-  // ── Flat values ────────────────────────────────────────────────────────────
-  const flatInserts = []
+
+  // ── Flat values — upsert only what's sent, don't touch the rest ──────────
+  const flatUpserts = []
+
   for (const [sectionSlug, fields] of Object.entries(flatData)) {
     for (const [fieldSlug, value] of Object.entries(fields)) {
       const field = fieldMap[`${sectionSlug}__${fieldSlug}`]
       if (!field) continue
       const row = { record_id: id, field_id: field.id }
-      if (field.field_type === 'relation')                         row.linked_record_id = value || null
-      else if (field.field_type === 'file' || field.field_type === 'multi_file') continue
-      else                                                          row.value = value != null ? String(value) : null
-      flatInserts.push(row)
+      if (field.field_type === 'relation')                              row.linked_record_id = value || null
+      else if (field.field_type === 'file' || field.field_type === 'multi_file') continue // handled below
+      else                                                               row.value = value != null ? String(value) : null
+      flatUpserts.push(row)
     }
   }
- 
-  for (const file of files) {
-    const parts = file.fieldname.split('__')
-    if (parts.length !== 3) continue
-    const [, sectionSlug, fieldSlug] = parts
-    const field = fieldMap[`${sectionSlug}__${fieldSlug}`]
-    if (!field) continue
-    const uploaded = await uploadFile(file, master.slug)
-    const row = { record_id: id, field_id: field.id }
-    if (field.field_type === 'file') row.file_url = uploaded.url
-    else row.file_urls = [uploaded]
-    flatInserts.push(row)
+
+// Group all uploaded files by field_id first
+const filesByField = {}
+for (const file of files) {
+  const parts = file.fieldname.split('__')
+  if (parts.length !== 3) continue
+  const [, sectionSlug, fieldSlug] = parts
+  const field = fieldMap[`${sectionSlug}__${fieldSlug}`]
+  if (!field) continue
+  const uploaded = await uploadFile(file, master.slug)
+  if (!filesByField[field.id]) filesByField[field.id] = { field, urls: [] }
+  filesByField[field.id].urls.push(uploaded.url)
+}
+
+// Now one upsert row per field
+for (const [fieldId, { field, urls }] of Object.entries(filesByField)) {
+  const row = { record_id: id, field_id: fieldId }
+  if (field.field_type === 'file') {
+    // single file — last upload wins
+    row.file_url = urls[urls.length - 1]
+  } else {
+    // multi_file — fetch once, append all new urls together
+    const { data: existingVal } = await supabase
+      .from('record_values')
+      .select('file_urls')
+      .eq('record_id', id)
+      .eq('field_id', fieldId)
+      .single()
+    const preserved = existingVal?.file_urls || []
+    row.file_urls = [...preserved, ...urls]
   }
- 
-  if (flatInserts.length) {
-    const { error } = await supabase.from('record_values').insert(flatInserts)
+  flatUpserts.push(row)
+}
+
+  if (flatUpserts.length) {
+    const { error } = await supabase
+      .from('record_values')
+      .upsert(flatUpserts, { onConflict: 'record_id,field_id' })
     if (error) throw { status: 500, message: error.message }
   }
- 
-  // ── Repeatable rows ────────────────────────────────────────────────────────
+
+  // ── Repeatable rows — wipe only sections being sent, reinsert ────────────
+  for (const sectionSlug of Object.keys(repeatData)) {
+    const section = sectionMap[sectionSlug]
+    if (!section?.is_repeatable) continue
+
+    // Only delete rows for this specific section, not everything
+    const { error: delErr } = await supabase
+      .from('record_section_rows')
+      .delete()
+      .eq('record_id', id)
+      .eq('section_id', section.id)
+    if (delErr) throw { status: 500, message: delErr.message }
+  }
+
   for (const [sectionSlug, rows] of Object.entries(repeatData)) {
     const section = sectionMap[sectionSlug]
     if (!section?.is_repeatable) continue
- 
+
     for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-      const { data: sectionRow, error:sectionError } = await supabase
+      const { data: sectionRow, error: sectionError } = await supabase
         .from('record_section_rows')
         .insert({ record_id: id, section_id: section.id, row_order: rowIndex })
-        .select().single()
- 
+        .select()
+        .single()
 
-      if (sectionError) throw sectionError
-      const cellInserts  = []
+      if (sectionError) throw { status: 500, message: sectionError.message }
+
+      const cellInserts = []
+
       for (const [fieldSlug, value] of Object.entries(rows[rowIndex])) {
         const field = fieldMap[`${sectionSlug}__${fieldSlug}`]
         if (!field) continue
         const cell = { row_id: sectionRow.id, field_id: field.id }
-        if (field.field_type === 'relation')                         cell.linked_record_id = value || null
+        if (field.field_type === 'relation')                              cell.linked_record_id = value || null
         else if (field.field_type === 'file' || field.field_type === 'multi_file') continue
-        else                                                          cell.value = value != null ? String(value) : null
+        else                                                               cell.value = value != null ? String(value) : null
         cellInserts.push(cell)
       }
- 
+
       for (const file of files) {
         const parts = file.fieldname.split('__')
         if (parts.length !== 4) continue
@@ -638,18 +668,23 @@ router.put('/:slug/records/:id', upload.any(), wrap(async (req, res) => {
         const uploaded = await uploadFile(file, master.slug)
         const cell = { row_id: sectionRow.id, field_id: field.id }
         if (field.field_type === 'file') cell.file_url = uploaded.url
-        else cell.file_urls = [uploaded]
+        else cell.file_urls = [uploaded.url] // new row, no existing to preserve
         cellInserts.push(cell)
       }
- 
+
       if (cellInserts.length) {
         const { error } = await supabase.from('record_section_values').insert(cellInserts)
-        console.log(error)
         if (error) throw { status: 500, message: error.message }
       }
     }
   }
- 
+
+  // Update timestamp last
+  await supabase
+    .from('master_records')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', id)
+
   return res.status(200).json({ id })
 }))
  

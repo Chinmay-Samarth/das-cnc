@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import api from '../api/client'
+import ImageLightbox from '../components/shared/ImageLightBox'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -36,33 +37,93 @@ function formatValue(field, cell) {
 // ─── Cell renderer ────────────────────────────────────────────────────────────
 
 function CellValue({ formatted }) {
+  const [lightBox, setLightBox] = useState(null)
+  const [isPdf, setIsPdf] = useState(false)
+
   if (typeof formatted === 'string' || formatted === '—') {
     return <span className={formatted === '—' ? 'mrd-empty' : ''}>{formatted}</span>
   }
 
   if (formatted.type === 'image') {
     return (
-      <a href={formatted.url} target="_blank" rel="noreferrer">
-        <img src={formatted.url} alt="attachment" className="mrd-thumb" />
-      </a>
+      <div className="" style={{gridColumn: 'span 2'}}>
+        <img src={formatted.url} alt={formatted.url}
+        style={{ width: '160px', height: '160px', objectFit: 'cover', borderRadius: '12px', border: '1px solid #d1d5db', backgroundColor: '#e5e7eb', cursor: 'pointer' }} 
+        onClick={()=>formated.url && setLightBox({ src: formatted.url, alt: formatted.url })}
+        />
+          {lightBox && (
+            <ImageLightbox src={lightBox.src} alt={lightBox.alt} onClose={() => setLightBox(null)} />
+          )}
+      </div>
     )
   }
 
   if (formatted.type === 'file') {
     return (
-      <a href={formatted.url} target="_blank" rel="noreferrer" className="mrd-file-link">
-        <i className="ti ti-file-download" /> {formatted.name}
-      </a>
+      <div className="">
+        <a
+        href={formatted.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ textDecoration: 'none' }}
+        >
+          <div style={{
+            width: '160px', height: '160px', borderRadius: '12px',
+            border: '1px solid #d1d5db', backgroundColor: '#f3f4f6',
+            display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center',
+            gap: '8px', cursor: 'pointer',
+          }}>
+            {/* PDF icon */}
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+              stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14,2 14,8 20,8"/>
+              <text x="6" y="18" fontSize="5" fill="#ef4444" stroke="none"
+                fontWeight="bold" fontFamily="sans-serif">PDF</text>
+            </svg>
+            <span style={{ fontSize: '11px', color: '#6b7280', textAlign: 'center', padding: '0 8px' }}>
+              {formatted.name}<br/>Click to open
+            </span>
+          </div>
+        </a>
+      </div>
     )
   }
 
   if (formatted.type === 'multi_file') {
+    console.dir(formatted, {depth: null})
     return (
       <div className="mrd-file-list">
         {formatted.files.map((f, i) => (
-          <a key={i} href={f.url} target="_blank" rel="noreferrer" className="mrd-file-link">
-            <i className="ti ti-file-download" /> {f.name || `File ${i + 1}`}
-          </a>
+        <div className="">
+          <a
+            href={f}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ textDecoration: 'none' }}
+          >
+          <div style={{
+            width: '160px', height: '160px', borderRadius: '12px',
+            border: '1px solid #d1d5db', backgroundColor: '#f3f4f6',
+            display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center',
+            gap: '8px', cursor: 'pointer',
+          }}>
+            {/* PDF icon */}
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+              stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14,2 14,8 20,8"/>
+              <text x="6" y="18" fontSize="5" fill="#ef4444" stroke="none"
+                fontWeight="bold" fontFamily="sans-serif">PDF</text>
+            </svg>
+            <span style={{ fontSize: '11px', color: '#6b7280', textAlign: 'center', padding: '0 8px' }}>
+              {f.name}<br/>Click to open
+            </span>
+          </div>
+        </a>
+      </div>
         ))}
       </div>
     )
