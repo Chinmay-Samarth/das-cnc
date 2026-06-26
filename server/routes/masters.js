@@ -889,7 +889,7 @@ router.post('/', wrap(async(req,res)=>{
   })
 }))
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', wrap(async (req, res) => {
   const { id } = req.params;
   if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid master id' });
  
@@ -956,9 +956,21 @@ router.put('/:id', async (req, res) => {
   const toDeleteSectionIds = existingSectionIds.filter((eid) => !incomingSectionIds.includes(eid));
  
   if (toDeleteSectionIds.length > 0) {
-    // master_fields will cascade-delete if you have ON DELETE CASCADE on section_id FK,
-    // otherwise delete fields first:
-    await supabase.from('master_fields').delete().in('section_id', toDeleteSectionIds);
+    // Collect all field ids belonging to the sections being deleted
+    const { data: fieldsToDelete } = await supabase
+      .from('section_fields')
+      .select('id')
+      .in('section_id', toDeleteSectionIds);
+
+    const fieldIdsToDelete = (fieldsToDelete || []).map((f) => f.id);
+
+    // Cascade-delete record_values and section row values that reference these fields
+    if (fieldIdsToDelete.length > 0) {
+      await supabase.from('record_section_values').delete().in('field_id', fieldIdsToDelete);
+      await supabase.from('record_values').delete().in('field_id', fieldIdsToDelete);
+    }
+
+    await supabase.from('section_fields').delete().in('section_id', toDeleteSectionIds);
     const { error: delErr } = await supabase
       .from('master_sections')
       .delete()
@@ -975,7 +987,7 @@ router.put('/:id', async (req, res) => {
   console.log('im done with syncing sections')
  
   return res.json({ master: updatedMaster, sections: syncedSections });
-});
+}));
  
 /* ─── Shared helper: upsert sections + fields for a master ───────────────── */
 async function upsertSectionsAndFields(masterId, sections) {
@@ -1032,7 +1044,10 @@ async function upsertSectionsAndFields(masterId, sections) {
     const toDeleteFieldIds = existingFieldIds.filter((eid) => !incomingFieldIds.includes(eid));
  
     if (toDeleteFieldIds.length > 0) {
-      await supabase.from('master_fields').delete().in('id', toDeleteFieldIds);
+      // Cascade-delete record data referencing these fields before removing the field definitions
+      await supabase.from('record_section_values').delete().in('field_id', toDeleteFieldIds);
+      await supabase.from('record_values').delete().in('field_id', toDeleteFieldIds);
+      await supabase.from('section_fields').delete().in('id', toDeleteFieldIds);
     }
  
     // Upsert each field
