@@ -31,6 +31,7 @@ app.use('/api/masters', require('./routes/masters'));
 app.use('/api/invoices', require('./routes/invoices'))
 app.use('/api/suppliers', require('./routes/supplier'));
 app.use('/api/customers', require('./routes/customers'))
+app.use('/api/girn', require('./routes/girn'));
 // app.use('/api/machines',   require('./routes/machines'));    // next module
  
 // Health check

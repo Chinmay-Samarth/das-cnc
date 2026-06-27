@@ -11,7 +11,7 @@ const navItems = [
   { to: '/suppliers', label: 'Suppliers' },
   { to: '/customers', label: 'Customers'},
   { to: '/invoices', label: 'Invoices' },
-
+  { to: '/girn', label: 'GIRN' },
 ];
 
 export default function Sidebar({ onNavigate }) {

@@ -22,6 +22,9 @@ import MasterPage from './masters/MasterPage';
 import MasterBuilderPage from './masters/MasterBuilderPage';
 import MasterRecordDetailPage from './masters/MasterRecordDetailPage';
 import MasterRecordEditPage from './masters/MasterRecordEditPage';
+import GIRNListPage from './girn/GIRNListPage';
+import CreateGIRNPage from './girn/CreateGIRNPage';
+import GIRNDetailPage from './girn/GIRNDetailPage';
 
 function RequireAuth() {
   const { user, loading } = useAuth();
@@ -91,6 +94,9 @@ export default function App() {
             <Route path="/masters/:slug" element={<MasterPage/>}/>
             <Route path="/masters/config/new" element={<MasterBuilderPage/>}/>
             <Route path='/masters/config/:id' element={<MasterBuilderPage/>}/>
+            <Route path="/girn" element={<GIRNListPage />} />
+            <Route path="/girn/create" element={<CreateGIRNPage />} />
+            <Route path="/girn/:id" element={<GIRNDetailPage />} />
           </Route>
         </Route>
 
