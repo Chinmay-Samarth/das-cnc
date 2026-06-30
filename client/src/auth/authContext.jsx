@@ -29,11 +29,12 @@ export function AuthProvider({ children }) {
           id: data.employee.id,
           name: data.employee.full_name,
           code: data.employee.employee_code,
-          role: data.employee.role,
+          job_description: data.employee.job_description,
           shift: data.employee.shift_name,
           department: data.employee.department,
           accessLevel: data.employee.access_level,
         })
+        console.log(data.employee)
       } catch {
         localStorage.removeItem('dascnc_user')
         delete api.defaults.headers.common['Authorization']
@@ -56,7 +57,7 @@ export function AuthProvider({ children }) {
       id:           data.employee.id,
       name:         data.employee.full_name,
       code:         data.employee.employee_code,
-      role:         data.employee.role,
+      job_description:         data.employee.job_description,
       shift:        data.employee.shift_name,
       department:   data.employee.department,
       token:        data.token,

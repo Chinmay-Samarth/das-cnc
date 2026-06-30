@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
+import GlobalSearch from './GlobalSearch';
 
 export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -44,6 +45,7 @@ export default function AppLayout() {
       </aside>
 
       <div className="app-main">
+        <GlobalSearch />
         <Outlet />
       </div>
     </div>

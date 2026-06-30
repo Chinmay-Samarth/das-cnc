@@ -44,8 +44,8 @@ function issueToken(employee) {
     {
       sub: employee.id,
       employee_code: employee.employee_code,
-      role: employee.role,
-      access_level: computeAccessLevel(employee.role),
+      job_description: employee.job_description,
+      access_level: computeAccessLevel(employee.job_description),
     },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
@@ -90,8 +90,8 @@ router.post('/login', async (req, res) => {
         id: employee.id,
         employee_code: employee.employee_code,
         full_name: employee.full_name,
-        role: employee.role,
-        access_level: computeAccessLevel(employee.role),
+        job_description: employee.job_description,
+        access_level: computeAccessLevel(employee.job_description),
         department: employee.departments?.name || null,
         shift_name: employee.shifts?.name || null,
       },
@@ -122,7 +122,7 @@ router.get('/me', async (req, res) => {
 
     const { data: employee, error } = await supabase
       .from('employees')
-      .select('id, employee_code, full_name, role, is_active, departments(name), shifts(name)')
+      .select('id, employee_code, full_name, job_description, is_active, departments(name), shifts(name)')
       .eq('id', employeeId)
       .single();
 
@@ -135,8 +135,8 @@ router.get('/me', async (req, res) => {
         id: employee.id,
         employee_code: employee.employee_code,
         full_name: employee.full_name,
-        role: employee.role,
-        access_level: computeAccessLevel(employee.role),
+        job_description: employee.job_description,
+        access_level: computeAccessLevel(employee.job_description),
         department: employee.departments?.name || null,
         shift_name: employee.shifts?.name || null,
       },
