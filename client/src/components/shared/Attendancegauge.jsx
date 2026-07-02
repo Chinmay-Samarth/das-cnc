@@ -1,26 +1,6 @@
-// Calibrated dial-style gauge for an attendance score (0-100).
-// Drawn as three fixed threshold zones (at-risk / needs attention / excellent)
-// with a needle that rotates to the current score, similar to an instrument
-// panel gauge. Pure SVG, no external charting library required.
-//
-// Thresholds (edit ZONES below to change them):
-//   0-59   at risk            (red)
-//   60-84  needs attention    (amber)
-//   85-100 excellent          (green)
-
-const ZONES = [
-  { from: 0, to: 60, color: '#dc2626' },
-  { from: 60, to: 85, color: '#d97706' },
-  { from: 85, to: 100, color: '#059669' },
-];
+import { useId } from 'react';
 
 const NUMERIC_FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
-
-function valueToAngle(value) {
-  const clamped = Math.max(0, Math.min(100, value));
-  return 180 + (clamped / 100) * 180;
-}
-
 function polarToCartesian(cx, cy, r, angleDeg) {
   const rad = (angleDeg * Math.PI) / 180;
   return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
@@ -33,84 +13,107 @@ function describeArc(cx, cy, r, startAngle, endAngle) {
   return `M ${start.x.toFixed(2)} ${start.y.toFixed(2)} A ${r} ${r} 0 ${largeArcFlag} 1 ${end.x.toFixed(2)} ${end.y.toFixed(2)}`;
 }
 
-export default function AttendanceGauge({ score = 0, size = 220 }) {
+function getHealthMeta(score, target) {
+  const delta = score - target;
+  let label = 'EXCELLENT';
+  let labelColor = '#059669';
+
+  if (score < 60) {
+    label = 'AT RISK';
+    labelColor = '#dc2626';
+  } else if (score < 85) {
+    label = 'NEEDS ATTENTION';
+    labelColor = '#d97706';
+  }
+
+  let deltaText = null;
+  if (delta < 0) {
+    deltaText = `Score is ${Math.abs(Math.round(delta))}% lower than target`;
+  } else if (delta > 0) {
+    deltaText = `Score is ${Math.round(delta)}% above target`;
+  } else {
+    deltaText = 'Score meets target';
+  }
+
+  return { label, labelColor, deltaText };
+}
+
+export default function AttendanceGauge({
+  score = 0,
+  size = 220,
+  target = 88,
+  variant = 'default',
+}) {
+  const gradientId = `gauge-${useId().replace(/:/g, '')}`;
   const safeScore = Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : 0;
+  const { label, labelColor, deltaText } = getHealthMeta(safeScore, target);
 
-  const cx = 130;
-  const cy = 128;
-  const r = 88;
-  const strokeWidth = 16;
+  const cx = 120;
+  const cy = 118;
+  const r = 82;
+  const strokeWidth = 14;
+  const arcLength = Math.PI * r;
+  const filledLength = (safeScore / 100) * arcLength;
 
-  const needleAngle = valueToAngle(safeScore);
-  const tip = polarToCartesian(cx, cy, 78, needleAngle);
-  const baseLeft = polarToCartesian(cx, cy, 7, needleAngle - 90);
-  const baseRight = polarToCartesian(cx, cy, 7, needleAngle + 90);
+  const startAngle = 180;
+  const endAngle = 0;
 
-  const zoneLabel = safeScore >= 85 ? 'Excellent' : safeScore >= 60 ? 'Needs attention' : 'At risk';
-  const zoneColor = safeScore >= 85 ? '#059669' : safeScore >= 60 ? '#d97706' : '#dc2626';
+  const gauge = (
+    <div className="attendance-gauge-visual" style={{ width: size }}>
+      <svg viewBox="0 0 240 140" className="attendance-gauge-svg" aria-hidden="true">
+        <defs>
+          <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#22c55e" />
+            <stop offset="50%" stopColor="#eab308" />
+            <stop offset="100%" stopColor="#f59e0b" />
+          </linearGradient>
+        </defs>
 
-  return (
-    <div style={{ width: size, flexShrink: 0 }} className="flex flex-col items-center">
-      <svg viewBox="0 0 260 150" style={{ width: '100%', height: 'auto', overflow: 'visible' }}>
-        {ZONES.map((zone) => (
-          <path
-            key={zone.from}
-            d={describeArc(cx, cy, r, valueToAngle(zone.from), valueToAngle(zone.to))}
-            fill="none"
-            stroke={zone.color}
-            strokeWidth={strokeWidth}
-            opacity={0.92}
-          />
-        ))}
-
-        {[0, 50, 100].map((tickValue) => {
-          const pos = polarToCartesian(cx, cy, r + 18, valueToAngle(tickValue));
-          return (
-            <text
-              key={tickValue}
-              x={pos.x}
-              y={pos.y}
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fontSize="11"
-              fontFamily={NUMERIC_FONT}
-              fill="#9ca3af"
-            >
-              {tickValue}
-            </text>
-          );
-        })}
-
-        <polygon
-          points={`${tip.x.toFixed(2)},${tip.y.toFixed(2)} ${baseLeft.x.toFixed(2)},${baseLeft.y.toFixed(2)} ${baseRight.x.toFixed(2)},${baseRight.y.toFixed(2)}`}
-          fill="#111827"
+        <path
+          d={describeArc(cx, cy, r, startAngle, endAngle)}
+          fill="none"
+          stroke="#e5e7eb"
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
         />
-        <circle cx={cx} cy={cy} r="9" fill="#111827" />
-        <circle cx={cx} cy={cy} r="3.5" fill="#ffffff" />
 
-        <text
-          x={cx}
-          y={cy - 34}
-          textAnchor="middle"
-          fontSize="32"
-          fontWeight="700"
-          fontFamily={NUMERIC_FONT}
-          fill="#111827"
-        >
-          {Math.round(safeScore)}%
-        </text>
+        <path
+          d={describeArc(cx, cy, r, startAngle, endAngle)}
+          fill="none"
+          stroke={`url(#${gradientId})`}
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+          strokeDasharray={`${filledLength} ${arcLength}`}
+        />
       </svg>
 
-      <p
-        className="text-xs uppercase font-medium"
-        style={{ margin: '2px 0 0', letterSpacing: '0.08em', color: '#6b7280' }}
-      >
-        Attendance score
-      </p>
-      <p className="text-sm font-semibold" style={{ margin: '2px 0 0', color: zoneColor }}>
-        {zoneLabel}
-      </p>
+      <div className="attendance-gauge-center">
+        <p className="attendance-gauge-score" style={{ fontFamily: NUMERIC_FONT }}>
+          {Math.round(safeScore)}%
+        </p>
+        <p className="attendance-gauge-label" style={{ color: labelColor }}>
+          {label}
+        </p>
+        {variant === 'card' ? (
+          <p className="attendance-gauge-delta">{deltaText}</p>
+        ) : null}
+      </div>
+    </div>
+  );
+
+  if (variant === 'card') {
+    return (
+      <div className="attendance-gauge-card">
+        <p className="attendance-gauge-eyebrow">Attendance Health</p>
+        {gauge}
+      </div>
+    );
+  }
+
+  return (
+    <div className="attendance-gauge-inline">
+      {gauge}
+      <p className="attendance-gauge-caption">Attendance score</p>
     </div>
   );
 }
-

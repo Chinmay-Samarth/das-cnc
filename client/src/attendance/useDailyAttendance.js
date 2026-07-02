@@ -81,5 +81,6 @@ export default function useDailyAttendance(initialDate = null) {
     presentCount: daily?.summary?.present ?? 0,
     absentCount: daily?.summary?.absent ?? 0,
     totalCount: daily?.summary?.total ?? 0,
+    lateArrivals: daily?.summary.late ?? 0,
   };
 }

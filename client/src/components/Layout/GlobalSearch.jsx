@@ -118,6 +118,7 @@ export default function GlobalSearch() {
               inputRef.current?.focus();
             }}
             aria-label="Clear search"
+            hidden
           >
             <X size={14} />
           </button>
