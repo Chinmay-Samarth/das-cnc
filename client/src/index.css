@@ -556,7 +556,7 @@ button:hover:not(:disabled) {
 .attendance-content-grid {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
-  gap: 20px;
+  gap: 32px;
   align-items: start;
 }
 
@@ -722,7 +722,7 @@ button:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 2vh;
-  border-bottom:1px solid #e5e7eb;
+
 }
 
 .section-header h2{
@@ -1234,11 +1234,22 @@ button:hover:not(:disabled) {
   display: flex;
   gap: 14px;
   margin: 12px 0px;
+  align-items: center;
+  width: 100%;
+  justify-content: space-between;
 }
 
 .employee-title-block p{
   text-transform: uppercase;
   font-size: small;
+}
+
+.employee-top-bar{
+  margin-left: auto;
+}
+
+.employee-edit{
+  margin-left: auto !important;
 }
 .pill-tabs {
   display: flex;
@@ -1277,12 +1288,11 @@ button:hover:not(:disabled) {
 
 
 .address-card{
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 15px 0px;
-  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 24px 0px;
   border-radius: 12px;
-  background: #f8fbff;
+  background: #fff;
   padding: 14px;
   margin-top: 14px;
 }

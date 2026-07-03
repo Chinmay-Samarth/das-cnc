@@ -5,7 +5,7 @@ import { toDisplayTime, toISODateString } from '../attendance/useDailyAttendance
 import ImageLightbox from '../components/shared/ImageLightBox';
 import AttendanceGauge from '../components/shared/Attendancegauge';
 import StatTile from '../components/shared/StatTile'
-import {ArrowLeft, ChevronLeft, ChevronRight} from "lucide-react"
+import {ArrowLeft, ChevronLeft, ChevronRight, Pencil} from "lucide-react"
 
 
 const PLACEHOLDER_AVATAR =
@@ -356,6 +356,15 @@ export default function EmployeeDetailsPage() {
               <p className='muted'>{employee?.job_description}</p>
               <p className='muted'>ID: {employee?.employee_code}</p>
             </div>
+          </div>
+          <div className="employee-top-bar" >
+            <button
+              type="button"
+              onClick={() => navigate(`/employees/${id}/edit`)}
+              className='neutral-button employee-edit'
+            >
+              <Pencil size={16} style={{marginRight: 4, display: 'inline'}}/>Edit
+            </button>
           </div>
         </div>
         <div className="pill-tabs" >

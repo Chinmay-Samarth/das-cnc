@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import ImageLightbox from '../components/shared/ImageLightBox';
+import { Pencil, ArrowLeft } from 'lucide-react';
 
 const emptyFormData = {
   name: '',
@@ -28,8 +29,8 @@ const fmt = (value) => {
 function DetailItem({ label, value }) {
   return (
     <div>
-      <p className="component-detail-label ">{label}</p>
-      <p className="component-detail-value">{value || '--'}</p>
+      <p className="employee-detail-label ">{label}</p>
+      <p className="employee-detail-value" style={{whiteSpace: 'wrap'}}>{value || '--'}</p>
     </div>
   );
 }
@@ -92,7 +93,7 @@ export default function SupplierDetailsPage() {
             payment_details: match.payment_details || '',
           });
 
-          setIsPdf(match.iso_certificate_url.toLowerCase().includes('.pdf'))
+          setIsPdf(match.iso_certificate_url?.toLowerCase().includes('.pdf'))
         }
       } catch (err) {
         console.error('Failed to load supplier details:', err);
@@ -186,41 +187,48 @@ export default function SupplierDetailsPage() {
   };
 
   return (
-    <main className="app-shell employee-details-page masters-page component-details-page">
-      <header className="app-header">
-        <div className="header-title-block">
-          <p className="eyebrow">Vendor management</p>
-          <h1>Supplier details</h1>
+    <main className="app-shell employee-shell">
+      <header className="app-header employee-card">
+        <p onClick={()=> navigate('/suppliers')} style={{cursor: 'pointer'}}><ArrowLeft size={16} style={{marginRight: 4, display: 'inline'}}/>Back to suppliers</p>
+        <div className="employee-title-block">
+          <div className="">
+            <h1>{supplier?.name}</h1>
+            <p className='muted'>{supplier?.GSTIN}</p>
+          </div>
+          <div className="employee-top-bar">
+            <button
+            type="button"
+            className={'neutral-button'}
+            onClick={() => navigate(`/suppliers/${id}/edit`)}
+          >
+            < Pencil size={16} style={{marginRight: 4, display: "inline"}}/>Edit
+          </button>
+          </div>
         </div>
-      </header>
 
-      <section className="card form-card">
-        <div className="tab-row" style={{ display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap' }}>
+        <div className='pill-tabs'>
           <button
             type="button"
-            className={tab === 'details' ? 'primary-button' : 'secondary-button'}
-            onClick={() => navigate(`/suppliers/${id}`)}
+            className={`pill-tab ${tab === 'details' ? 'pill-tab-active' : ''}`}
+            onClick={() => {setTab('details')}}
+            aria-selected = {tab === 'details'}
+            role = 'tab'
           >
             Details
           </button>
           <button
             type="button"
-            className={tab === 'invoices' ? 'primary-button' : 'secondary-button'}
-            onClick={() => navigate(`/suppliers/${id}/invoices`)}
+            className={`pill-tab ${tab === 'invoices' ? 'pill-tab-active' : ''}`}
+            onClick={() => {setTab('invoices')}}
+            aria-selected = {tab === 'invoices'}
+            role = 'tab'
           >
             Invoices
           </button>
-          <button
-            type="button"
-            className={tab === 'edit' ? 'primary-button' : 'secondary-button'}
-            onClick={() => navigate(`/suppliers/${id}/edit`)}
-          >
-            Edit
-          </button>
-          <button type="button" className="secondary-button" onClick={() => navigate('/suppliers')}>
-            Back to suppliers
-          </button>
         </div>
+      </header>
+
+      <section className="card employee-main">
 
         {loading ? (
           <p className="muted">Loading supplier details...</p>
@@ -230,104 +238,115 @@ export default function SupplierDetailsPage() {
           <p className="muted">Supplier not found.</p>
         ) : tab === 'details' ? (
           <>
-            <div className="employee-details-grid">
-              <div className=" employee-detail-grid">
-                <DetailItem label="Supplier Name" value={supplier.name} />
-                <DetailItem label="GSTIN" value={supplier.GSTIN} />
-                <DetailItem label="PAN" value={supplier.PAN_no} />
-                <DetailItem
-                  label="Supplier Type"
-                  value={supplier.customer_recommended ? 'Customer recommended' : 'Standard'}
-                />
-                <DetailItem label="Contact Person" value={supplier.contact_person} />
-                <DetailItem label="Contact Number" value={supplier.contact_number} />
-                <DetailItem label="Email" value={supplier.email} />
-                <DetailItem label="Bank Name" value={supplier.bank_name} />
-                <DetailItem label="Account Number" value={supplier.account_number} />
-                <DetailItem label="Account Type" value={supplier.account_type} />
-                <DetailItem label="IFSC" value={supplier.IFSC} />
-                <DetailItem label="Payment Details" value={supplier.payment_details} />
-              </div>
-            </div>
-
-            <section className="card employee-details-attendance">
-              <div
-                className="section-header"
-                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}
-              >
-                <div>
-                  <h2>Address &amp; documents</h2>
-                  <p className="muted">Official, billing, and certificate information for this supplier.</p>
+            <div className="attendance-content-grid">
+              <div className="attendance-main-column">
+                <div className="employee-details-grid">
+                  <div className=" ">
+                    <div className="employee-detail-grid" style={{borderBottom: '1px solid #dfe3e8'}}>
+                      <DetailItem label="Supplier Name" value={supplier.name} />
+                      <DetailItem label="GSTIN" value={supplier.GSTIN} />
+                      <DetailItem label="PAN" value={supplier.PAN_no} />
+                      <DetailItem
+                        label="Supplier Type"
+                        value={supplier.customer_recommended ? 'Customer recommended' : 'Standard'}
+                      />
+                    </div>
+                    <div className="employee-detail-grid"  style={{borderBottom: '1px solid #dfe3e8'}}>
+                      <DetailItem label="Contact Person" value={supplier.contact_person} />
+                      <DetailItem label="Contact Number" value={supplier.contact_number} />
+                      <DetailItem label="Email" value={supplier.email} />
+                      <DetailItem label="Bank Name" value={supplier.bank_name} />
+                    </div>
+                    <div className="employee-detail-grid"  style={{borderBottom: '1px solid #dfe3e8'}}>
+                      <DetailItem label="Account Number" value={supplier.account_number} />
+                      <DetailItem label="Account Type" value={supplier.account_type} />
+                      <DetailItem label="IFSC" value={supplier.IFSC} />
+                      <DetailItem label="Payment Details" value={supplier.payment_details} />
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              <div className="address-card">
-                <DetailItem label="Official Address" value={supplier.official_address} />
-                <DetailItem label="Billing Address" value={supplier.billing_address} />
-                <div>
-                  <p className="text-xl font-medium ">ISO Certificate</p>
-                  {supplier.iso_certificate_url ? (
-                    <div style={{ gridColumn: 'span 2' }}>
-                    {isPdf ? (
-                      <div className="">
-                        <a
-                        href={supplier.iso_certificate_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{ textDecoration: 'none' }}
-                        >
-                          <div style={{
-                            width: '160px', height: '160px', borderRadius: '12px',
-                            border: '1px solid #d1d5db', backgroundColor: '#f3f4f6',
-                            display: 'flex', flexDirection: 'column',
-                            alignItems: 'center', justifyContent: 'center',
-                            gap: '8px', cursor: 'pointer',
-                          }}>
-                            {/* PDF icon */}
-                            <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
-                              stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                              <polyline points="14,2 14,8 20,8"/>
-                              <text x="6" y="18" fontSize="5" fill="#ef4444" stroke="none"
-                                fontWeight="bold" fontFamily="sans-serif">PDF</text>
-                            </svg>
-                            <span style={{ fontSize: '11px', color: '#6b7280', textAlign: 'center', padding: '0 8px' }}>
-                              ISO Certificate<br/>Click to open
-                            </span>
+              <aside className="attendance-side-column">
+                <section className="card employee-details-attendance">
+                  <div
+                    className="section-header"
+                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}
+                  >
+                    <div>
+                      <h2>ADDRESS &amp; DOCUMENTS</h2>
+                    </div>
+                  </div>
+
+                  <div className="address-card">
+                    <DetailItem label="Official Address" value={supplier.official_address} />
+                    <DetailItem label="Billing Address" value={supplier.billing_address} />
+                    <div>
+                      <p className="text-xl font-medium ">ISO Certificate</p>
+                      {supplier.iso_certificate_url ? (
+                        <div style={{ gridColumn: 'span 2' }}>
+                        {isPdf ? (
+                          <div className="">
+                            <a
+                            href={supplier.iso_certificate_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ textDecoration: 'none' }}
+                            >
+                              <div style={{
+                                width: '160px', height: '160px', borderRadius: '12px',
+                                border: '1px solid #d1d5db', backgroundColor: '#f3f4f6',
+                                display: 'flex', flexDirection: 'column',
+                                alignItems: 'center', justifyContent: 'center',
+                                gap: '8px', cursor: 'pointer',
+                              }}>
+                                {/* PDF icon */}
+                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+                                  stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                  <polyline points="14,2 14,8 20,8"/>
+                                  <text x="6" y="18" fontSize="5" fill="#ef4444" stroke="none"
+                                    fontWeight="bold" fontFamily="sans-serif">PDF</text>
+                                </svg>
+                                <span style={{ fontSize: '11px', color: '#6b7280', textAlign: 'center', padding: '0 8px' }}>
+                                  ISO Certificate<br/>Click to open
+                                </span>
+                              </div>
+                            </a>
                           </div>
-                        </a>
+                        ) : (
+                          <>
+                          <img
+                          src={supplier.iso_certificate_url || ''}
+                          alt={supplier.iso_certificate_url ? `${supplier.name} iso certificate` : 'No photo available'}
+                          style={{ width: '160px', height: '160px', objectFit: 'cover', borderRadius: '12px', border: '1px solid #d1d5db', backgroundColor: '#e5e7eb',cursor: "pointer" }}
+                          onClick={()=>{setLightBox({ src: supplier.iso_certificate_url, alt: supplier.name })}}
+                          />
+                          
+                          {lightBox && (
+                            <ImageLightbox
+                            src={lightBox.src}
+                            alt={lightBox.alt}
+                            onClose={() => setLightBox(null)}
+                            />
+                          )}
+                          </>
+                      )}
                       </div>
                     ) : (
-                      <>
-                      <img
-                      src={supplier.iso_certificate_url || ''}
-                      alt={supplier.iso_certificate_url ? `${supplier.name} iso certificate` : 'No photo available'}
-                      style={{ width: '160px', height: '160px', objectFit: 'cover', borderRadius: '12px', border: '1px solid #d1d5db', backgroundColor: '#e5e7eb',cursor: "pointer" }}
-                      onClick={()=>{setLightBox({ src: supplier.iso_certificate_url, alt: supplier.name })}}
-                      />
-                      
-                      {lightBox && (
-                        <ImageLightbox
-                        src={lightBox.src}
-                        alt={lightBox.alt}
-                        onClose={() => setLightBox(null)}
-                        />
+                        <p className="font-bold ">--</p>
                       )}
-                      </>
-                  )}
+                    </div>
                   </div>
-                ) : (
-                    <p className="font-bold ">--</p>
-                  )}
-                </div>
-              </div>
-            </section>
+                </section>
+              </aside>
+            </div>
           </>
         ) : tab === 'invoices' ? (
-          <section className="card employee-details-attendance">
+          <section className="employee-details-attendance">
             <div
               className="section-header"
-              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', paddingBottom: "20px" }}
             >
               <div>
                 <h2>Invoices</h2>
@@ -347,7 +366,7 @@ export default function SupplierDetailsPage() {
               <p className="muted">No invoices found for this supplier.</p>
             ) : (
               <div className="attendance-table-wrap">
-                <table className="attendance-table">
+                <table className="app-table">
                   <thead>
                     <tr>
                       <th>Invoice #</th>

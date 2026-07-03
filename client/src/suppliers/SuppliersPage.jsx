@@ -107,11 +107,11 @@ export default function SuppliersPage() {
           </div>
         </div>
 
-        {error ? <p className="error-message">{error}</p> : null}
-        {loading ? <p className="muted">Loading suppliers...</p> : null}
 
         <div className="employees-table-wrap">
-          <table className="employees-table">
+          <table className="app-table">
+            {error ? <p className="error-message">{error}</p> : null}
+            {loading ? <p className="muted">Loading suppliers...</p> : null}
             <thead>
               <tr>
                 <th onClick={() => handleSort('name')}>
