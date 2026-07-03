@@ -114,13 +114,12 @@ export default function InvoicesPage() {
           </div>
         </div>
 
-        {error ? <p className="error-message">{error}</p> : null}
-
-        {loading ? (
-          <p className="muted">Loading invoices…</p>
+        
+        {loading ? (<p className="muted">Loading invoices…</p>
         ) : (
           <div className="employees-table-wrap">
-            <table className="employees-table">
+            <table className="app-table">
+              {error ? <p className="error-message">{error}</p> : null}
               <thead>
                 <tr>
                   <th onClick={()=> handleSort('supplier_name')}>

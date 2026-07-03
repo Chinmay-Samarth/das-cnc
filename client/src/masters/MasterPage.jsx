@@ -175,7 +175,7 @@ export default function MasterPage() {
           <p className="muted">Loading {master?.slug}</p>
         ) : (
           <div className="employees-table-wrap">
-            <table className="employees-table">
+            <table className="app-table">
               <thead>
                 <tr>
                   {columns.map((c)=>(
