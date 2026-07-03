@@ -269,176 +269,176 @@ export default function AttendancePage() {
 
       <div className="attendance-content-grid">
         <div className="attendance-main-column">
-      <section className="card attendance-records-card">
-        <div className="section-header attendance-records-header">
-          <div className="attendance-records-title">
-            <List size={20} className="attendance-records-icon" aria-hidden="true" />
-            <h2>Latest Attendance Records</h2>
-            <span className="count-chip">{latestRecords.length}</span>
-          </div>
+          <section className="card attendance-records-card">
+            <div className="section-header attendance-records-header">
+              <div className="attendance-records-title">
+                <List size={20} className="attendance-records-icon" aria-hidden="true" />
+                <h2>Latest Attendance Records</h2>
+                <span className="count-chip">{latestRecords.length}</span>
+              </div>
 
-            <div className="last-btn" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-              <button
-                type="button"
-                className="neutral-button"
-                onClick={handleSyncBiometric}
-                disabled={loading || syncing}
-              >
-                <RefreshCw size={16}  style={{display: 'inline', marginRight: 6}}/>
-                {syncing ? 'Syncing...' : 'Sync'}
-              </button>
+                <div className="last-btn" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    className="neutral-button"
+                    onClick={handleSyncBiometric}
+                    disabled={loading || syncing}
+                  >
+                    <RefreshCw size={16}  style={{display: 'inline', marginRight: 6}}/>
+                    {syncing ? 'Syncing...' : 'Sync'}
+                  </button>
+                </div>
             </div>
-        </div>
-        {loading ? <p className="muted">Loading attendance data...</p> : null}
-        {error ? <p className="error-message">{error}</p> : null}
-        {!loading && !error && latestRecords.length === 0 ? (
-          <p className="muted">No punch records available yet for today.</p>
-        ) : null}
-        {!loading && !error && latestRecords.length > 0 ? (
-          <div className="attendance-table-wrap">
-            <table className="app-table">
-              <thead>
-                <tr>
-                  <th>Employee</th>
-                  <th>Shift</th>
-                  <th>Check-In</th>
-                  <th>Check-Out</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paginatedRecords.map((row) => {
-                  const statusMeta = formatRecordStatus(row.status);
-                  return (
-                  <tr key={`${row.employee_code}-${row.local_in}-${row.local_out}`} onClick={()=>{navigate(`/employees/${row.id}`)}}>
-                    <td className='name-column'>
-                      <div className="table-avatar">
-
-                      {row?.full_name
-                        ?.split(' ')
-                        .map((n) => n[0])
-                        .slice(0, 2)
-                        .join('')
-                        .toUpperCase()}
-                      </div>
-                      <div className="">
-                      <strong>{row.full_name}</strong>
-                      <div className="table-subtext">{formatEmployeeCode(row.employee_code)}</div>
-                      </div>
-                    </td>
-                    <td>{row.shift || '--'}</td>
-                    <td className={getCheckInClass(row.status)}>{toDisplayTime(row.local_in)}</td>
-                    <td className="check-out-time">{toDisplayTime(row.local_out)}</td>
-                    <td>
-                      <span className={`status-chip ${statusMeta.className}`}>{statusMeta.label}</span>
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-        {!loading && !error && latestRecords.length > 0 ? (
-          <div className="attendance-pagination">
-            <span className="attendance-page-summary">
-              Showing {recordsRangeStart} to {recordsRangeEnd} of {latestRecords.length} records
-            </span>
-            {recordsTotalPages > 1 ? (
-              <div className="attendance-page-controls">
-                <button
-                  type="button"
-                  className="attendance-page-nav"
-                  disabled={recordsPage === 1}
-                  onClick={() => setRecordsPage((p) => p - 1)}
-                >
-                  Previous
-                </button>
-                {visiblePages.map((pageNumber, index) => {
-                  const previousPage = visiblePages[index - 1];
-                  const needsEllipsis = index > 0 && pageNumber - previousPage > 1;
-
-                  return (
-                    <span key={pageNumber} className="attendance-page-number-wrap">
-                      {needsEllipsis ? <span className="attendance-page-ellipsis">...</span> : null}
-                      <button
-                        type="button"
-                        className={`attendance-page-number${recordsPage === pageNumber ? ' active' : ''}`}
-                        onClick={() => setRecordsPage(pageNumber)}
-                      >
-                        {pageNumber}
-                      </button>
-                    </span>
-                  );
-                })}
-                <button
-                  type="button"
-                  className="attendance-page-nav"
-                  disabled={recordsPage === recordsTotalPages}
-                  onClick={() => setRecordsPage((p) => p + 1)}
-                >
-                  Next
-                </button>
+            {loading ? <p className="muted">Loading attendance data...</p> : null}
+            {error ? <p className="error-message">{error}</p> : null}
+            {!loading && !error && latestRecords.length === 0 ? (
+              <p className="muted">No punch records available yet for today.</p>
+            ) : null}
+            {!loading && !error && latestRecords.length > 0 ? (
+              <div className="attendance-table-wrap">
+                <table className="app-table">
+                  <thead>
+                    <tr>
+                      <th>Employee</th>
+                      <th>Shift</th>
+                      <th>Check-In</th>
+                      <th>Check-Out</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedRecords.map((row) => {
+                      const statusMeta = formatRecordStatus(row.status);
+                      return (
+                      <tr key={`${row.employee_code}-${row.local_in}-${row.local_out}`} onClick={()=>{navigate(`/employees/${row.id}`)}}>
+                        <td className='name-column'>
+                          <div className="table-avatar">
+                      
+                          {row?.full_name
+                            ?.split(' ')
+                            .map((n) => n[0])
+                            .slice(0, 2)
+                            .join('')
+                            .toUpperCase()}
+                          </div>
+                          <div className="">
+                          <strong>{row.full_name}</strong>
+                          <div className="table-subtext">{formatEmployeeCode(row.employee_code)}</div>
+                          </div>
+                        </td>
+                        <td>{row.shift || '--'}</td>
+                        <td className={getCheckInClass(row.status)}>{toDisplayTime(row.local_in)}</td>
+                        <td className="check-out-time">{toDisplayTime(row.local_out)}</td>
+                        <td>
+                          <span className={`status-chip ${statusMeta.className}`}>{statusMeta.label}</span>
+                        </td>
+                      </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             ) : null}
-          </div>
-        ) : null}
-      </section>
+            {!loading && !error && latestRecords.length > 0 ? (
+              <div className="attendance-pagination">
+                <span className="attendance-page-summary">
+                  Showing {recordsRangeStart} to {recordsRangeEnd} of {latestRecords.length} records
+                </span>
+                {recordsTotalPages > 1 ? (
+                  <div className="attendance-page-controls">
+                    <button
+                      type="button"
+                      className="attendance-page-nav"
+                      disabled={recordsPage === 1}
+                      onClick={() => setRecordsPage((p) => p - 1)}
+                    >
+                      Previous
+                    </button>
+                    {visiblePages.map((pageNumber, index) => {
+                      const previousPage = visiblePages[index - 1];
+                      const needsEllipsis = index > 0 && pageNumber - previousPage > 1;
+                    
+                      return (
+                        <span key={pageNumber} className="attendance-page-number-wrap">
+                          {needsEllipsis ? <span className="attendance-page-ellipsis">...</span> : null}
+                          <button
+                            type="button"
+                            className={`attendance-page-number${recordsPage === pageNumber ? ' active' : ''}`}
+                            onClick={() => setRecordsPage(pageNumber)}
+                          >
+                            {pageNumber}
+                          </button>
+                        </span>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      className="attendance-page-nav"
+                      disabled={recordsPage === recordsTotalPages}
+                      onClick={() => setRecordsPage((p) => p + 1)}
+                    >
+                      Next
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
 
-      <section className="card absentees-card">
-        <div className="absentees-header">
-          <div className="absentees-title-group">
-            <UserX size={20} className="absentees-icon" aria-hidden="true" />
-            <h2>Absentees List</h2>
-            <span className="absentees-count-badge">{absentees.length}</span>
-          </div>
-          {absentees.length > ABSENTEES_PREVIEW ? (
-            <button
-              type="button"
-              className="absentees-view-all"
-              onClick={() => setShowAllAbsentees((prev) => !prev)}
-            >
-              {showAllAbsentees ? 'SHOW LESS' : 'VIEW ALL'}
-            </button>
-          ) : null}
-        </div>
-        {loading ? <p className="muted">Loading attendance data...</p> : null}
-        {error ? <p className="error-message">{error}</p> : null}
-        {!loading && !error && absentees.length === 0 ? (
-          <p className="muted">No absentees today.</p>
-        ) : null}
-        {!loading && !error && absentees.length > 0 ? (
-          <ul className="absentees-grid">
-            {visibleAbsentees.map((row) => (
-              <li
-                key={row.employee_code}
-                className="absentee-item"
-                onClick={() => navigate(`/employees/${row.id}`)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    navigate(`/employees/${row.id}`);
-                  }
-                }}
-                role="button"
-                tabIndex={0}
-              >
-                <div className="absentee-avatar">{row?.full_name
-                        ?.split(' ')
-                        .map((n) => n[0])
-                        .slice(0, 2)
-                        .join('')
-                        .toUpperCase()}</div>
-                <div className="absentee-info">
-                  <strong>{row.full_name}</strong>
-                  <span>{row.shift || 'No shift'}</span>
-                </div>
-                <span className="absentee-status">ABSENT</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </section>
+          <section className="card absentees-card">
+            <div className="absentees-header">
+              <div className="absentees-title-group">
+                <UserX size={20} className="absentees-icon" aria-hidden="true" />
+                <h2>Absentees List</h2>
+                <span className="absentees-count-badge">{absentees.length}</span>
+              </div>
+              {absentees.length > ABSENTEES_PREVIEW ? (
+                <button
+                  type="button"
+                  className="absentees-view-all"
+                  onClick={() => setShowAllAbsentees((prev) => !prev)}
+                >
+                  {showAllAbsentees ? 'SHOW LESS' : 'VIEW ALL'}
+                </button>
+              ) : null}
+            </div>
+            {loading ? <p className="muted">Loading attendance data...</p> : null}
+            {error ? <p className="error-message">{error}</p> : null}
+            {!loading && !error && absentees.length === 0 ? (
+              <p className="muted">No absentees today.</p>
+            ) : null}
+            {!loading && !error && absentees.length > 0 ? (
+              <ul className="absentees-grid">
+                {visibleAbsentees.map((row) => (
+                  <li
+                    key={row.employee_code}
+                    className="absentee-item"
+                    onClick={() => navigate(`/employees/${row.id}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        navigate(`/employees/${row.id}`);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <div className="absentee-avatar">{row?.full_name
+                            ?.split(' ')
+                            .map((n) => n[0])
+                            .slice(0, 2)
+                            .join('')
+                            .toUpperCase()}</div>
+                    <div className="absentee-info">
+                      <strong>{row.full_name}</strong>
+                      <span>{row.shift || 'No shift'}</span>
+                    </div>
+                    <span className="absentee-status">ABSENT</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
         </div>
 
         <aside className="attendance-side-column">

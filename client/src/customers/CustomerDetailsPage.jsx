@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, Pencil } from 'lucide-react';
 import api from '../api/client';
 
 const emptyFormData = {
@@ -20,8 +21,8 @@ const emptyFormData = {
 function DetailItem({ label, value }) {
   return (
     <div>
-      <p className="component-detail-label ">{label}</p>
-      <p className="component-detail-value">{value || '--'}</p>
+      <p className="employee-detail-label ">{label}</p>
+      <p className="employee-detail-value">{value || '--'}</p>
     </div>
   );
 }
@@ -120,35 +121,40 @@ export default function CustomerDetailsPage() {
   };
 
   return (
-    <main className="app-shell employee-details-page masters-page component-details-page">
-      <header className="app-header">
-        <div className="header-title-block">
-          <p className="eyebrow">Customer management</p>
-          <h1>Customer details</h1>
+    <main className="app-shell employee-shell">
+      <header className="app-header employee-card">
+        <p onClick={()=> navigate('/customers')} style={{cursor: 'pointer'}}><ArrowLeft size={16} style={{marginRight: 4, display: 'inline'}}/>Back to customers</p>
+        <div className="employee-title-block">
+          <div className="">
+            <h1>{customer?.name}</h1>
+            <p className="muted">{customer?.gstin}</p>
+          </div>
+          <div className="employee-top-bar">
+            <button
+            type="button"
+            className={'neutral-button'}
+            onClick={() => navigate(`/customers/${id}/edit`)}
+          >
+            < Pencil size={16} style={{marginRight: 4, display: "inline"}}/>Edit
+          </button>
+          </div>
         </div>
-      </header>
 
-      <section className="card form-card">
-        <div className="tab-row" style={{ display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap' }}>
+        <div className="pill-tabs">
           <button
             type="button"
-            className={tab === 'details' ? 'primary-button' : 'secondary-button'}
-            onClick={() => navigate(`/customers/${id}`)}
+            className={`pill-tab ${tab === 'details' ? 'pill-tab-active' : ''}`}
+            onClick={() => {setTab('details')}}
+            aria-selected = {tab === 'details'}
+            role = 'tab'
           >
             Details
           </button>
-          <button
-            type="button"
-            className={tab === 'edit' ? 'primary-button' : 'secondary-button'}
-            onClick={() => navigate(`/customers/${id}/edit`)}
-          >
-            Edit
-          </button>
-          <button type="button" className="secondary-button" onClick={() => navigate('/customers')}>
-            Back to customers
-          </button>
         </div>
+      </header>
 
+      
+      <section className="card employee-main">
         {loading ? (
           <p className="muted">Loading customer details...</p>
         ) : error ? (
@@ -157,43 +163,47 @@ export default function CustomerDetailsPage() {
           <p className="muted">Customer not found.</p>
         ) : tab === 'details' ? (
           <>
-            <div className="employee-details-grid">
-              <div className=" employee-detail-grid">
-                <DetailItem label="Customer Name" value={customer.name} />
-                <DetailItem label="GSTIN" value={customer.gstin} />
-                <DetailItem label="PAN" value={customer.pan_no} />
-                <DetailItem label="Contact Person" value={customer.contact_person} />
-                <DetailItem label="Contact Phone" value={customer.contact_phone} />
-                <DetailItem label="Bank Name" value={customer.bank_name} />
-                <DetailItem label="Account Number" value={customer.account_no} />
-                <DetailItem label="Account Type" value={customer.account_type} />
-                <DetailItem label="IFSC" value={customer.ifsc} />
-                <DetailItem label="Payment Terms" value={customer.payment_terms} />
-                {customer.created_at ? (
-                  <DetailItem label="Created At" value={new Date(customer.created_at).toLocaleString()} />
-                ) : null}
-                {customer.updated_at ? (
-                  <DetailItem label="Updated At" value={new Date(customer.updated_at).toLocaleString()} />
-                ) : null}
-              </div>
-            </div>
-
-            <section className="card employee-details-attendance">
-              <div
-                className="section-header"
-                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}
-              >
-                <div>
-                  <h2>Address information</h2>
-                  <p className="muted">Official and billing address information for this customer.</p>
+            <div className="detail-content-grid">
+              <div className="detail-main-column">
+                <div className="employee-details-grid">
+                  <div className=" employee-detail-grid">
+                    <DetailItem label="Customer Name" value={customer.name} />
+                    <DetailItem label="GSTIN" value={customer.gstin} />
+                    <DetailItem label="PAN" value={customer.pan_no} />
+                    <DetailItem label="Contact Person" value={customer.contact_person} />
+                    <DetailItem label="Contact Phone" value={customer.contact_phone} />
+                    <DetailItem label="Bank Name" value={customer.bank_name} />
+                    <DetailItem label="Account Number" value={customer.account_no} />
+                    <DetailItem label="Account Type" value={customer.account_type} />
+                    <DetailItem label="IFSC" value={customer.ifsc} />
+                    <DetailItem label="Payment Terms" value={customer.payment_terms} />
+                    {customer.created_at ? (
+                      <DetailItem label="Created At" value={new Date(customer.created_at).toLocaleString()} />
+                    ) : null}
+                    {customer.updated_at ? (
+                      <DetailItem label="Updated At" value={new Date(customer.updated_at).toLocaleString()} />
+                    ) : null}
+                  </div>
                 </div>
               </div>
-
-              <div className="address-card">
-                <DetailItem label="Official Address" value={customer.official_address} />
-                <DetailItem label="Billing Address" value={customer.billing_address} />
-              </div>
-            </section>
+              <aside className="detail-side-column">
+                <section className="card employee-details-attendance">
+                  <div
+                    className="section-header"
+                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}
+                    >
+                    <div>
+                      <h2>ADDRESS INFORMATION</h2>
+                    </div>
+                  </div>
+                  
+                  <div className="address-card">
+                    <DetailItem label="Official Address" value={customer.official_address} />
+                    <DetailItem label="Billing Address" value={customer.billing_address} />
+                  </div>
+                </section>
+              </aside>
+            </div>
           </>
         ) : (
           <form onSubmit={handleSubmit}>
@@ -209,7 +219,7 @@ export default function CustomerDetailsPage() {
                 onChange={handleChange}
                 required
                 disabled={submitting}
-              />
+                />
             </label>
 
             <label htmlFor="gstin">

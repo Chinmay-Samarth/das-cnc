@@ -538,6 +538,24 @@ button:hover:not(:disabled) {
   width: min(460px, 100%);
 }
 
+.detail-content-grid{
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  gap: 32px;
+  align-items: start;
+
+}
+
+.detail-main-column{
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.detail-side-column{
+  min-width: 0;
+}
+
 
 .attendance-grid {
   display: grid;
