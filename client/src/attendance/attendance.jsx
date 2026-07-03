@@ -296,7 +296,7 @@ export default function AttendancePage() {
         ) : null}
         {!loading && !error && latestRecords.length > 0 ? (
           <div className="attendance-table-wrap">
-            <table className="attendance-table">
+            <table className="app-table">
               <thead>
                 <tr>
                   <th>Employee</th>
@@ -423,7 +423,12 @@ export default function AttendancePage() {
                 role="button"
                 tabIndex={0}
               >
-                <div className="absentee-id-box">{row.employee_code}</div>
+                <div className="absentee-avatar">{row?.full_name
+                        ?.split(' ')
+                        .map((n) => n[0])
+                        .slice(0, 2)
+                        .join('')
+                        .toUpperCase()}</div>
                 <div className="absentee-info">
                   <strong>{row.full_name}</strong>
                   <span>{row.shift || 'No shift'}</span>

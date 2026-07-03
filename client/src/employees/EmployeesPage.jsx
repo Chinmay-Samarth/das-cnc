@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { UserPlus } from 'lucide-react';
 import api from '../api/client';
 
 const PLACEHOLDER_AVATAR = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect fill="%23E5E7EB" width="100%25" height="100%25"/><text x="50%25" y="54%25" dominant-baseline="middle" text-anchor="middle" font-size="48" fill="%23717A83" font-family="system-ui, sans-serif">?</text></svg>';
+const RECORDS_PAGE_SIZE = 10;
 
 const sortBy = (rows, key, asc) => {
   return [...rows].sort((a, b) => {
@@ -13,12 +15,25 @@ const sortBy = (rows, key, asc) => {
   });
 };
 
+function getVisiblePages(currentPage, totalPages) {
+  if (totalPages <= 5) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const pages = new Set([1, totalPages, currentPage]);
+  if (currentPage > 1) pages.add(currentPage - 1);
+  if (currentPage < totalPages) pages.add(currentPage + 1);
+
+  return [...pages].sort((a, b) => a - b);
+}
+
 export default function EmployeesPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState('full_name');
   const [sortAsc, setSortAsc] = useState(true);
   const [employees, setEmployees] = useState([]);
+  const [recordsPage, setRecordsPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -68,6 +83,21 @@ export default function EmployeesPage() {
     return sortBy(matches, sortKey, sortAsc);
   }, [search, sortKey, sortAsc, employees]);
 
+  const recordsTotalPages = Math.max(1, Math.ceil(filteredEmployees.length / RECORDS_PAGE_SIZE));
+
+  useEffect(() => {
+    if (recordsPage > recordsTotalPages) {
+      setRecordsPage(recordsTotalPages);
+    }
+  }, [recordsPage, recordsTotalPages]);
+
+  const paginatedEmployees = useMemo(() => {
+    const start = (recordsPage - 1) * RECORDS_PAGE_SIZE;
+    return filteredEmployees.slice(start, start + RECORDS_PAGE_SIZE);
+  }, [filteredEmployees, recordsPage]);
+
+  const visiblePages = getVisiblePages(recordsPage, recordsTotalPages);
+
   const handleSort = (key) => {
     if (sortKey === key) {
       setSortAsc((current) => !current);
@@ -104,16 +134,17 @@ export default function EmployeesPage() {
               aria-label="Search employees"
             />
             <button type="button" className="primary-button" onClick={() => navigate('/employees/add')}>
-              Add Employee
+              <UserPlus size={16} style={{display: 'inline', marginRight: 4}}/>Add Employee
             </button>
           </div>
         </div>
 
-        {error ? <p className="error-message">{error}</p> : null}
-        {loading ? <p className="muted">Loading employees...</p> : null}
+        
 
         <div className="employees-table-wrap">
-          <table className="employees-table">
+          <table className="app-table">
+            {error ? <p className="error-message">{error}</p> : null}
+            {loading ? <p className="muted" style={{padding: 10, marginTop: 10}}>Loading employees...</p> : null}
             <thead>
               <tr>
                 <th onClick={() => handleSort('full_name')}>
@@ -137,7 +168,7 @@ export default function EmployeesPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredEmployees.map((employee) => (
+              {paginatedEmployees.map((employee) => (
                 <tr
                   key={employee.id}
                   role="button"
@@ -164,7 +195,7 @@ export default function EmployeesPage() {
                     </div>
                   </td>
                   <td>{employee.employee_code}</td>
-                  <td>{employee.role}</td>
+                  <td>{employee.job_description}</td>
                   <td className="hide-mobile">{employee.department}</td>
                   <td className="hide-mobile">{employee.shift}</td>
                   <td>
@@ -182,6 +213,50 @@ export default function EmployeesPage() {
             </tbody>
           </table>
         </div>
+        {!loading && !error && filteredEmployees.length > 0 ? (
+          <div className="attendance-pagination" style={{ marginTop: '16px' }}>
+            <span className="attendance-page-summary">
+              Showing {(recordsPage - 1) * RECORDS_PAGE_SIZE + 1} to {Math.min(recordsPage * RECORDS_PAGE_SIZE, filteredEmployees.length)} of {filteredEmployees.length} employees
+            </span>
+            {recordsTotalPages > 1 ? (
+              <div className="attendance-page-controls">
+                <button
+                  type="button"
+                  className="attendance-page-nav"
+                  disabled={recordsPage === 1}
+                  onClick={() => setRecordsPage((p) => p - 1)}
+                >
+                  Previous
+                </button>
+                {visiblePages.map((pageNumber, index) => {
+                  const previousPage = visiblePages[index - 1];
+                  const needsEllipsis = index > 0 && pageNumber - previousPage > 1;
+
+                  return (
+                    <span key={pageNumber} className="attendance-page-number-wrap">
+                      {needsEllipsis ? <span className="attendance-page-ellipsis">...</span> : null}
+                      <button
+                        type="button"
+                        className={`attendance-page-number${recordsPage === pageNumber ? ' active' : ''}`}
+                        onClick={() => setRecordsPage(pageNumber)}
+                      >
+                        {pageNumber}
+                      </button>
+                    </span>
+                  );
+                })}
+                <button
+                  type="button"
+                  className="attendance-page-nav"
+                  disabled={recordsPage === recordsTotalPages}
+                  onClick={() => setRecordsPage((p) => p + 1)}
+                >
+                  Next
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
     </main>
   );

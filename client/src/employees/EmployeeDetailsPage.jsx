@@ -5,6 +5,7 @@ import { toDisplayTime, toISODateString } from '../attendance/useDailyAttendance
 import ImageLightbox from '../components/shared/ImageLightBox';
 import AttendanceGauge from '../components/shared/Attendancegauge';
 import StatTile from '../components/shared/StatTile'
+import {ArrowLeft, ChevronLeft, ChevronRight} from "lucide-react"
 
 
 const PLACEHOLDER_AVATAR =
@@ -334,50 +335,81 @@ export default function EmployeeDetailsPage() {
   // ── render ────────────────────────────────────────────────────────────────
 
   return (
-    <main className="app-shell employee-details-page masters-page component-details-page">
-      <header className="app-header">
-        <div className="header-title-block">
-          <p className="eyebrow">Workforce management</p>
-          <h1>Employee details</h1>
+    <main className="app-shell employee-shell">
+      <header className="app-header employee-card">
+        <p onClick={()=> navigate('/employees')} style={{cursor: 'pointer'}}><ArrowLeft size={16} style={{marginRight: 4, display: 'inline'}}/>Back to Employees</p>
+        <div className="employee-title-block">
+          <div style={{ gridColumn: 'span 2' }}>
+            <img
+              src={employee?.img_url || PLACEHOLDER_AVATAR}
+              alt={employee?.img_url ? `${employee.full_name} photo` : 'No photo available'}
+              style={{ width: '80px', height: '80px', objectFit: 'cover', borderRadius: '12px', border: '1px solid #d1d5db', backgroundColor: '#e5e7eb', cursor: 'pointer' }}
+              onClick={() => employee.img_url && setLightBox({ src: employee.img_url, alt: employee.full_name })}
+            />
+            {lightBox && (
+              <ImageLightbox src={lightBox.src} alt={lightBox.alt} onClose={() => setLightBox(null)} />
+            )}
+          </div>
+          <div className="">
+            <h1>{employee?.full_name}</h1>
+            <div className="" style={{display: 'flex', gap: '25px'}}>
+              <p className='muted'>{employee?.job_description}</p>
+              <p className='muted'>ID: {employee?.employee_code}</p>
+            </div>
+          </div>
         </div>
-      </header>
-
-      <section className="card form-card">
-
-        {/* Tab row */}
-        <div className="tab-row" style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
+        <div className="pill-tabs" >
           <button
             type="button"
-            className={tab === 'details' ? 'primary-button' : 'secondary-button'}
+            className={`pill-tab ${tab === 'details' ? 'pill-tab-active' : ''}`}
             onClick={() => {setTab('details')}}
+            aria-selected = {tab === 'details'}
+            role = 'tab'
           >
             Details
           </button>
           <button
             type="button"
-            className={tab === 'documents' ? 'primary-button' : 'secondary-button'}
+            onClick={() => setTab('attendance')}
+            className={`pill-tab ${tab === 'attendance' ? 'pill-tab-active' : ''}`}
+            aria-selected = {tab === 'attendance'}
+            role = 'tab'
+          >
+            Attendance
+          </button>
+          <button
+            type="button"
             onClick={() => setTab('documents')}
+            className={`pill-tab ${tab === 'documents' ? 'pill-tab-active' : ''}`}
+            aria-selected = {tab === 'documents'}
+            role = 'tab'
           >
             Documents
           </button>
           <button
             type="button"
-            className={tab === 'address' ? 'primary-button' : 'secondary-button'}
             onClick={() => setTab('address')}
+            className={`pill-tab ${tab === 'address' ? 'pill-tab-active' : ''}`}
+            aria-selected = {tab === 'address'}
+            role = 'tab'
           >
             Address
           </button>
           <button
             type="button"
-            className={tab === 'commercials' ? 'primary-button' : 'secondary-button'}
             onClick={() => setTab('commercials')}
+            className={`pill-tab ${tab === 'commercials' ? 'pill-tab-active' : ''}`}
+            aria-selected = {tab === 'commercials'}
+            role = 'tab'
           >
             Commercials
           </button>
-          <button
+          {/* <button
             type="button"
-            className={tab === 'edit' ? 'primary-button' : 'secondary-button'}
             onClick={() => navigate(`/employees/${id}/edit`)}
+            className={`pill-tab ${tab === 'documents' ? 'pill-tab-active' : ''}`}
+            aria-selected = {tab === 'documents'}
+            role = 'tab'
           >
             Edit
           </button>
@@ -388,8 +420,14 @@ export default function EmployeeDetailsPage() {
             disabled={submitting}
           >
             Back to employees
-          </button>
+          </button> */}
         </div>
+      </header>
+
+      <section className="card employee-main">
+
+        {/* Tab row */}
+  
 
         {/* Loading / error guards */}
         {loading ? (
@@ -403,41 +441,34 @@ export default function EmployeeDetailsPage() {
             {/* ── DETAILS tab ───────────────────────────────────────────── */}
             {tab === 'details' && (
               <>
-                <div className="employee-details-grid">
-                  <div style={{ gridColumn: 'span 2' }}>
-                    <img
-                      src={employee.img_url || PLACEHOLDER_AVATAR}
-                      alt={employee.img_url ? `${employee.full_name} photo` : 'No photo available'}
-                      style={{ width: '160px', height: '160px', objectFit: 'cover', borderRadius: '12px', border: '1px solid #d1d5db', backgroundColor: '#e5e7eb', cursor: 'pointer' }}
-                      onClick={() => employee.img_url && setLightBox({ src: employee.img_url, alt: employee.full_name })}
-                    />
-                    {lightBox && (
-                      <ImageLightbox src={lightBox.src} alt={lightBox.alt} onClose={() => setLightBox(null)} />
-                    )}
-                  </div>
-
+                <div className="employee-detail-card">
+                  <h2>Employee Details</h2>
                   <div className="employee-detail-grid">
-                    <div><p className="text-xl font-medium">Full Name</p><p className="font-bold">{employee.full_name}</p></div>
-                    <div><p className="text-xl font-medium">Employee Code</p><p className="font-bold">{employee.employee_code}</p></div>
-                    <div><p className="text-xl font-medium">Job Description</p><p className="font-bold">{employee.job_description || '--'}</p></div>
-                    <div><p className="text-xl font-medium">Status</p><p className="font-bold">{employee.status}</p></div>
-                    <div><p className="text-xl font-medium">Department</p><p className="font-bold">{employee.department || 'Not assigned'}</p></div>
-                    <div><p className="text-xl font-medium">Shift</p><p className="font-bold">{employee.shift || 'Not assigned'}</p></div>
-                    <div><p className="text-xl font-medium">ESI Number</p><p className="font-bold">{employee.ESI_no || 'Not assigned'}</p></div>
+                    <div><p className="employee-detail-label">Full Name</p><p className="employee-detail-value">{employee.full_name}</p></div>
+                    <div><p className="employee-detail-label">Employee Code</p><p className="employee-detail-value">{employee.employee_code}</p></div>
+                    <div><p className="employee-detail-label">Job Description</p><p className="employee-detail-value">{employee.job_description || '--'}</p></div>
+                    <div><p className="employee-detail-label">Status</p><p className="employee-detail-value">{employee.status}</p></div>
+                    <div><p className="employee-detail-label">Department</p><p className="employee-detail-value">{employee.department || 'Not assigned'}</p></div>
+                    <div><p className="employee-detail-label">Shift</p><p className="employee-detail-value">{employee.shift || 'Not assigned'}</p></div>
+                    <div><p className="employee-detail-label">ESI Number</p><p className="employee-detail-value">{employee.ESI_no || 'Not assigned'}</p></div>
                     {employee.created_at && (
                       <div>
-                        <p className="text-xl font-medium">Created At</p>
-                        <p className="font-bold">{new Date(employee.created_at).toLocaleString()}</p>
+                        <p className="employee-detail-label">Created At</p>
+                        <p className="employee-detail-value">{new Date(employee.created_at).toLocaleString()}</p>
                       </div>
                     )}
                   </div>
                 </div>
+              </>
+            )}
 
-                {/* Attendance section — untouched */}
-                <section className="card employee-details-attendance">
+            {/* {Attendance Tab} */}
+            {tab === 'attendance' && (
+              <>
+               {/* Attendance section — untouched */}
+                <section className="employee-details-attendance">
                   <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
                     <h2>Attendance &amp; report</h2>
-                    <span className="count-chip">{attendanceRecords.length}</span>
                     <p className="text-sm" style={{ margin: '2px 0 0', color: '#6b7280' }}>
                       {attendanceLoading
                         ? 'Loading...'
@@ -445,10 +476,10 @@ export default function EmployeeDetailsPage() {
                     </p>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <button type="button" className="secondary-button" onClick={() => setSelectedMonth((prev) => shiftMonth(prev, -1))} disabled={isPrevMonthDisabled} aria-label="Previous month">&lsaquo;</button>
-                    <span className="font-semibold" style={{ minWidth: '150px', textAlign: 'center', display: 'inline-block' }}>{formatMonthLabel(selectedMonth)}</span>
-                    <button type="button" className="secondary-button" onClick={() => setSelectedMonth((prev) => shiftMonth(prev, 1))} disabled={isNextMonthDisabled} aria-label="Next month">&rsaquo;</button>
+                  <div className='' style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button type="button" className="date-pickers" onClick={() => setSelectedMonth((prev) => shiftMonth(prev, -1))} disabled={isPrevMonthDisabled} aria-label="Previous month"><ChevronLeft size={16} /></button>
+                    <span className="datebar font-semibold" style={{ minWidth: '150px', textAlign: 'center', display: 'inline-block' }}>{formatMonthLabel(selectedMonth)}</span>
+                    <button type="button" className="date-pickers" onClick={() => setSelectedMonth((prev) => shiftMonth(prev, 1))} disabled={isNextMonthDisabled} aria-label="Next month"><ChevronRight size={16}/></button>
                   </div>
 
                   {attendanceLoading ? (
@@ -471,7 +502,7 @@ export default function EmployeeDetailsPage() {
                         <p className="muted">No attendance records found for {formatMonthLabel(selectedMonth)}.</p>
                       ) : (
                         <div className="attendance-table-wrap">
-                          <table className="attendance-table">
+                          <table className="app-table">
                             <thead>
                               <tr><th>Date</th><th>Shift</th><th>In</th><th>Out</th><th>Status</th><th>Minutes</th><th>OT</th></tr>
                             </thead>
@@ -507,8 +538,8 @@ export default function EmployeeDetailsPage() {
                     { label: 'Work experience',   urlKey: 'work_experience_url' },
                     { label: 'Thumb impression',  urlKey: 'thumb_impression_url' },
                   ].map(({ label, urlKey }) => (
-                    <div key={urlKey} style={{ border: '1px solid #e5e7eb', borderRadius: '12px', padding: '16px' }}>
-                      <p className="text-xl font-medium" style={{ marginBottom: '10px' }}>{label}</p>
+                    <div key={urlKey} style={{  borderRadius: '6px', padding: '16px' }}>
+                      <p className="employee-detail-label" style={{ marginBottom: '10px' }}>{label}</p>
                       <DocPreview
                         url={employee[urlKey]}
                         label={label}
@@ -530,9 +561,9 @@ export default function EmployeeDetailsPage() {
                   { label: 'Temporary address', key: 'temporary_address' },
                   { label: 'Permanent address', key: 'permanent_address' },
                 ].map(({ label, key }) => (
-                  <div key={key} style={{ border: '1px solid #e5e7eb', borderRadius: '12px', padding: '16px' }}>
-                    <p className="text-xl font-medium" style={{ marginBottom: '8px' }}>{label}</p>
-                    <p className="font-bold" style={{ whiteSpace: 'pre-line' }}>{employee[key] || '--'}</p>
+                  <div key={key} style={{ borderRadius: '12px', padding: '16px' }}>
+                    <p className="employee-detail-label" style={{ marginBottom: '8px' }}>{label}</p>
+                    <p className="employee-detail-value" style={{ whiteSpace: 'pre-line' }}>{employee[key] || '--'}</p>
                   </div>
                 ))}
               </div>
@@ -541,8 +572,8 @@ export default function EmployeeDetailsPage() {
             {/* ── COMMERCIALS tab ───────────────────────────────────────── */}
             {tab === 'commercials' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                <div style={{ border: '1px solid #e5e7eb', borderRadius: '12px', padding: '16px' }}>
-                  <p className="text-xl font-medium" style={{ marginBottom: '16px' }}>Bank details</p>
+                <div className='employee-detail-card' style={{borderRadius: '12px', padding: '16px' }}>
+                  <h2  style={{ marginBottom: '16px' }}>Bank details</h2>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     {[
                       { label: 'Bank name',       key: 'bank_name' },
@@ -551,15 +582,15 @@ export default function EmployeeDetailsPage() {
                       { label: 'IFSC code',       key: 'ifsc' },
                     ].map(({ label, key }) => (
                       <div key={key}>
-                        <p className="text-xl font-medium">{label}</p>
-                        <p className="font-bold">{employee[key] || '--'}</p>
+                        <p className="employee-detail-label">{label}</p>
+                        <p className="employee-detail-value">{employee[key] || '--'}</p>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div style={{ border: '1px solid #e5e7eb', borderRadius: '12px', padding: '16px' }}>
-                  <p className="text-xl font-medium" style={{ marginBottom: '16px' }}>Compensation</p>
+                <div style={{ borderRadius: '12px', padding: '16px' }}>
+                  {/* <p className="text-xl font-medium" style={{ marginBottom: '16px' }}>Compensation</p> */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
                     {[
                       { label: 'Basic salary (₹/mo)', key: 'basic_salary', accent: '#059669' },
