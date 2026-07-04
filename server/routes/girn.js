@@ -1,9 +1,13 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { resolveGirnItemMaterials } = require('../services/girnRawMaterialEngine');
+const { extractInvoiceNow } = require('../services/invoiceOcrEngine');
+const { ensureSupplier, supplierPayloadFromInvoice } = require('../services/girnSupplierEngine');
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage() });
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -52,6 +56,115 @@ async function generateGirnNumber() {
   return `${prefix}${String(nextSeq).padStart(4, '0')}`;
 }
 
+function toNumber(value) {
+  const number = parseFloat(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function inferRmId(description = '') {
+  const match = String(description).match(/\b\d{3,}\b/);
+  return match ? match[0] : '';
+}
+
+function normalizeOcrGirnItems(lineItems = [], taxItems = []) {
+  const rawDefaultVat = toNumber(taxItems[0]?.rate);
+  // Normalize rate: if OCR gave a fractional rate (e.g. 0.18), convert to percent (18)
+  let defaultVat = rawDefaultVat;
+  if (defaultVat > 0 && defaultVat <= 1) {
+    defaultVat = defaultVat * 100;
+  }
+
+  return lineItems.map((item) => {
+    const description = item.description || '';
+    const quantity = toNumber(item.quantity);
+    const unitRate = toNumber(item.unit_price);
+    const fallbackTotal = toNumber(item.total);
+    const amount = quantity && unitRate ? quantity * unitRate : fallbackTotal;
+    const vatPercentage = defaultVat || 0;
+    const vatAmount = amount * (vatPercentage / 100);
+    const totalAmount = amount + vatAmount;
+
+    return {
+      raw_material_id: null,
+      raw_material_label: '',
+      rm_id: inferRmId(description),
+      rm_code: description,
+      grade: '',
+      inventory_number: '',
+      unit: '',
+      quantity,
+      unit_rate: unitRate,
+      amount,
+      vat_percentage: vatPercentage,
+      vat_amount: vatAmount,
+      total_amount: totalAmount,
+    };
+  });
+}
+
+function buildDraftGirnFromInvoice(invoice, employeeId) {
+  const supplierFields = supplierPayloadFromInvoice(invoice);
+  const items = normalizeOcrGirnItems(invoice.line_items || [], invoice.tax_items || []);
+  const grandTotal = items.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
+
+  return {
+    invoice_id: invoice.id,
+    supplier_id: supplierFields.supplier_id || '',
+    supplier_name: supplierFields.name || '',
+    supplier_gstin: supplierFields.GSTIN || '',
+    supplier_state: supplierFields.state || '',
+    supplier_billing_address: supplierFields.billing_address || '',
+    received_by: employeeId || '',
+    po_reference: invoice.invoice_number || '',
+    received_date: invoice.invoice_date || new Date().toISOString().slice(0, 10),
+    csr: '',
+    notes: invoice.invoice_number ? `Generated from invoice ${invoice.invoice_number}` : 'Generated from scanned invoice',
+    grand_total: grandTotal || toNumber(invoice.total_amount),
+    items,
+  };
+}
+
+async function resolveGirnSupplier(body) {
+  if (body.supplier_id) {
+    return body.supplier_id;
+  }
+
+  const supplierId = await ensureSupplier({
+    name: body.supplier_name,
+    GSTIN: body.supplier_gstin,
+    state: body.supplier_state,
+    billing_address: body.supplier_billing_address,
+  });
+
+  if (supplierId) {
+    return supplierId;
+  }
+
+  if (!body.invoice_id) {
+    return null;
+  }
+
+  const { data: invoice, error } = await supabase
+    .from('invoices')
+    .select(`*,
+      suppliers(
+        id,
+        name,
+        billing_address,
+        account_number,
+        ifsc,
+        GSTIN,
+        state
+      )`)
+    .eq('id', body.invoice_id)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!invoice) return null;
+
+  return ensureSupplier(supplierPayloadFromInvoice(invoice));
+}
+
 // ─── LIST ──────────────────────────────────────────────────────────────────────
 router.get('/', verifyEmployeeAuth, async (req, res) => {
   try {
@@ -60,6 +173,7 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
       .select(`
         id,
         girn_number,
+        invoice_id,
         received_date,
         received_by,
         po_reference,
@@ -68,6 +182,7 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
         status,
         notes,
         suppliers ( id, name ),
+        invoices ( id, invoice_number, file_url ),
         employees!received_by ( id, full_name, employee_code )
       `)
       .order('received_date', { ascending: false });
@@ -77,6 +192,9 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
     const girns = (data || []).map((g) => ({
       id: g.id,
       girn_number: g.girn_number,
+      invoice_id: g.invoice_id,
+      invoice_number: g.invoices?.invoice_number ?? null,
+      invoice_file_url: g.invoices?.file_url ?? null,
       received_date: g.received_date,
       received_by: g.received_by,
       received_by_name: g.employees?.full_name ?? null,
@@ -101,7 +219,12 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
 router.post('/', verifyEmployeeAuth, async (req, res) => {
   try {
     const {
+      invoice_id,
       supplier_id,
+      supplier_name,
+      supplier_gstin,
+      supplier_state,
+      supplier_billing_address,
       received_by,
       po_reference,
       received_date,
@@ -110,8 +233,17 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       items = [],
     } = req.body;
 
-    if (!supplier_id || !received_by || !received_date) {
-      return res.status(400).json({ error: 'supplier_id, received_by, and received_date are required' });
+    if (!received_by || !received_date) {
+      return res.status(400).json({ error: 'received_by and received_date are required' });
+    }
+
+    if (!supplier_id && !String(supplier_name || '').trim() && !String(supplier_gstin || '').trim() && !invoice_id) {
+      return res.status(400).json({ error: 'Supplier details are required' });
+    }
+
+    const resolvedSupplierId = await resolveGirnSupplier(req.body);
+    if (!resolvedSupplierId) {
+      return res.status(400).json({ error: 'Unable to resolve supplier from the provided details' });
     }
 
     if (items.length === 0) {
@@ -143,7 +275,8 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       .from('girns')
       .insert({
         girn_number: girnNumber,
-        supplier_id,
+        invoice_id: invoice_id || null,
+        supplier_id: resolvedSupplierId,
         received_by,
         po_reference: po_reference || null,
         received_date,
@@ -186,10 +319,33 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
     const isClientError =
       err.message?.includes('RM ID') ||
       err.message?.includes('raw material') ||
-      err.message?.includes('RM Code');
+      err.message?.includes('RM Code') ||
+      err.message?.includes('Supplier');
     return res.status(isClientError ? 400 : 500).json({
       error: isClientError ? err.message : 'Unable to create GIRN',
     });
+  }
+});
+
+// ─── EXTRACT INVOICE FOR GIRN REVIEW ──────────────────────────────────────────
+router.post('/extract-invoice', verifyEmployeeAuth, upload.single('invoice'), async (req, res) => {
+  try {
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ error: 'No invoice file uploaded' });
+    }
+
+    const { invoice } = await extractInvoiceNow(file);
+    const draftGirn = buildDraftGirnFromInvoice(invoice, req.user?.sub);
+
+    return res.json({
+      invoice,
+      draft_girn: draftGirn,
+    });
+  } catch (err) {
+    console.dir(err, {depth: null})
+    console.error('GIRN invoice extraction error:', err);
+    return res.status(500).json({ error: err.message || 'Unable to extract invoice' });
   }
 });
 
@@ -203,6 +359,7 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
       .select(`
         id,
         girn_number,
+        invoice_id,
         received_date,
         received_by,
         po_reference,
@@ -211,6 +368,7 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
         status,
         notes,
         suppliers ( id, name ),
+        invoices ( id, invoice_number, file_url ),
         employees!received_by ( id, full_name, employee_code )
       `)
       .eq('id', id)
@@ -267,6 +425,8 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
         ...girn,
         supplier_id: girn.suppliers?.id ?? null,
         supplier_name: girn.suppliers?.name ?? null,
+        invoice_number: girn.invoices?.invoice_number ?? null,
+        invoice_file_url: girn.invoices?.file_url ?? null,
         received_by_name: girn.employees?.full_name ?? null,
         received_by_code: girn.employees?.employee_code ?? null,
         items: itemsWithLogs,
@@ -296,7 +456,12 @@ router.put('/:id', verifyEmployeeAuth, async (req, res) => {
     }
 
     const {
+      invoice_id,
       supplier_id,
+      supplier_name,
+      supplier_gstin,
+      supplier_state,
+      supplier_billing_address,
       received_by,
       po_reference,
       received_date,
@@ -304,6 +469,14 @@ router.put('/:id', verifyEmployeeAuth, async (req, res) => {
       notes,
       items = [],
     } = req.body;
+
+    const resolvedSupplierId = supplier_id
+      ? supplier_id
+      : await resolveGirnSupplier(req.body);
+
+    if (!resolvedSupplierId) {
+      return res.status(400).json({ error: 'Unable to resolve supplier from the provided details' });
+    }
 
     if (items.length === 0) {
       return res.status(400).json({ error: 'At least one line item is required' });
@@ -330,7 +503,8 @@ router.put('/:id', verifyEmployeeAuth, async (req, res) => {
     const { data: updatedGirn, error: updateError } = await supabase
       .from('girns')
       .update({
-        supplier_id: supplier_id || undefined,
+        supplier_id: resolvedSupplierId,
+        invoice_id: invoice_id ?? null,
         received_by: received_by || undefined,
         po_reference: po_reference ?? null,
         received_date: received_date || undefined,
@@ -381,7 +555,8 @@ router.put('/:id', verifyEmployeeAuth, async (req, res) => {
     const isClientError =
       err.message?.includes('RM ID') ||
       err.message?.includes('raw material') ||
-      err.message?.includes('RM Code');
+      err.message?.includes('RM Code') ||
+      err.message?.includes('Supplier');
     return res.status(isClientError ? 400 : 500).json({
       error: isClientError ? err.message : 'Unable to update GIRN',
     });

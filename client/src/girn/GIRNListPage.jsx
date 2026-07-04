@@ -151,7 +151,7 @@ export default function GIRNListPage() {
 
         {!loading && (
           <div className="employees-table-wrap">
-            <table className="employees-table">
+            <table className="app-table">
               <thead>
                 <tr>
                   <th onClick={() => handleSort('girn_number')}>

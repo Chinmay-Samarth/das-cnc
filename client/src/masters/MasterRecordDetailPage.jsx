@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import ImageLightbox from '../components/shared/ImageLightBox'
+import { ArrowLeft, Pencil } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -146,8 +147,8 @@ function FlatSectionView({ section, flatValues }) {
 
         return (
           <div key={field.id} className={`mrd-field${isFull ? ' mrd-full' : ''}`}>
-            <div className="mrd-label">{field.label}</div>
-            <div className="mrd-value"><CellValue formatted={formatted} /></div>
+            <div className="employee-detail-label">{field.label}</div>
+            <div className="employee-detail-value"><CellValue formatted={formatted} /></div>
           </div>
         )
       })}
@@ -171,7 +172,7 @@ function RepeatableSectionView({ section, repeatableValues }) {
 
   return (
     <div className="mrd-repeat-table-wrap">
-      <table className="mrd-repeat-table">
+      <table className="app-table">
         <thead>
           <tr>
             {section.fields.map(f => <th key={f.id}>{f.label}</th>)}
@@ -281,7 +282,7 @@ export default function MasterRecordDetailPage() {
   // ── Skeleton ────────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="page-shell">
+      <div className="app-shell employee-shell">
         <div className="card" style={{ display: 'grid', gap: 16, padding: 32 }}>
           <div className="skeleton" style={{ height: 32, width: '40%', borderRadius: 8 }} />
           <div className="skeleton" style={{ height: 44, width: '60%', borderRadius: 10 }} />
@@ -293,7 +294,7 @@ export default function MasterRecordDetailPage() {
 
   if (error) {
     return (
-      <div className="page-shell">
+      <div className="app-shell employee-shell">
         <div className="card" style={{ color: '#dc2626', display: 'flex', gap: 10, alignItems: 'center' }}>
           <i className="ti ti-alert-circle" style={{ fontSize: 20 }} />
           {error}
@@ -308,58 +309,54 @@ export default function MasterRecordDetailPage() {
   const activeSection        = sections[activeTab]
 
   return (
-    <div className="page-shell fade-up">
+    <div className="app-shell employee-shell">
 
       {/* ── Page header ── */}
-      <div className="mrd-header">
-        <div className="mrd-header-left">
-          <button
-            type="button"
-            className="secondary-btn mrd-back-btn"
-            onClick={() => navigate(`/masters/${slug}`)}
-          >
-            ← Back
-          </button>
-          <div className="mrd-title-block">
-            <span className="mrd-master-icon">{master.icon || '📦'}</span>
-            <div>
-              <div className="mrd-master-name">{master.name}</div>
-              <div className="mrd-record-id">#{id.slice(0, 8)}</div>
-            </div>
+      <header className="app-header employee-card">
+          <p onClick={()=> navigate(`/masters/${slug}`)} style={{cursor: 'pointer'}}><ArrowLeft size={16} style={{marginRight: 4, display: 'inline'}}/>Back to {slug}</p>
+        <div className="employee-title-block">
+          <div className="">
+            <h1 className="">{master.name}</h1>
+            <p className="muted">#{id.slice(0, 8)}</p>
+          </div>
+          <div className="employee-top-bar">
+            <button
+              type="button"
+              onClick={() => navigate(`/masters/${slug}/records/${id}/edit`)}
+              style={{ whiteSpace: 'nowrap' }}
+              className='neutral-button'
+            >
+              <Pencil size={16} style={{display: 'inline', marginRight:4}}/> Edit
+            </button>
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => navigate(`/masters/${slug}/records/${id}/edit`)}
-          style={{ whiteSpace: 'nowrap' }}
-        >
-          ✏️ Edit
-        </button>
-      </div>
+
+          {sections.length > 1 && (
+          <div className="mrd-tab-bar" role="tablist">
+            {sections.map((section, idx) => (
+              <button
+                key={section.id}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === idx}
+                className={`mrd-tab${activeTab === idx ? ' is-active' : ''}`}
+                onClick={() => setActiveTab(idx)}
+              >
+                {section.name}
+                {section.is_repeatable && (
+                  <span className="mrd-tab-count">
+                    {(repValues[section.slug] || []).length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </header>
 
       {/* ── Pill tab bar ── */}
-      {sections.length > 1 && (
-        <div className="mrd-tab-bar" role="tablist">
-          {sections.map((section, idx) => (
-            <button
-              key={section.id}
-              type="button"
-              role="tab"
-              aria-selected={activeTab === idx}
-              className={`mrd-tab${activeTab === idx ? ' is-active' : ''}`}
-              onClick={() => setActiveTab(idx)}
-            >
-              {section.name}
-              {section.is_repeatable && (
-                <span className="mrd-tab-count">
-                  {(repValues[section.slug] || []).length}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
+      
 
       {/* ── Section content ── */}
       {activeSection && (

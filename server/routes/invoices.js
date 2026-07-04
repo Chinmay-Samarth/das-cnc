@@ -1,10 +1,8 @@
 const express = require("express");
 const multer = require("multer")
-const Mindee = require("mindee")
 const {createClient} = require("@supabase/supabase-js")
 const jwt = require("jsonwebtoken");
-const { invoice } = require("mindee/src/v1/product");
-const {createSupplierFromInvoice} = require('../services/supplierEngine')
+const { getInvoice, startInvoiceOCR } = require('../services/invoiceOcrEngine');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -15,16 +13,6 @@ const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
 
 const upload = multer({ storage: multer.memoryStorage()});
 const router = express.Router();
-const mindeeClient = new Mindee.Client({ apiKey: process.env.MINDEE_API_KEY });
-
-async function updateInvoiceStatus(invoiceId, status) {
-  const { error } = await supabase
-    .from('invoices')
-    .update({ status })
-    .eq('id', invoiceId);
-
-  if (error) throw error;
-}
 
 function verifyEmployeeAuth(req, res, next) {
   try {
@@ -42,117 +30,6 @@ function verifyEmployeeAuth(req, res, next) {
   }
 }
 
-async function processInvoiceOCR(invoiceId, inputSource, publicUrl){
-
-  console.log('***reached processInvoiceOCR***')
-  
-
-  const modelParams = {
-    modelId: "2a4ccdd5-e3e3-4801-bba2-6bbca01bae4f",
-    // Options: set to `true` or `false` to override defaults
-    // Enhance extraction accuracy with Retrieval-Augmented Generation.
-    rag: true,
-    // Extract the full text content from the document as strings.
-    rawText: false,
-    // Calculate bounding box polygons for all fields.
-    polygon: false,
-    // Boost the precision and accuracy of all extractions.
-    // Calculate confidence scores for all fields.
-    confidence: false,
-  }
-  const apiResponse = await mindeeClient.enqueueAndGetResult(
-    Mindee.product.Extraction,
-    inputSource,
-    modelParams
-  )
-
-  // const doc = apiResponse.document.inference.prediction
-  const doc = apiResponse.rawHttp.inference.result.fields
-
-  await updateInvoiceStatus(invoiceId, 'saving')
-
-
-  let supplier_GSTIN
-  if(doc.supplier_company_registration !== undefined){
-
-    doc.supplier_company_registration.items.forEach((item) => {  
-      if(item.fields.type.value === "GSTIN"){
-        supplier_GSTIN = item.fields.number.value
-      }
-    })
-  }
-  let irn 
-  doc.reference_numbers.items.forEach((item)=>{
-    if (item.value.length === 64){
-      irn = item.value
-    }
-  })
-
-  const {data: existingSupplier, error: esError } = await supabase
-  .from('suppliers')
-  .select('id')
-  .eq('GSTIN', supplier_GSTIN)
-  .maybeSingle()
-
-  if(esError) throw esError
-
-  let supplierId
-
-  if(existingSupplier !== null) {
-    supplierId = existingSupplier.id
-  }
-  else{
-    const supplierPayLoad = {
-      name: doc.supplier_name?.value || null,
-      GSTIN: supplier_GSTIN,
-      state: doc.supplier_address.fields.state.value || null,
-      IFSC: doc.supplier_payment_details.items[0].fields.swift.value || null,
-      account_number: doc.supplier_payment_details.items[0].fields.account_number.value || null,
-      email: doc.supplier_payment_details.supplier_email?.value ?? null,
-      billing_address: doc.supplier_address.fields.address.value || null
-    }
-
-    const data = await createSupplierFromInvoice(supplierPayLoad)
-
-    supplierId = data[0].id
-  }
-
-
-  // 
-  const invoiceData = {
-    status: "pending",
-    file_url: publicUrl,
-    invoice_number: doc.invoice_number?.value || null,
-    invoice_date: doc.date?.value || null,
-    due_date: doc.due_date?.value || null,
-    base_amount: doc.total_net?.value || null,
-    total_amount: doc.total_amount?.value || null,
-    tax_amount: doc.total_tax?.value || null,
-    line_items: doc.line_items.items?.map(item => ({
-      description: item.fields.description.value,
-      quantity: item.fields.quantity.value,
-      unit_price: item.fields.unit_price.value,
-      total: item.fields.total_price.value,
-    })) || [],
-    tax_items: doc.taxes.items?.map(item =>({
-      rate: item.fields.rate.value,
-      base: item.fields.base.value,
-      amount: item.fields.base.value
-    })),
-    raw_ocr_response: doc,
-    customer_GSTIN: doc.customer_company_registration.items[0].fields.number.value,
-    IRN: irn,
-    supplier_id: supplierId
-  }
-  const {data: invoice, error:dbError} = await supabase
-  .from('invoices')
-  .update(invoiceData)
-  .eq('id', invoiceId)
-
-  if (dbError) throw dbError
-
-}
-
 router.post("/upload", verifyEmployeeAuth, upload.single('invoice'), async (req,res)=>{
   try {
     const file = req.file
@@ -161,44 +38,9 @@ router.post("/upload", verifyEmployeeAuth, upload.single('invoice'), async (req,
         error: "No file Uploaded"
       })
     }
-    // uploading raw file to supabase first 
-
-    const fileName = `invoices/${Date.now()}_${file.originalname}`;
-
-    const buffer = file.buffer
-    const inputSource = new Mindee.BufferInput({buffer: buffer, filename : fileName})
-
-    const {data: storageData, error:storageError} = await supabase.storage
-        .from('invoices')
-        .upload(fileName, file.buffer, {contentType: file.mimetype});
-
-
-    if (storageError) throw storageError
-    const { data: { publicUrl } } = await supabase.storage
-        .from('invoices')
-        .getPublicUrl(fileName);
-
-
-    const {data: invoice, error:dbErorr} = await supabase
-    .from('invoices')
-    .insert({status:'extracting', file_url: publicUrl})
-    .select()
-    .single() 
-
-    if (dbErorr) throw dbErorr
-
-    
-
+    const { invoice, processing } = await startInvoiceOCR(file);
     res.json({status: "extracting", id: invoice.id})
-    
-    await processInvoiceOCR(invoice.id, inputSource, publicUrl).catch(async err => {
-      console.error('Invoice processing error', err);
-      try {
-        await updateInvoiceStatus(invoice.id, 'error');
-      } catch (statusErr) {
-        console.error('Unable to mark invoice processing as failed', statusErr);
-      }
-    })
+    await processing;
   }
   catch(err){
       console.error("Invoice processing error ",err)
@@ -227,29 +69,11 @@ router.get('/list', verifyEmployeeAuth, async (req,res)=>{
 router.get('/:id', verifyEmployeeAuth, async (req, res) => {
   try {
     const invoiceId = req.params.id;
-    const { data, error } = await supabase
-      .from('invoices')
-      .select(`*,
-        suppliers(
-        id, 
-        name,
-        billing_address,
-        account_number,
-        ifsc,
-        GSTIN,
-        state)`)
-      .eq('id', invoiceId)
-      .maybeSingle();
+    const invoice = await getInvoice(invoiceId);
 
-    if (error) {
-      throw error;
-    }
-
-    if (!data) {
+    if (!invoice) {
       return res.status(404).json({ error: 'Invoice not found' });
     }
-
-    const invoice = data
 
     return res.json({ invoice });
   } catch (err) {

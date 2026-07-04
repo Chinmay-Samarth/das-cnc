@@ -18,6 +18,7 @@ import MasterForm   from './MasterForm'
 import MasterDetail from './MasterDetaisPage'
 import api from '../api/client'
 import { useNavigate } from 'react-router-dom'
+import {Plus, Settings, } from 'lucide-react'
 
 const sortBy = (rows, key, asc) => {
   if (!key) return rows
@@ -135,6 +136,15 @@ export default function MasterPage() {
           <i className={`ti ${master?.icon || 'ti-database'}`} aria-hidden="true" />
           <h1>{master?.name || '…'}</h1>
         </div>
+        <div className="">
+          <button
+            className="neutral-button "
+            onClick={() => navigate(`/masters/config/${master?.id}`)}
+          >
+            <Settings size={16} style={{display: 'inline', marginRight:4}} />
+            Configure {master?.slug}
+          </button>
+        </div>
       </header>
 
       <section className="card">
@@ -144,7 +154,7 @@ export default function MasterPage() {
             <p className="muted">Use the search field to filter.</p>
           </div>
 
-          <div className="employees-action">
+          <div className="employees-actions">
             <input
               type="search"
               placeholder="Search records…"
@@ -152,20 +162,13 @@ export default function MasterPage() {
               onChange={e => setSearch(e.target.value)}
               className="search-input"
               />
-            <div className="add-record-div">
+            <div className="">
               <button
                 className="primary-button "
                 onClick={() => setPanel({ mode: 'create' })}
               >
-                <i className="ti ti-plus" />
+                <Plus size={16} style={{display: 'inline', marginRight:4}}/>
                 New {master?.slug}
-              </button>
-              <button
-                className="secondary-button "
-                onClick={() => navigate(`/masters/config/${master?.id}`)}
-              >
-                <i className="ti ti-plus" />
-                Configure {master?.slug}
               </button>
             </div>
           </div>

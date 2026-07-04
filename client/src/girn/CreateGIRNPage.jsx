@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { useAuth } from '../auth/authContext';
 import EmployeeSelect from './EmployeeSelect';
+import GIRNInvoiceUpload from './GIRNInvoiceUpload';
 import RawMaterialSelect from './RawMaterialSelect';
 
 const EMPTY_ITEM = {
@@ -20,13 +22,19 @@ const EMPTY_ITEM = {
   total_amount: '',
 };
 
+function toNumber(value) {
+  const number = parseFloat(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
 function calcItem(item) {
-  const qty = parseFloat(item.quantity) || 0;
-  const rate = parseFloat(item.unit_rate) || 0;
-  const vatPct = parseFloat(item.vat_percentage) || 0;
-  const amount = qty * rate;
-  const vatAmount = amount * (vatPct / 100);
+  const quantity = toNumber(item.quantity);
+  const unitRate = toNumber(item.unit_rate);
+  const vatPercentage = toNumber(item.vat_percentage);
+  const amount = quantity * unitRate;
+  const vatAmount = amount * (vatPercentage / 100);
   const totalAmount = amount + vatAmount;
+
   return {
     ...item,
     amount: amount.toFixed(2),
@@ -35,89 +43,160 @@ function calcItem(item) {
   };
 }
 
-function fmt(val) {
-  const n = parseFloat(val);
-  return isNaN(n) ? '—' : n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function fmt(value) {
+  const number = parseFloat(value);
+  return Number.isFinite(number)
+    ? number.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : '0.00';
 }
 
-function Step1({ header, suppliers, onChange, onReceivedByChange }) {
+function normalizeDraftItems(items = []) {
+  if (!items.length) return [{ ...EMPTY_ITEM }];
+  return items.map((item) => calcItem({ ...EMPTY_ITEM, ...item }));
+}
+
+function HeaderReview({
+  header,
+  suppliers,
+  employees,
+  user,
+  onChange,
+  onReceivedByChange,
+  onSupplierSelect,
+}) {
+  const [overrideEmployee, setOverrideEmployee] = useState(false);
+  const selectedEmployee = employees.find((e) => String(e.id) === String(header.received_by));
+  const employeeLabel = selectedEmployee
+    ? `${selectedEmployee.full_name}${selectedEmployee.employee_code ? ` (${selectedEmployee.employee_code})` : ''}`
+    : user?.name
+      ? `${user.name}${user.code ? ` (${user.code})` : ''}`
+      : 'Select employee';
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <label>
-        Supplier <span style={{ color: '#b91c1c' }}>*</span>
-        <select
-          name="supplier_id"
-          value={header.supplier_id}
-          onChange={onChange}
-          required
-        >
-          <option value="">Select supplier...</option>
-          {suppliers.map((s) => (
-            <option key={s.id} value={s.id}>{s.name}</option>
-          ))}
-        </select>
-      </label>
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="section-header" style={{ marginBottom: 16 }}>
+        <div>
+          <h2>Review GIRN Header</h2>
+          <p className="muted">OCR filled these fields from the invoice. Correct anything before registering.</p>
+        </div>
+      </div>
 
-      <label>
-        PO Reference
-        <input
-          type="text"
-          name="po_reference"
-          value={header.po_reference}
-          onChange={onChange}
-          placeholder="e.g. PO-2025-001"
-        />
-      </label>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 }}>
+        <label>
+          Supplier Name <span style={{ color: '#b91c1c' }}>*</span>
+          <input
+            type="text"
+            name="supplier_name"
+            value={header.supplier_name || ''}
+            onChange={onChange}
+            required={!header.supplier_id}
+            disabled={Boolean(header.supplier_id)}
+          />
+        </label>
 
-      <label>
-        Received Date <span style={{ color: '#b91c1c' }}>*</span>
-        <input
-          type="date"
-          name="received_date"
-          value={header.received_date}
-          onChange={onChange}
-          required
-        />
-      </label>
+        <label>
+          GSTIN
+          <input
+            type="text"
+            name="supplier_gstin"
+            value={header.supplier_gstin || ''}
+            onChange={onChange}
+            disabled={Boolean(header.supplier_id)}
+          />
+        </label>
 
-      <label>
-        Received By <span style={{ color: '#b91c1c' }}>*</span>
-        <EmployeeSelect
-          value={header.received_by}
-          onChange={onReceivedByChange}
-        />
-      </label>
+        <label>
+          Link existing supplier
+          <select
+            name="supplier_id"
+            value={header.supplier_id}
+            onChange={onSupplierSelect}
+          >
+            <option value="">Create from OCR details above</option>
+            {suppliers.map((supplier) => (
+              <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
+            ))}
+          </select>
+        </label>
 
-      <label>
-        CSR
-        <input
-          type="text"
-          name="csr"
-          value={header.csr}
-          onChange={onChange}
-          placeholder="Customer Specific Requirement"
-        />
-      </label>
+        <label>
+          PO / Invoice Reference
+          <input
+            type="text"
+            name="po_reference"
+            value={header.po_reference}
+            onChange={onChange}
+          />
+        </label>
 
-      <label>
+        <label>
+          Received Date <span style={{ color: '#b91c1c' }}>*</span>
+          <input
+            type="date"
+            name="received_date"
+            value={header.received_date}
+            onChange={onChange}
+            required
+          />
+        </label>
+
+        <label>
+          CSR
+          <input
+            type="text"
+            name="csr"
+            value={header.csr}
+            onChange={onChange}
+          />
+        </label>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <p className="component-detail-label">Received By</p>
+        {!overrideEmployee ? (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <strong>{employeeLabel}</strong>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setOverrideEmployee(true)}
+            >
+              Change employee
+            </button>
+          </div>
+        ) : (
+          <EmployeeSelect value={header.received_by} onChange={onReceivedByChange} />
+        )}
+      </div>
+
+      <label style={{ marginTop: 16 }}>
         Notes
         <textarea
           name="notes"
           value={header.notes}
           onChange={onChange}
           rows={3}
-          placeholder="Any additional notes..."
         />
       </label>
     </div>
   );
 }
 
-function Step2({ items, onItemChange, onRawMaterialSelect, onAddItem, onRemoveItem }) {
-  const grandTotal = items.reduce((sum, i) => sum + (parseFloat(i.total_amount) || 0), 0);
+function ItemsReview({ items, onItemChange, onRawMaterialSelect, onAddItem, onRemoveItem }) {
+  const grandTotal = items.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
 
   return (
-    <div>
+    <div className="card">
+      <div className="section-header" style={{ marginBottom: 16 }}>
+        <div>
+          <h2>Review Line Items</h2>
+          <p className="muted">Match OCR rows to raw materials. New RM ID + RM Code pairs will be created in the raw material master.</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={onAddItem}>
+          + Add Item
+        </button>
+      </div>
+
       {items.map((item, idx) => (
         <div
           key={idx}
@@ -129,15 +208,8 @@ function Step2({ items, onItemChange, onRawMaterialSelect, onAddItem, onRemoveIt
             background: '#fafafa',
           }}
         >
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 12,
-            }}
-          >
-            <strong style={{ fontSize: 14 }}>Item {idx + 1}</strong>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+            <strong>Item {idx + 1}</strong>
             {items.length > 1 ? (
               <button
                 type="button"
@@ -151,7 +223,16 @@ function Step2({ items, onItemChange, onRawMaterialSelect, onAddItem, onRemoveIt
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
-            <label style={{ fontSize: 13 }}>
+            <label style={{ gridColumn: '1 / -1' }}>
+              Match existing raw material
+              <RawMaterialSelect
+                value={item.raw_material_id}
+                label={item.raw_material_label}
+                onChange={(mapped) => onRawMaterialSelect(idx, mapped)}
+              />
+            </label>
+
+            <label>
               RM ID <span style={{ color: '#b91c1c' }}>*</span>
               <input
                 type="text"
@@ -161,41 +242,26 @@ function Step2({ items, onItemChange, onRawMaterialSelect, onAddItem, onRemoveIt
               />
             </label>
 
-            <label style={{ fontSize: 13 }}>
+            <label>
               RM Code <span style={{ color: '#b91c1c' }}>*</span>
               <input
                 type="text"
-                value={item.rm_code || item.raw_material_id}
+                value={item.rm_code}
                 onChange={(e) => onItemChange(idx, 'rm_code', e.target.value)}
                 placeholder="e.g. copper"
               />
             </label>
 
-            <label style={{ fontSize: 13, gridColumn: '1 / -1' }}>
-              Search existing raw material
-              <RawMaterialSelect
-                value={item.raw_material_id}
-                label={item.raw_material_label}
-                onChange={(mapped) => onRawMaterialSelect(idx, mapped)}
-              />
-              {!item.raw_material_id && item.rm_id && item.rm_code ? (
-                <span style={{ fontSize: 12, color: '#854d0e', marginTop: 4, display: 'block' }}>
-                  New material will be added to raw material master when GIRN is saved.
-                </span>
-              ) : null}
-            </label>
-
-            <label style={{ fontSize: 13 }}>
+            <label>
               Grade
               <input
                 type="text"
                 value={item.grade}
                 onChange={(e) => onItemChange(idx, 'grade', e.target.value)}
-                placeholder="e.g. SS304"
               />
             </label>
 
-            <label style={{ fontSize: 13 }}>
+            <label>
               Inventory Number
               <input
                 type="text"
@@ -204,17 +270,16 @@ function Step2({ items, onItemChange, onRawMaterialSelect, onAddItem, onRemoveIt
               />
             </label>
 
-            <label style={{ fontSize: 13 }}>
+            <label>
               Unit
               <input
                 type="text"
                 value={item.unit}
                 onChange={(e) => onItemChange(idx, 'unit', e.target.value)}
-                placeholder="kg / pcs / m"
               />
             </label>
 
-            <label style={{ fontSize: 13 }}>
+            <label>
               Quantity <span style={{ color: '#b91c1c' }}>*</span>
               <input
                 type="number"
@@ -225,8 +290,8 @@ function Step2({ items, onItemChange, onRawMaterialSelect, onAddItem, onRemoveIt
               />
             </label>
 
-            <label style={{ fontSize: 13 }}>
-              Unit Rate (₹) <span style={{ color: '#b91c1c' }}>*</span>
+            <label>
+              Unit Rate
               <input
                 type="number"
                 min="0"
@@ -236,12 +301,11 @@ function Step2({ items, onItemChange, onRawMaterialSelect, onAddItem, onRemoveIt
               />
             </label>
 
-            <label style={{ fontSize: 13 }}>
-              VAT %
+            <label>
+              GST %
               <input
                 type="number"
                 min="0"
-                max="100"
                 step="any"
                 value={item.vat_percentage}
                 onChange={(e) => onItemChange(idx, 'vat_percentage', e.target.value)}
@@ -249,122 +313,22 @@ function Step2({ items, onItemChange, onRawMaterialSelect, onAddItem, onRemoveIt
             </label>
           </div>
 
-          <div
-            style={{
-              display: 'flex',
-              gap: 24,
-              marginTop: 10,
-              paddingTop: 10,
-              borderTop: '1px solid #e5e7eb',
-              fontSize: 13,
-              color: '#374151',
-              flexWrap: 'wrap',
-            }}
-          >
+          {!item.raw_material_id && item.rm_id && item.rm_code ? (
+            <p className="muted" style={{ marginTop: 8, color: '#854d0e' }}>
+              This raw material will be created in the raw material master if RM ID {item.rm_id} does not already exist.
+            </p>
+          ) : null}
+
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>
             <span>Amount: <strong>₹{fmt(item.amount)}</strong></span>
-            <span>VAT: <strong>₹{fmt(item.vat_amount)}</strong></span>
+            <span>GST: <strong>₹{fmt(item.vat_amount)}</strong></span>
             <span>Total: <strong>₹{fmt(item.total_amount)}</strong></span>
           </div>
         </div>
       ))}
 
-      <button type="button" className="secondary-button" onClick={onAddItem}>
-        + Add Item
-      </button>
-
-      <div
-        style={{
-          marginTop: 16,
-          padding: '12px 16px',
-          background: '#f0fdf4',
-          borderRadius: 8,
-          border: '1px solid #bbf7d0',
-          display: 'flex',
-          justifyContent: 'flex-end',
-        }}
-      >
-        <span style={{ fontSize: 15, fontWeight: 700, color: '#166534' }}>
-          Grand Total: ₹{fmt(grandTotal)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function Step3({ header, suppliers, items, employees }) {
-  const grandTotal = items.reduce((sum, i) => sum + (parseFloat(i.total_amount) || 0), 0);
-  const supplierName = suppliers.find((s) => String(s.id) === String(header.supplier_id))?.name || '—';
-  const receivedByEmployee = employees.find((e) => String(e.id) === String(header.received_by));
-  const receivedByLabel = receivedByEmployee
-    ? `${receivedByEmployee.full_name}${receivedByEmployee.employee_code ? ` (${receivedByEmployee.employee_code})` : ''}`
-    : '—';
-
-  return (
-    <div>
-      <div className="card" style={{ marginBottom: 16 }}>
-        <h3 style={{ marginBottom: 12, fontSize: 15 }}>Header Summary</h3>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-            gap: 12,
-          }}
-        >
-          {[
-            ['Supplier', supplierName],
-            ['PO Reference', header.po_reference || '—'],
-            ['Received Date', header.received_date || '—'],
-            ['Received By', receivedByLabel],
-            ['CSR', header.csr || '—'],
-            ['Notes', header.notes || '—'],
-          ].map(([label, value]) => (
-            <div key={label}>
-              <p className="component-detail-label">{label}</p>
-              <p className="component-detail-value">{value}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="employees-table-wrap">
-        <table className="employees-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>RM ID</th>
-              <th>RM Code</th>
-              <th>Grade</th>
-              <th>Unit</th>
-              <th>Qty</th>
-              <th>Rate</th>
-              <th>VAT %</th>
-              <th>Amount</th>
-              <th>VAT Amt</th>
-              <th>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item, idx) => (
-              <tr key={idx}>
-                <td>{idx + 1}</td>
-                <td>{item.rm_id || item.raw_material_label || '—'}</td>
-                <td>{item.rm_code || '—'}</td>
-                <td>{item.grade || '—'}</td>
-                <td>{item.unit || '—'}</td>
-                <td>{item.quantity || '—'}</td>
-                <td>₹{fmt(item.unit_rate)}</td>
-                <td>{item.vat_percentage || '0'}%</td>
-                <td>₹{fmt(item.amount)}</td>
-                <td>₹{fmt(item.vat_amount)}</td>
-                <td><strong>₹{fmt(item.total_amount)}</strong></td>
-              </tr>
-            ))}
-            <tr>
-              <td colSpan={10} style={{ textAlign: 'right', fontWeight: 700 }}>Grand Total</td>
-              <td><strong>₹{fmt(grandTotal)}</strong></td>
-            </tr>
-          </tbody>
-        </table>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+        <strong>Grand Total: ₹{fmt(grandTotal)}</strong>
       </div>
     </div>
   );
@@ -372,21 +336,24 @@ function Step3({ header, suppliers, items, employees }) {
 
 export default function CreateGIRNPage() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(1);
+  const { user } = useAuth();
   const [suppliers, setSuppliers] = useState([]);
   const [employees, setEmployees] = useState([]);
+  const [invoice, setInvoice] = useState(null);
+  const [step, setStep] = useState('scan');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
-
   const [header, setHeader] = useState({
+    invoice_id: '',
     supplier_id: '',
+    supplier_name: '',
+    supplier_gstin: '',
     po_reference: '',
     received_date: new Date().toISOString().slice(0, 10),
     received_by: '',
     csr: '',
     notes: '',
   });
-
   const [items, setItems] = useState([{ ...EMPTY_ITEM }]);
 
   useEffect(() => {
@@ -394,97 +361,143 @@ export default function CreateGIRNPage() {
     api.get('/employees').then(({ data }) => setEmployees(data.employees || []));
   }, []);
 
-  const handleHeaderChange = (e) => {
-    const { name, value } = e.target;
-    setHeader((prev) => ({ ...prev, [name]: value }));
-  };
+  useEffect(() => {
+    if (user?.id && !header.received_by) {
+      setHeader((prev) => ({ ...prev, received_by: user.id }));
+    }
+  }, [user, header.received_by]);
 
-  const handleRawMaterialSelect = (idx, mapped) => {
+  const selectedEmployee = useMemo(
+    () => employees.find((employee) => String(employee.id) === String(header.received_by)),
+    [employees, header.received_by]
+  );
+
+  function handleExtracted(data) {
+    const draft = data.draft_girn || {};
+    setInvoice(data.invoice || null);
+    api.get('/suppliers').then(({ data: supplierData }) => setSuppliers(supplierData.suppliers || []));
+    setHeader((prev) => ({
+      ...prev,
+      invoice_id: draft.invoice_id || data.invoice?.id || '',
+      supplier_id: draft.supplier_id || data.invoice?.supplier_id || '',
+      supplier_name: draft.supplier_name || '',
+      supplier_gstin: draft.supplier_gstin || '',
+      po_reference: draft.po_reference || '',
+      received_date: draft.received_date || new Date().toISOString().slice(0, 10),
+      received_by: user?.id || draft.received_by || prev.received_by,
+      csr: draft.csr || '',
+      notes: draft.notes || '',
+    }));
+    setItems(normalizeDraftItems(draft.items));
+    setStep('review');
+  }
+
+  function handleHeaderChange(event) {
+    const { name, value } = event.target;
+    setHeader((prev) => ({ ...prev, [name]: value }));
+  }
+
+  function handleSupplierSelect(event) {
+    const supplierId = event.target.value;
+    if (!supplierId) {
+      setHeader((prev) => ({ ...prev, supplier_id: '' }));
+      return;
+    }
+
+    const supplier = suppliers.find((entry) => String(entry.id) === String(supplierId));
+    setHeader((prev) => ({
+      ...prev,
+      supplier_id: supplierId,
+      supplier_name: supplier?.name || prev.supplier_name,
+      supplier_gstin: supplier?.GSTIN || prev.supplier_gstin,
+    }));
+  }
+
+  function handleRawMaterialSelect(idx, mapped) {
     setItems((prev) => {
-      const updated = [...prev];
-      updated[idx] = calcItem({
-        ...updated[idx],
+      const next = [...prev];
+      next[idx] = calcItem({
+        ...next[idx],
         raw_material_id: mapped.raw_material_id,
         raw_material_label: mapped.raw_material_label,
-        rm_id: mapped.rm_id || updated[idx].rm_id,
-        rm_code: mapped.rm_code || updated[idx].rm_code,
-        grade: mapped.grade || updated[idx].grade,
-        unit: mapped.unit || updated[idx].unit,
-        inventory_number: mapped.inventory_number || updated[idx].inventory_number,
+        rm_id: mapped.rm_id || next[idx].rm_id,
+        rm_code: mapped.rm_code || next[idx].rm_code,
+        grade: mapped.grade || next[idx].grade,
+        unit: mapped.unit || next[idx].unit,
+        inventory_number: mapped.inventory_number || next[idx].inventory_number,
       });
-      return updated;
+      return next;
     });
-  };
+  }
 
-  const handleItemChange = (idx, field, value) => {
+  function handleItemChange(idx, field, value) {
     setItems((prev) => {
-      const updated = [...prev];
-      const next = { ...updated[idx], [field]: value };
+      const next = [...prev];
+      const item = { ...next[idx], [field]: value };
       if (field === 'rm_id' || field === 'rm_code') {
-        next.raw_material_id = null;
-        next.raw_material_label = '';
+        item.raw_material_id = null;
+        item.raw_material_label = '';
       }
-      updated[idx] = calcItem(next);
-      return updated;
+      next[idx] = calcItem(item);
+      return next;
     });
-  };
+  }
 
-  const addItem = () => setItems((prev) => [...prev, { ...EMPTY_ITEM }]);
+  function addItem() {
+    setItems((prev) => [...prev, { ...EMPTY_ITEM }]);
+  }
 
-  const removeItem = (idx) =>
-    setItems((prev) => prev.filter((_, i) => i !== idx));
+  function removeItem(idx) {
+    setItems((prev) => prev.filter((_, itemIdx) => itemIdx !== idx));
+  }
 
-  const canAdvanceStep1 =
-    header.supplier_id && header.received_date && header.received_by;
-
-  const canAdvanceStep2 =
+  const canRegister =
+    (header.supplier_id || String(header.supplier_name || '').trim()) &&
+    header.received_by &&
+    header.received_date &&
     items.length > 0 &&
     items.every(
-      (i) =>
-        (i.raw_material_id || (String(i.rm_id).trim() && String(i.rm_code).trim())) &&
-        parseFloat(i.quantity) > 0 &&
-        parseFloat(i.unit_rate) >= 0
+      (item) =>
+        (item.raw_material_id || (String(item.rm_id).trim() && String(item.rm_code).trim())) &&
+        toNumber(item.quantity) > 0
     );
 
-  async function submit(submitForInspection = false) {
+  async function registerGirn(submitForInspection = false) {
     setSubmitting(true);
     setError(null);
+
     try {
       const payload = {
         ...header,
-        items: items.map((i) => ({
-          raw_material_id: i.raw_material_id || null,
-          rm_id: i.rm_id || null,
-          rm_code: i.rm_code || null,
-          grade: i.grade || null,
-          inventory_number: i.inventory_number || null,
-          unit: i.unit || null,
-          quantity: parseFloat(i.quantity) || 0,
-          unit_rate: parseFloat(i.unit_rate) || 0,
-          vat_percentage: parseFloat(i.vat_percentage) || 0,
-          amount: parseFloat(i.amount) || 0,
-          vat_amount: parseFloat(i.vat_amount) || 0,
-          total_amount: parseFloat(i.total_amount) || 0,
+        items: items.map((item) => ({
+          raw_material_id: item.raw_material_id || null,
+          rm_id: item.rm_id || null,
+          rm_code: item.rm_code || null,
+          grade: item.grade || null,
+          inventory_number: item.inventory_number || null,
+          unit: item.unit || null,
+          quantity: toNumber(item.quantity),
+          unit_rate: toNumber(item.unit_rate),
+          vat_percentage: toNumber(item.vat_percentage),
+          amount: toNumber(item.amount),
+          vat_amount: toNumber(item.vat_amount),
+          total_amount: toNumber(item.total_amount),
         })),
       };
 
       const { data } = await api.post('/girn', payload);
       const newId = data.girn.id;
-
       if (submitForInspection) {
         await api.post(`/girn/${newId}/submit`);
       }
-
       navigate(`/girn/${newId}`);
     } catch (err) {
-      console.error('GIRN create error:', err);
-      setError(err.response?.data?.error || 'Unable to create GIRN. Please try again.');
+      console.error('GIRN register error:', err);
+      setError(err.response?.data?.error || 'Unable to register GIRN.');
     } finally {
       setSubmitting(false);
     }
   }
-
-  const STEP_LABELS = ['Header', 'Line Items', 'Review & Submit'];
 
   return (
     <main className="app-shell employees-page">
@@ -492,35 +505,18 @@ export default function CreateGIRNPage() {
         <div className="header-title-block">
           <p className="eyebrow">Procurement</p>
           <h1>New GIRN</h1>
-          <p className="muted">Record a new Goods Inwards Receipt Note.</p>
+          <p className="muted">Upload a scanned invoice, review OCR details, then register the GIRN.</p>
         </div>
       </header>
 
       <section className="card form-card">
-        {/* Step indicator */}
-        <div
-          style={{
-            display: 'flex',
-            gap: 8,
-            marginBottom: 28,
-            flexWrap: 'wrap',
-            alignItems: 'center',
-          }}
-        >
-          {STEP_LABELS.map((label, i) => {
-            const num = i + 1;
-            const isActive = step === num;
-            const isDone = step > num;
+        <div style={{ display: 'flex', gap: 8, marginBottom: 28, flexWrap: 'wrap', alignItems: 'center' }}>
+          {['Scan Invoice', 'Review Details', 'Register GIRN'].map((label, idx) => {
+            const currentIdx = step === 'scan' ? 0 : 1;
+            const isActive = idx === currentIdx || (idx === 2 && submitting);
+            const isDone = idx < currentIdx;
             return (
-              <div
-                key={num}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  opacity: isActive || isDone ? 1 : 0.4,
-                }}
-              >
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: isActive || isDone ? 1 : 0.45 }}>
                 <span
                   style={{
                     width: 26,
@@ -533,15 +529,12 @@ export default function CreateGIRNPage() {
                     justifyContent: 'center',
                     fontSize: 13,
                     fontWeight: 700,
-                    flexShrink: 0,
                   }}
                 >
-                  {isDone ? '✓' : num}
+                  {isDone ? '✓' : idx + 1}
                 </span>
                 <span style={{ fontSize: 14, fontWeight: isActive ? 700 : 400 }}>{label}</span>
-                {i < STEP_LABELS.length - 1 ? (
-                  <span style={{ color: '#d1d5db', marginLeft: 4 }}>›</span>
-                ) : null}
+                {idx < 2 ? <span style={{ color: '#d1d5db' }}>›</span> : null}
               </div>
             );
           })}
@@ -549,87 +542,102 @@ export default function CreateGIRNPage() {
 
         {error ? <p className="error-message" style={{ marginBottom: 16 }}>{error}</p> : null}
 
-        {step === 1 ? (
-          <Step1
-            header={header}
-            suppliers={suppliers}
-            onChange={handleHeaderChange}
-            onReceivedByChange={(employeeId) =>
-              setHeader((prev) => ({ ...prev, received_by: employeeId }))
-            }
-          />
-        ) : step === 2 ? (
-          <Step2
-            items={items}
-            onItemChange={handleItemChange}
-            onRawMaterialSelect={handleRawMaterialSelect}
-            onAddItem={addItem}
-            onRemoveItem={removeItem}
-          />
+        {step === 'scan' ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <div className="card">
+              <h2>1. Confirm receiver</h2>
+              <p className="muted">The receiver is taken from the logged-in user. Change it only if needed.</p>
+              <div style={{ marginTop: 12 }}>
+                <p className="component-detail-label">Received By</p>
+                <strong>
+                  {selectedEmployee
+                    ? `${selectedEmployee.full_name}${selectedEmployee.employee_code ? ` (${selectedEmployee.employee_code})` : ''}`
+                    : user?.name
+                      ? `${user.name}${user.code ? ` (${user.code})` : ''}`
+                      : 'Not selected'}
+                </strong>
+                <div style={{ maxWidth: 360, marginTop: 12 }}>
+                  <EmployeeSelect
+                    value={header.received_by}
+                    onChange={(employeeId) => setHeader((prev) => ({ ...prev, received_by: employeeId }))}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <h2>2. Upload scanned invoice</h2>
+              <p className="muted">Mindee will extract supplier, invoice, and line item details for review.</p>
+              <div style={{ marginTop: 16 }}>
+                <GIRNInvoiceUpload
+                  disabled={!header.received_by}
+                  onExtracted={handleExtracted}
+                />
+              </div>
+            </div>
+          </div>
         ) : (
-          <Step3 header={header} suppliers={suppliers} items={items} employees={employees} />
-        )}
+          <>
+            {invoice ? (
+              <div className="card" style={{ marginBottom: 16 }}>
+                <h2>Invoice Added</h2>
+                <p className="muted">
+                  Invoice {invoice.invoice_number || invoice.id} has been added to the Invoices tab.
+                </p>
+                {invoice.file_url ? (
+                  <a href={invoice.file_url} target="_blank" rel="noreferrer" className="primary-button" style={{ display: 'inline-block', marginTop: 8 }}>
+                    View scanned invoice
+                  </a>
+                ) : null}
+              </div>
+            ) : null}
 
-        <div style={{ display: 'flex', gap: 12, marginTop: 24, flexWrap: 'wrap' }}>
-          {step > 1 ? (
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => setStep((s) => s - 1)}
-              disabled={submitting}
-            >
-              Back
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => navigate('/girn')}
-              disabled={submitting}
-            >
-              Cancel
-            </button>
-          )}
+            <HeaderReview
+              header={header}
+              suppliers={suppliers}
+              employees={employees}
+              user={user}
+              onChange={handleHeaderChange}
+              onSupplierSelect={handleSupplierSelect}
+              onReceivedByChange={(employeeId) => setHeader((prev) => ({ ...prev, received_by: employeeId }))}
+            />
 
-          {step === 1 ? (
-            <button
-              type="button"
-              className="primary-button"
-              disabled={!canAdvanceStep1}
-              onClick={() => setStep(2)}
-            >
-              Next: Line Items
-            </button>
-          ) : step === 2 ? (
-            <button
-              type="button"
-              className="primary-button"
-              disabled={!canAdvanceStep2}
-              onClick={() => setStep(3)}
-            >
-              Next: Review
-            </button>
-          ) : (
-            <>
+            <ItemsReview
+              items={items}
+              onItemChange={handleItemChange}
+              onRawMaterialSelect={handleRawMaterialSelect}
+              onAddItem={addItem}
+              onRemoveItem={removeItem}
+            />
+
+            <div style={{ display: 'flex', gap: 12, marginTop: 24, flexWrap: 'wrap' }}>
               <button
                 type="button"
                 className="secondary-button"
+                onClick={() => setStep('scan')}
                 disabled={submitting}
-                onClick={() => submit(false)}
               >
-                {submitting ? 'Saving...' : 'Save as Draft'}
+                Upload different invoice
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={!canRegister || submitting}
+                onClick={() => registerGirn(false)}
+              >
+                {submitting ? 'Registering...' : 'Register GIRN'}
               </button>
               <button
                 type="button"
                 className="primary-button"
-                disabled={submitting}
-                onClick={() => submit(true)}
+                disabled={!canRegister || submitting}
+                onClick={() => registerGirn(true)}
               >
-                {submitting ? 'Submitting...' : 'Submit for Inspection'}
+                {submitting ? 'Submitting...' : 'Register & Submit for Inspection'}
               </button>
-            </>
-          )}
-        </div>
+            </div>
+          </>
+        )}
       </section>
     </main>
   );

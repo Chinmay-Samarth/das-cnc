@@ -65,7 +65,7 @@ export default function HomePage() {
         ) : null}
         {!loading && !error && latestRecords.length > 0 ? (
           <div className="attendance-table-wrap">
-            <table className="attendance-table">
+            <table className="app-table">
               <thead>
                 <tr>
                   <th>Employee</th>

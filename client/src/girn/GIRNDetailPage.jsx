@@ -74,6 +74,28 @@ function OverviewTab({ girn, onAction, actionLoading }) {
           }
         />
         <DetailItem label="PO Reference" value={girn.po_reference} />
+        <div>
+          <p className="component-detail-label">Source Invoice</p>
+          {girn.invoice_id ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <button
+                type="button"
+                className="secondary-button"
+                style={{ width: 'fit-content', padding: '4px 10px' }}
+                onClick={() => window.open(`/invoices/${girn.invoice_id}`, '_blank')}
+              >
+                {girn.invoice_number || 'Open invoice'}
+              </button>
+              {girn.invoice_file_url ? (
+                <a href={girn.invoice_file_url} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
+                  View scan
+                </a>
+              ) : null}
+            </div>
+          ) : (
+            <p className="component-detail-value">—</p>
+          )}
+        </div>
         <DetailItem label="CSR" value={girn.csr} />
         <DetailItem label="Grand Total" value={`₹${fmt(girn.grand_total)}`} />
         <div>
@@ -183,8 +205,8 @@ function ItemsTab({ items }) {
             <th>Qty</th>
             <th>Unit Rate</th>
             <th>Amount</th>
-            <th>VAT %</th>
-            <th>VAT Amt</th>
+            <th>GST %</th>
+            <th>GST Amt</th>
             <th>Total</th>
           </tr>
         </thead>
