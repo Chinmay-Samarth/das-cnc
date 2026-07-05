@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { getCategoryConfig, requiresInspection } from './girnCategoryConfig';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val))
@@ -197,38 +198,41 @@ function ItemsTab({ items }) {
         <thead>
           <tr>
             <th>#</th>
-            <th>RM ID</th>
-            <th>RM Code</th>
-            <th>Grade</th>
-            <th>Inventory No.</th>
+            <th>Category</th>
+            <th>Item</th>
+            <th>Code</th>
+            <th>LOT</th>
+            <th>OK / NG</th>
             <th>Unit</th>
             <th>Qty</th>
             <th>Unit Rate</th>
-            <th>Amount</th>
-            <th>GST %</th>
-            <th>GST Amt</th>
             <th>Total</th>
           </tr>
         </thead>
         <tbody>
-          {items.map((item, idx) => (
+          {items.map((item, idx) => {
+            const cfg = getCategoryConfig(item.item_category || 'raw_material');
+            return (
             <tr key={item.id}>
               <td>{idx + 1}</td>
-              <td>{item.raw_material_label || '—'}</td>
-              <td><strong>{item.rm_code || '—'}</strong></td>
-              <td>{item.grade || '—'}</td>
-              <td>{item.inventory_number || '—'}</td>
-              <td>{item.unit || '—'}</td>
+              <td>{cfg.label}</td>
+              <td>{item.master_record_label || item.raw_material_label || item.item_description || '—'}</td>
+              <td><strong>{item.item_code || item.rm_code || '—'}</strong></td>
+              <td>{item.lot_number || '—'}</td>
+              <td>
+                {item.item_category === 'gauge'
+                  ? `${item.quantity_ok ?? '—'} / ${item.quantity_not_ok ?? '—'}`
+                  : '—'}
+              </td>
+              <td>{item.unit || (cfg.quantityType === 'kg' ? 'kg' : 'nos')}</td>
               <td>{item.quantity}</td>
               <td>₹{fmt(item.unit_rate)}</td>
-              <td>₹{fmt(item.amount)}</td>
-              <td>{item.vat_percentage || 0}%</td>
-              <td>₹{fmt(item.vat_amount)}</td>
               <td><strong>₹{fmt(item.total_amount)}</strong></td>
             </tr>
-          ))}
+            );
+          })}
           <tr>
-            <td colSpan={11} style={{ textAlign: 'right', fontWeight: 700, paddingRight: 16 }}>
+            <td colSpan={9} style={{ textAlign: 'right', fontWeight: 700, paddingRight: 16 }}>
               Grand Total
             </td>
             <td><strong>₹{fmt(grandTotal)}</strong></td>
@@ -244,29 +248,47 @@ function ItemsTab({ items }) {
 }
 
 // ─── Inspection Tab ────────────────────────────────────────────────────────────
-const DEFAULT_CHECKPOINTS = [
-  { checkpoint: 'Dimensional Check', standard: '', passed: false, inspector_note: '' },
-  { checkpoint: 'Visual Inspection', standard: '', passed: false, inspector_note: '' },
-  { checkpoint: 'Material Grade Verification', standard: '', passed: false, inspector_note: '' },
-];
-
-function ItemInspectionPanel({ item, isPending, onSave }) {
+function ItemInspectionPanel({ girnId, item, isPending, onSave }) {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [loadingTemplate, setLoadingTemplate] = useState(false);
+  const [lotNumber, setLotNumber] = useState(item.lot_number || '');
 
-  const existingLogs = item.inspection_logs || [];
-  const initCheckpoints =
-    existingLogs.length > 0
-      ? existingLogs.map((l) => ({
-          checkpoint: l.checkpoint,
-          standard: l.standard || '',
-          passed: l.passed,
-          inspector_note: l.inspector_note || '',
-        }))
-      : DEFAULT_CHECKPOINTS.map((cp) => ({ ...cp }));
+  const category = item.item_category || 'raw_material';
+  const cfg = getCategoryConfig(category);
 
-  const [checkpoints, setCheckpoints] = useState(initCheckpoints);
+  const [checkpoints, setCheckpoints] = useState([]);
+  const [quantityOk, setQuantityOk] = useState(item.quantity_ok ?? item.quantity ?? '');
+  const [quantityNotOk, setQuantityNotOk] = useState(item.quantity_not_ok ?? '');
+
+  useEffect(() => {
+    if (!open || !girnId || !item.id) return undefined;
+
+    let cancelled = false;
+    setLoadingTemplate(true);
+    setLoadError(null);
+
+    api.get(`/girn/${girnId}/items/${item.id}/inspection-template`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setCheckpoints(data.checkpoints || []);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('Inspection template load error:', err);
+        setLoadError(err.response?.data?.error || 'Unable to load inspection fields from master.');
+        setCheckpoints([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTemplate(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, girnId, item.id]);
 
   const updateCheckpoint = (idx, field, value) => {
     setCheckpoints((prev) => {
@@ -276,15 +298,6 @@ function ItemInspectionPanel({ item, isPending, onSave }) {
     });
   };
 
-  const addCheckpoint = () =>
-    setCheckpoints((prev) => [
-      ...prev,
-      { checkpoint: '', standard: '', passed: false, inspector_note: '' },
-    ]);
-
-  const removeCheckpoint = (idx) =>
-    setCheckpoints((prev) => prev.filter((_, i) => i !== idx));
-
   const allPassed = checkpoints.length > 0 && checkpoints.every((c) => c.passed);
   const someResults = checkpoints.length > 0;
 
@@ -292,13 +305,23 @@ function ItemInspectionPanel({ item, isPending, onSave }) {
     setSaving(true);
     setSaveError(null);
     try {
-      await onSave(item.id, checkpoints);
+      const payload = { checkpoints };
+      if (category === 'gauge') {
+        payload.quantity_ok = parseFloat(quantityOk) || 0;
+        payload.quantity_not_ok = parseFloat(quantityNotOk) || 0;
+      }
+      const { data } = await onSave(item.id, payload);
+      if (data?.lot_number) {
+        setLotNumber(data.lot_number);
+      }
     } catch (err) {
       setSaveError(err.response?.data?.error || 'Unable to save inspection.');
     } finally {
       setSaving(false);
     }
   }
+
+  const itemLabel = item.master_record_label || item.raw_material_label || item.item_description || item.item_code || `Item ${item.id}`;
 
   return (
     <div
@@ -324,12 +347,13 @@ function ItemInspectionPanel({ item, isPending, onSave }) {
           textAlign: 'left',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontWeight: 600 }}>
-            {item.raw_material_label || item.rm_code || `Item ${item.id}`}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 600 }}>{itemLabel}</span>
+          <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: '#e0e7ff', color: '#3730a3' }}>
+            {cfg.label}
           </span>
-          {item.grade ? (
-            <span className="table-subtext">{item.grade}</span>
+          {lotNumber ? (
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#166534' }}>LOT: {lotNumber}</span>
           ) : null}
           {someResults ? (
             <span
@@ -351,6 +375,35 @@ function ItemInspectionPanel({ item, isPending, onSave }) {
 
       {open ? (
         <div style={{ padding: 16 }}>
+          {loadingTemplate ? (
+            <p className="muted">Loading inspection fields from master...</p>
+          ) : null}
+          {loadError ? (
+            <p className="error-message" style={{ marginBottom: 12 }}>{loadError}</p>
+          ) : null}
+          {!loadingTemplate && !loadError && checkpoints.length === 0 ? (
+            <p className="muted">
+              No inspection section found on this item&apos;s master record. Add an &quot;Inspection&quot; section with fields in the master schema.
+            </p>
+          ) : null}
+
+          {category === 'gauge' && isPending ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
+              <label>
+                OK Qty
+                <input type="number" min="0" value={quantityOk} onChange={(e) => setQuantityOk(e.target.value)} />
+              </label>
+              <label>
+                Not OK Qty
+                <input type="number" min="0" value={quantityNotOk} onChange={(e) => setQuantityNotOk(e.target.value)} />
+              </label>
+              <div>
+                <p className="component-detail-label">Received</p>
+                <p className="component-detail-value">{item.quantity}</p>
+              </div>
+            </div>
+          ) : null}
+
           <div className="attendance-table-wrap">
             <table className="attendance-table">
               <thead>
@@ -359,36 +412,13 @@ function ItemInspectionPanel({ item, isPending, onSave }) {
                   <th>Standard</th>
                   <th>Passed</th>
                   <th>Inspector Note</th>
-                  {isPending ? <th></th> : null}
                 </tr>
               </thead>
               <tbody>
                 {checkpoints.map((cp, idx) => (
                   <tr key={idx}>
-                    <td>
-                      {isPending ? (
-                        <input
-                          type="text"
-                          value={cp.checkpoint}
-                          onChange={(e) => updateCheckpoint(idx, 'checkpoint', e.target.value)}
-                          style={{ width: '100%' }}
-                        />
-                      ) : (
-                        cp.checkpoint
-                      )}
-                    </td>
-                    <td>
-                      {isPending ? (
-                        <input
-                          type="text"
-                          value={cp.standard}
-                          onChange={(e) => updateCheckpoint(idx, 'standard', e.target.value)}
-                          style={{ width: '100%' }}
-                        />
-                      ) : (
-                        cp.standard || '—'
-                      )}
-                    </td>
+                    <td>{cp.checkpoint}</td>
+                    <td>{cp.standard || '—'}</td>
                     <td>
                       {isPending ? (
                         <input
@@ -397,12 +427,7 @@ function ItemInspectionPanel({ item, isPending, onSave }) {
                           onChange={(e) => updateCheckpoint(idx, 'passed', e.target.checked)}
                         />
                       ) : (
-                        <span
-                          style={{
-                            fontWeight: 700,
-                            color: cp.passed ? '#16a34a' : '#dc2626',
-                          }}
-                        >
+                        <span style={{ fontWeight: 700, color: cp.passed ? '#16a34a' : '#dc2626' }}>
                           {cp.passed ? 'Pass' : 'Fail'}
                         </span>
                       )}
@@ -419,18 +444,6 @@ function ItemInspectionPanel({ item, isPending, onSave }) {
                         cp.inspector_note || '—'
                       )}
                     </td>
-                    {isPending ? (
-                      <td>
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          style={{ fontSize: 11, padding: '2px 8px' }}
-                          onClick={() => removeCheckpoint(idx)}
-                        >
-                          ✕
-                        </button>
-                      </td>
-                    ) : null}
                   </tr>
                 ))}
               </tbody>
@@ -439,9 +452,6 @@ function ItemInspectionPanel({ item, isPending, onSave }) {
 
           {isPending ? (
             <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-              <button type="button" className="secondary-button" onClick={addCheckpoint}>
-                + Add Checkpoint
-              </button>
               <button
                 type="button"
                 className="primary-button"
@@ -461,6 +471,7 @@ function ItemInspectionPanel({ item, isPending, onSave }) {
 
 function InspectionTab({ girn, items, onSaveInspection }) {
   const isPending = girn.status === 'pending_inspection';
+  const inspectableItems = items.filter((item) => requiresInspection(item.item_category || 'raw_material'));
 
   if (!isPending && girn.status !== 'approved' && girn.status !== 'rejected') {
     return (
@@ -470,8 +481,8 @@ function InspectionTab({ girn, items, onSaveInspection }) {
     );
   }
 
-  if (items.length === 0) {
-    return <p className="muted">No items to inspect.</p>;
+  if (inspectableItems.length === 0) {
+    return <p className="muted">No items require inspection on this GIRN.</p>;
   }
 
   return (
@@ -482,12 +493,13 @@ function InspectionTab({ girn, items, onSaveInspection }) {
         </p>
       ) : (
         <p className="muted" style={{ marginBottom: 16 }}>
-          Fill in inspection checkpoints for each item and save. Approve or reject from the Overview tab.
+          Complete inspection using the fields defined in each item&apos;s master inspection section. Oil and Others lines are excluded.
         </p>
       )}
-      {items.map((item) => (
+      {inspectableItems.map((item) => (
         <ItemInspectionPanel
           key={item.id}
+          girnId={girn.id}
           item={item}
           isPending={isPending}
           onSave={onSaveInspection}
@@ -538,9 +550,10 @@ export default function GIRNDetailPage() {
     }
   }
 
-  async function handleSaveInspection(itemId, checkpoints) {
-    await api.post(`/girn/${id}/items/${itemId}/inspect`, { checkpoints });
+  async function handleSaveInspection(itemId, payload) {
+    const { data } = await api.post(`/girn/${id}/items/${itemId}/inspect`, payload);
     await loadGirn();
+    return { data };
   }
 
   const items = girn?.items || [];

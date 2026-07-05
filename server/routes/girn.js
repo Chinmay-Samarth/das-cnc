@@ -2,9 +2,15 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
-const { resolveGirnItemMaterials } = require('../services/girnRawMaterialEngine');
+const { resolveGirnItems, validateGirnItem } = require('../services/girnItemResolver');
 const { extractInvoiceNow } = require('../services/invoiceOcrEngine');
 const { ensureSupplier, supplierPayloadFromInvoice } = require('../services/girnSupplierEngine');
+const { classifyLineItems } = require('../services/girnItemClassifier');
+const { getCategoryConfig, girnNeedsInspection, girnCanAutoApprove } = require('../config/girnCategoryConfig');
+const { applyStockForGirn, rollbackStock } = require('../services/girnStockEngine');
+const { assignLotToGirnItem } = require('../services/componentLotEngine');
+const { validateGirnInspection, allCheckpointsPassed } = require('../services/girnInspectionEngine');
+const { getInspectionCheckpointsForItem } = require('../services/girnInspectionTemplateEngine');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -102,9 +108,56 @@ function normalizeOcrGirnItems(lineItems = [], taxItems = []) {
   });
 }
 
-function buildDraftGirnFromInvoice(invoice, employeeId) {
+function mapItemToDbRow(girnId, item) {
+  const category = item.item_category || 'raw_material';
+  const masterId = item.master_record_id || item.raw_material_id || null;
+
+  return {
+    girn_id: girnId,
+    item_category: category,
+    master_record_id: masterId,
+    raw_material_id: category === 'raw_material' ? masterId : item.raw_material_id || null,
+    quantity_type: item.quantity_type || getCategoryConfig(category).quantityType,
+    item_code: item.item_code || item.rm_id || null,
+    item_description: item.item_description || item.rm_code || null,
+    lot_number: item.lot_number || null,
+    quantity_ok: item.quantity_ok != null ? toNumber(item.quantity_ok) : null,
+    quantity_not_ok: item.quantity_not_ok != null ? toNumber(item.quantity_not_ok) : null,
+    rm_code: item.rm_code || item.item_code || null,
+    grade: item.grade || null,
+    inventory_number: item.inventory_number || null,
+    unit: item.unit || null,
+    quantity: parseFloat(item.quantity) || 0,
+    unit_rate: parseFloat(item.unit_rate) || 0,
+    amount: parseFloat(item.amount) || 0,
+    vat_percentage: parseFloat(item.vat_percentage) || 0,
+    vat_amount: parseFloat(item.vat_amount) || 0,
+    total_amount: parseFloat(item.total_amount) || 0,
+  };
+}
+
+async function buildDraftGirnFromInvoice(invoice, employeeId) {
   const supplierFields = supplierPayloadFromInvoice(invoice);
-  const items = normalizeOcrGirnItems(invoice.line_items || [], invoice.tax_items || []);
+  const baseItems = normalizeOcrGirnItems(invoice.line_items || [], invoice.tax_items || []);
+  const classifications = await classifyLineItems(baseItems);
+
+  const items = baseItems.map((item, idx) => {
+    const cls = classifications[idx] || {};
+    const category = cls.item_category || 'other';
+    const cfg = getCategoryConfig(category);
+
+    return {
+      ...item,
+      item_category: category,
+      master_record_id: cls.master_record_id || null,
+      master_record_label: cls.master_record_label || '',
+      item_code: cls.item_code || item.rm_id || '',
+      item_description: cls.item_description || item.rm_code || '',
+      quantity_type: cls.quantity_type || cfg.quantityType,
+      match_confidence: cls.match_confidence || 'none',
+    };
+  });
+
   const grandTotal = items.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
 
   return {
@@ -231,6 +284,7 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       csr,
       notes,
       items = [],
+      auto_approve = false,
     } = req.body;
 
     if (!received_by || !received_date) {
@@ -250,26 +304,23 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       return res.status(400).json({ error: 'At least one line item is required' });
     }
 
-    if (
-      items.some(
-        (item) =>
-          !item.raw_material_id &&
-          (!String(item.rm_id || '').trim() || !String(item.rm_code || '').trim())
-      )
-    ) {
-      return res.status(400).json({
-        error: 'Each line item must be linked to a raw material or include both RM ID and RM Code',
-      });
+    for (const item of items) {
+      const validationError = validateGirnItem(item);
+      if (validationError) {
+        return res.status(400).json({ error: validationError });
+      }
     }
 
-    const resolvedItems = await resolveGirnItemMaterials(items);
+    const resolvedItems = await resolveGirnItems(items);
 
     const girnNumber = await generateGirnNumber();
 
-    const grandTotal = items.reduce((sum, item) => {
-      const total = parseFloat(item.total_amount) || 0;
-      return sum + total;
+    const grandTotal = resolvedItems.reduce((sum, item) => {
+      return sum + (parseFloat(item.total_amount) || 0);
     }, 0);
+
+    const shouldAutoApprove = auto_approve && girnCanAutoApprove(resolvedItems);
+    const initialStatus = shouldAutoApprove ? 'approved' : 'draft';
 
     const { data: newGirn, error: girnError } = await supabase
       .from('girns')
@@ -283,7 +334,7 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
         csr: csr || null,
         notes: notes || null,
         grand_total: grandTotal,
-        status: 'draft',
+        status: initialStatus,
       })
       .select()
       .single();
@@ -291,20 +342,7 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
     if (girnError) throw girnError;
 
     if (resolvedItems.length > 0) {
-      const itemRows = resolvedItems.map((item) => ({
-        girn_id: newGirn.id,
-        raw_material_id: item.raw_material_id || null,
-        rm_code: item.rm_code || null,
-        grade: item.grade || null,
-        inventory_number: item.inventory_number || null,
-        unit: item.unit || null,
-        quantity: parseFloat(item.quantity) || 0,
-        unit_rate: parseFloat(item.unit_rate) || 0,
-        amount: parseFloat(item.amount) || 0,
-        vat_percentage: parseFloat(item.vat_percentage) || 0,
-        vat_amount: parseFloat(item.vat_amount) || 0,
-        total_amount: parseFloat(item.total_amount) || 0,
-      }));
+      const itemRows = resolvedItems.map((item) => mapItemToDbRow(newGirn.id, item));
 
       const { error: itemsError } = await supabase
         .from('girn_items')
@@ -313,14 +351,35 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       if (itemsError) throw itemsError;
     }
 
-    return res.status(201).json({ message: 'GIRN created successfully', girn: newGirn });
+    if (shouldAutoApprove) {
+      const { data: insertedItems } = await supabase
+        .from('girn_items')
+        .select('*')
+        .eq('girn_id', newGirn.id);
+
+      try {
+        await applyStockForGirn(newGirn.id, insertedItems || []);
+      } catch (stockErr) {
+        await supabase.from('girn_items').delete().eq('girn_id', newGirn.id);
+        await supabase.from('girns').delete().eq('id', newGirn.id);
+        throw stockErr;
+      }
+    }
+
+    return res.status(201).json({
+      message: shouldAutoApprove ? 'GIRN registered and approved' : 'GIRN created successfully',
+      girn: { ...newGirn, status: initialStatus },
+    });
   } catch (err) {
     console.error('GIRN create error:', err);
     const isClientError =
       err.message?.includes('RM ID') ||
       err.message?.includes('raw material') ||
       err.message?.includes('RM Code') ||
-      err.message?.includes('Supplier');
+      err.message?.includes('Supplier') ||
+      err.message?.includes('line item') ||
+      err.message?.includes('Master') ||
+      err.message?.includes('existing');
     return res.status(isClientError ? 400 : 500).json({
       error: isClientError ? err.message : 'Unable to create GIRN',
     });
@@ -336,7 +395,7 @@ router.post('/extract-invoice', verifyEmployeeAuth, upload.single('invoice'), as
     }
 
     const { invoice } = await extractInvoiceNow(file);
-    const draftGirn = buildDraftGirnFromInvoice(invoice, req.user?.sub);
+    const draftGirn = await buildDraftGirnFromInvoice(invoice, req.user?.sub);
 
     return res.json({
       invoice,
@@ -397,28 +456,33 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
       inspectionLogs = logs || [];
     }
 
-    const rawMaterialIds = (items || [])
-      .map((i) => i.raw_material_id)
+    const masterRecordIds = (items || [])
+      .map((i) => i.master_record_id || i.raw_material_id)
       .filter(Boolean);
 
-    let rawMaterialLabelMap = {};
-    if (rawMaterialIds.length > 0) {
+    let masterLabelMap = {};
+    if (masterRecordIds.length > 0) {
       const { data: lookupRows, error: lookupError } = await supabase
         .from('v_master_lookup')
-        .select('record_id, label')
-        .in('record_id', rawMaterialIds);
+        .select('record_id, label, master_slug')
+        .in('record_id', masterRecordIds);
 
       if (lookupError) throw lookupError;
-      rawMaterialLabelMap = Object.fromEntries(
-        (lookupRows || []).map((row) => [row.record_id, row.label])
+      masterLabelMap = Object.fromEntries(
+        (lookupRows || []).map((row) => [row.record_id, { label: row.label, master_slug: row.master_slug }])
       );
     }
 
-    const itemsWithLogs = (items || []).map((item) => ({
-      ...item,
-      raw_material_label: rawMaterialLabelMap[item.raw_material_id] ?? null,
-      inspection_logs: inspectionLogs.filter((l) => l.girn_item_id === item.id),
-    }));
+    const itemsWithLogs = (items || []).map((item) => {
+      const recordId = item.master_record_id || item.raw_material_id;
+      const lookup = masterLabelMap[recordId] || {};
+      return {
+        ...item,
+        master_record_label: lookup.label ?? null,
+        raw_material_label: lookup.label ?? null,
+        inspection_logs: inspectionLogs.filter((l) => l.girn_item_id === item.id),
+      };
+    });
 
     return res.json({
       girn: {
@@ -482,19 +546,14 @@ router.put('/:id', verifyEmployeeAuth, async (req, res) => {
       return res.status(400).json({ error: 'At least one line item is required' });
     }
 
-    if (
-      items.some(
-        (item) =>
-          !item.raw_material_id &&
-          (!String(item.rm_id || '').trim() || !String(item.rm_code || '').trim())
-      )
-    ) {
-      return res.status(400).json({
-        error: 'Each line item must be linked to a raw material or include both RM ID and RM Code',
-      });
+    for (const item of items) {
+      const validationError = validateGirnItem(item);
+      if (validationError) {
+        return res.status(400).json({ error: validationError });
+      }
     }
 
-    const resolvedItems = await resolveGirnItemMaterials(items);
+    const resolvedItems = await resolveGirnItems(items);
 
     const grandTotal = resolvedItems.reduce((sum, item) => {
       return sum + (parseFloat(item.total_amount) || 0);
@@ -527,20 +586,7 @@ router.put('/:id', verifyEmployeeAuth, async (req, res) => {
     if (deleteError) throw deleteError;
 
     if (resolvedItems.length > 0) {
-      const itemRows = resolvedItems.map((item) => ({
-        girn_id: id,
-        raw_material_id: item.raw_material_id || null,
-        rm_code: item.rm_code || null,
-        grade: item.grade || null,
-        inventory_number: item.inventory_number || null,
-        unit: item.unit || null,
-        quantity: parseFloat(item.quantity) || 0,
-        unit_rate: parseFloat(item.unit_rate) || 0,
-        amount: parseFloat(item.amount) || 0,
-        vat_percentage: parseFloat(item.vat_percentage) || 0,
-        vat_amount: parseFloat(item.vat_amount) || 0,
-        total_amount: parseFloat(item.total_amount) || 0,
-      }));
+      const itemRows = resolvedItems.map((item) => mapItemToDbRow(id, item));
 
       const { error: insertError } = await supabase
         .from('girn_items')
@@ -556,7 +602,10 @@ router.put('/:id', verifyEmployeeAuth, async (req, res) => {
       err.message?.includes('RM ID') ||
       err.message?.includes('raw material') ||
       err.message?.includes('RM Code') ||
-      err.message?.includes('Supplier');
+      err.message?.includes('Supplier') ||
+      err.message?.includes('line item') ||
+      err.message?.includes('Master') ||
+      err.message?.includes('existing');
     return res.status(isClientError ? 400 : 500).json({
       error: isClientError ? err.message : 'Unable to update GIRN',
     });
@@ -580,6 +629,37 @@ router.post('/:id/submit', verifyEmployeeAuth, async (req, res) => {
       return res.status(409).json({ error: 'Only draft GIRNs can be submitted' });
     }
 
+    const { data: girnItems, error: itemsError } = await supabase
+      .from('girn_items')
+      .select('item_category')
+      .eq('girn_id', id);
+
+    if (itemsError) throw itemsError;
+
+    if (!girnNeedsInspection(girnItems || [])) {
+      const { data: fullItems } = await supabase
+        .from('girn_items')
+        .select('*')
+        .eq('girn_id', id);
+
+      const { stockUpdates, ledgerIds } = await applyStockForGirn(id, fullItems || []);
+
+      try {
+        const { data: approved, error: approveError } = await supabase
+          .from('girns')
+          .update({ status: 'approved' })
+          .eq('id', id)
+          .select()
+          .single();
+
+        if (approveError) throw approveError;
+        return res.json({ message: 'GIRN approved (no inspection required)', girn: approved });
+      } catch (approveErr) {
+        await rollbackStock(stockUpdates, ledgerIds);
+        throw approveErr;
+      }
+    }
+
     const { data: updated, error: updateError } = await supabase
       .from('girns')
       .update({ status: 'pending_inspection' })
@@ -596,11 +676,40 @@ router.post('/:id/submit', verifyEmployeeAuth, async (req, res) => {
   }
 });
 
+// ─── INSPECTION TEMPLATE FROM MASTER ──────────────────────────────────────────
+router.get('/:id/items/:itemId/inspection-template', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const { id, itemId } = req.params;
+
+    const { data: item, error: itemError } = await supabase
+      .from('girn_items')
+      .select('*')
+      .eq('id', itemId)
+      .eq('girn_id', id)
+      .maybeSingle();
+
+    if (itemError) throw itemError;
+    if (!item) return res.status(404).json({ error: 'GIRN item not found' });
+
+    const { data: logs } = await supabase
+      .from('girn_inspection_logs')
+      .select('*')
+      .eq('girn_item_id', itemId);
+
+    const checkpoints = await getInspectionCheckpointsForItem(item, logs || []);
+
+    return res.json({ checkpoints });
+  } catch (err) {
+    console.error('GIRN inspection template error:', err);
+    return res.status(500).json({ error: err.message || 'Unable to load inspection template' });
+  }
+});
+
 // ─── SAVE INSPECTION LOGS FOR AN ITEM ──────────────────────────────────────────
 router.post('/:id/items/:itemId/inspect', verifyEmployeeAuth, async (req, res) => {
   try {
     const { id, itemId } = req.params;
-    const { checkpoints = [] } = req.body;
+    const { checkpoints = [], quantity_ok, quantity_not_ok } = req.body;
 
     const { data: girn, error: girnError } = await supabase
       .from('girns')
@@ -616,7 +725,7 @@ router.post('/:id/items/:itemId/inspect', verifyEmployeeAuth, async (req, res) =
 
     const { data: item, error: itemError } = await supabase
       .from('girn_items')
-      .select('id')
+      .select('*')
       .eq('id', itemId)
       .eq('girn_id', id)
       .maybeSingle();
@@ -624,7 +733,31 @@ router.post('/:id/items/:itemId/inspect', verifyEmployeeAuth, async (req, res) =
     if (itemError) throw itemError;
     if (!item) return res.status(404).json({ error: 'GIRN item not found' });
 
-    // Delete existing logs for this item then re-insert
+    const category = item.item_category || 'raw_material';
+    const cfg = getCategoryConfig(category);
+
+    if (!cfg.requiresInspection) {
+      return res.status(409).json({ error: 'This item category does not require inspection' });
+    }
+
+    const itemUpdate = {};
+    if (category === 'gauge') {
+      itemUpdate.quantity_ok = toNumber(quantity_ok);
+      itemUpdate.quantity_not_ok = toNumber(quantity_not_ok);
+      const total = toNumber(item.quantity);
+      if (itemUpdate.quantity_ok + itemUpdate.quantity_not_ok !== total) {
+        return res.status(400).json({ error: 'OK + Not OK quantities must equal received quantity' });
+      }
+    }
+
+    if (Object.keys(itemUpdate).length) {
+      const { error: qtyError } = await supabase
+        .from('girn_items')
+        .update(itemUpdate)
+        .eq('id', itemId);
+      if (qtyError) throw qtyError;
+    }
+
     const { error: deleteError } = await supabase
       .from('girn_inspection_logs')
       .delete()
@@ -648,7 +781,21 @@ router.post('/:id/items/:itemId/inspect', verifyEmployeeAuth, async (req, res) =
       if (insertError) throw insertError;
     }
 
-    return res.json({ message: 'Inspection saved successfully' });
+    let lotNumber = item.lot_number;
+    if (
+      category === 'component' &&
+      cfg.assignsLot &&
+      allCheckpointsPassed(checkpoints) &&
+      item.master_record_id &&
+      !lotNumber
+    ) {
+      lotNumber = await assignLotToGirnItem(itemId, item.master_record_id);
+    }
+
+    return res.json({
+      message: 'Inspection saved successfully',
+      lot_number: lotNumber || null,
+    });
   } catch (err) {
     console.error('GIRN inspect error:', err);
     return res.status(500).json({ error: 'Unable to save inspection' });
@@ -658,8 +805,8 @@ router.post('/:id/items/:itemId/inspect', verifyEmployeeAuth, async (req, res) =
 // ─── APPROVE ───────────────────────────────────────────────────────────────────
 router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
   const { id } = req.params;
-  const insertedLedgerIds = [];
-  const stockUpdates = [];
+  let stockUpdates = [];
+  let ledgerIds = [];
 
   try {
     const { data: girn, error: girnError } = await supabase
@@ -676,58 +823,52 @@ router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
 
     const { data: items, error: itemsError } = await supabase
       .from('girn_items')
-      .select('id, raw_material_id, quantity, unit')
+      .select('*')
       .eq('girn_id', id);
 
     if (itemsError) throw itemsError;
 
-    for (const item of items || []) {
-      if (!item.raw_material_id) continue;
-
-      // Upsert raw_material_stock
-      const { data: existingStock } = await supabase
-        .from('raw_material_stock')
-        .select('id, current_stock')
-        .eq('raw_material_id', item.raw_material_id)
-        .maybeSingle();
-
-      if (existingStock) {
-        const newStock = (parseFloat(existingStock.current_stock) || 0) + (parseFloat(item.quantity) || 0);
-        const { error: stockUpdateError } = await supabase
-          .from('raw_material_stock')
-          .update({ current_stock: newStock })
-          .eq('id', existingStock.id);
-
-        if (stockUpdateError) throw stockUpdateError;
-        stockUpdates.push({ id: existingStock.id, previous: existingStock.current_stock, delta: item.quantity });
-      } else {
-        const { error: stockInsertError } = await supabase
-          .from('raw_material_stock')
-          .insert({
-            raw_material_id: item.raw_material_id,
-            current_stock: parseFloat(item.quantity) || 0,
-            unit: item.unit || null,
-          });
-
-        if (stockInsertError) throw stockInsertError;
-      }
-
-      // Append stock ledger entry
-      const { data: ledgerRow, error: ledgerError } = await supabase
-        .from('stock_ledger')
-        .insert({
-          raw_material_id: item.raw_material_id,
-          change_qty: parseFloat(item.quantity) || 0,
-          reason: 'girn',
-          reference_id: id,
-          note: `Received via GIRN ${id}`,
-        })
-        .select('id')
-        .single();
-
-      if (ledgerError) throw ledgerError;
-      insertedLedgerIds.push(ledgerRow.id);
+    const itemIds = (items || []).map((i) => i.id);
+    let inspectionLogs = [];
+    if (itemIds.length > 0) {
+      const { data: logs, error: logsError } = await supabase
+        .from('girn_inspection_logs')
+        .select('*')
+        .in('girn_item_id', itemIds);
+      if (logsError) throw logsError;
+      inspectionLogs = logs || [];
     }
+
+    const itemsWithLogs = (items || []).map((item) => ({
+      ...item,
+      inspection_logs: inspectionLogs.filter((l) => l.girn_item_id === item.id),
+    }));
+
+    const inspectionError = await validateGirnInspection(itemsWithLogs);
+    if (inspectionError) {
+      return res.status(400).json({ error: inspectionError });
+    }
+
+    for (const item of itemsWithLogs) {
+      if (
+        item.item_category === 'component' &&
+        !item.lot_number &&
+        item.master_record_id &&
+        allCheckpointsPassed(item.inspection_logs)
+      ) {
+        await assignLotToGirnItem(item.id, item.master_record_id);
+        const { data: refreshed } = await supabase
+          .from('girn_items')
+          .select('lot_number')
+          .eq('id', item.id)
+          .single();
+        item.lot_number = refreshed?.lot_number || item.lot_number;
+      }
+    }
+
+    const stockResult = await applyStockForGirn(id, itemsWithLogs);
+    stockUpdates = stockResult.stockUpdates;
+    ledgerIds = stockResult.ledgerIds;
 
     const { data: approved, error: approveError } = await supabase
       .from('girns')
@@ -741,26 +882,8 @@ router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
     return res.json({ message: 'GIRN approved and stock updated', girn: approved });
   } catch (err) {
     console.error('GIRN approve error — rolling back:', err);
-
-    // Roll back ledger inserts
-    if (insertedLedgerIds.length > 0) {
-      await supabase
-        .from('stock_ledger')
-        .delete()
-        .in('id', insertedLedgerIds)
-        .catch((e) => console.error('Ledger rollback failed:', e));
-    }
-
-    // Roll back stock increments
-    for (const s of stockUpdates) {
-      await supabase
-        .from('raw_material_stock')
-        .update({ current_stock: s.previous })
-        .eq('id', s.id)
-        .catch((e) => console.error('Stock rollback failed:', e));
-    }
-
-    return res.status(500).json({ error: 'Unable to approve GIRN' });
+    await rollbackStock(stockUpdates, ledgerIds).catch((e) => console.error('Rollback failed:', e));
+    return res.status(500).json({ error: err.message || 'Unable to approve GIRN' });
   }
 });
 

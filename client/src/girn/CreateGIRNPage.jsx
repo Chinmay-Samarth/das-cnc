@@ -4,11 +4,18 @@ import api from '../api/client';
 import { useAuth } from '../auth/authContext';
 import EmployeeSelect from './EmployeeSelect';
 import GIRNInvoiceUpload from './GIRNInvoiceUpload';
-import RawMaterialSelect from './RawMaterialSelect';
+import MasterItemSelect from './MasterItemSelect';
+import { CATEGORY_OPTIONS, getCategoryConfig } from './girnCategoryConfig';
 
 const EMPTY_ITEM = {
+  item_category: 'raw_material',
+  master_record_id: null,
+  master_record_label: '',
   raw_material_id: null,
   raw_material_label: '',
+  item_code: '',
+  item_description: '',
+  quantity_type: 'kg',
   rm_id: '',
   rm_code: '',
   grade: '',
@@ -20,6 +27,7 @@ const EMPTY_ITEM = {
   amount: '',
   vat_amount: '',
   total_amount: '',
+  match_confidence: '',
 };
 
 function toNumber(value) {
@@ -77,7 +85,7 @@ function HeaderReview({
       <div className="section-header" style={{ marginBottom: 16 }}>
         <div>
           <h2>Review GIRN Header</h2>
-          <p className="muted">OCR filled these fields from the invoice. Correct anything before registering.</p>
+          {/* <p className="muted">OCR filled these fields from the invoice. Correct anything before registering.</p> */}
         </div>
       </div>
 
@@ -182,7 +190,7 @@ function HeaderReview({
   );
 }
 
-function ItemsReview({ items, onItemChange, onRawMaterialSelect, onAddItem, onRemoveItem }) {
+function ItemsReview({ items, onItemChange, onMasterSelect, onCategoryChange, onAddItem, onRemoveItem }) {
   const grandTotal = items.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
 
   return (
@@ -190,14 +198,18 @@ function ItemsReview({ items, onItemChange, onRawMaterialSelect, onAddItem, onRe
       <div className="section-header" style={{ marginBottom: 16 }}>
         <div>
           <h2>Review Line Items</h2>
-          <p className="muted">Match OCR rows to raw materials. New RM ID + RM Code pairs will be created in the raw material master.</p>
+          <p className="muted">OCR suggests a category per line. Each stocked item must be linked to an existing master record.</p>
         </div>
         <button type="button" className="secondary-button" onClick={onAddItem}>
           + Add Item
         </button>
       </div>
 
-      {items.map((item, idx) => (
+      {items.map((item, idx) => {
+        const cfg = getCategoryConfig(item.item_category || 'raw_material');
+        const isOther = item.item_category === 'other';
+
+        return (
         <div
           key={idx}
           style={{
@@ -208,8 +220,16 @@ function ItemsReview({ items, onItemChange, onRawMaterialSelect, onAddItem, onRe
             background: '#fafafa',
           }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
-            <strong>Item {idx + 1}</strong>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <strong>Item {idx + 1}</strong>
+              <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: '#e0e7ff', color: '#3730a3' }}>
+                {cfg.quantityType === 'kg' ? 'kg' : 'nos'}
+              </span>
+              {item.match_confidence && item.match_confidence !== 'none' ? (
+                <span className="muted" style={{ fontSize: 12 }}>OCR match: {item.match_confidence}</span>
+              ) : null}
+            </div>
             {items.length > 1 ? (
               <button
                 type="button"
@@ -223,52 +243,76 @@ function ItemsReview({ items, onItemChange, onRawMaterialSelect, onAddItem, onRe
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
-            <label style={{ gridColumn: '1 / -1' }}>
-              Match existing raw material
-              <RawMaterialSelect
-                value={item.raw_material_id}
-                label={item.raw_material_label}
-                onChange={(mapped) => onRawMaterialSelect(idx, mapped)}
-              />
+            <label>
+              Category <span style={{ color: '#b91c1c' }}>*</span>
+              <select
+                value={item.item_category || 'raw_material'}
+                onChange={(e) => onCategoryChange(idx, e.target.value)}
+              >
+                {CATEGORY_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
             </label>
 
-            <label>
-              RM ID <span style={{ color: '#b91c1c' }}>*</span>
-              <input
-                type="text"
-                value={item.rm_id}
-                onChange={(e) => onItemChange(idx, 'rm_id', e.target.value)}
-                placeholder="e.g. 1102"
-              />
-            </label>
+            {!isOther && cfg.masterSlug ? (
+              <label style={{ gridColumn: '1 / -1' }}>
+                Match {cfg.label.toLowerCase()}
+                <MasterItemSelect
+                  masterSlug={cfg.masterSlug}
+                  category={item.item_category}
+                  value={item.master_record_id || item.raw_material_id}
+                  label={item.master_record_label || item.raw_material_label}
+                  onChange={(mapped) => onMasterSelect(idx, mapped)}
+                />
+              </label>
+            ) : null}
 
-            <label>
-              RM Code <span style={{ color: '#b91c1c' }}>*</span>
-              <input
-                type="text"
-                value={item.rm_code}
-                onChange={(e) => onItemChange(idx, 'rm_code', e.target.value)}
-                placeholder="e.g. copper"
-              />
-            </label>
+            {isOther ? (
+              <label style={{ gridColumn: '1 / -1' }}>
+                Description <span style={{ color: '#b91c1c' }}>*</span>
+                <input
+                  type="text"
+                  value={item.item_description}
+                  onChange={(e) => onItemChange(idx, 'item_description', e.target.value)}
+                />
+              </label>
+            ) : (
+              <>
+                <label style={{ gridColumn: '1 / -1' }}>
+                  Linked item
+                  <input
+                    type="text"
+                    value={item.master_record_label || item.raw_material_label || 'Not linked'}
+                    disabled
+                  />
+                </label>
 
-            <label>
-              Grade
-              <input
-                type="text"
-                value={item.grade}
-                onChange={(e) => onItemChange(idx, 'grade', e.target.value)}
-              />
-            </label>
+                {item.item_category === 'raw_material' ? (
+                  <>
+                    <label>
+                      Grade
+                      <input
+                        type="text"
+                        value={item.grade}
+                        onChange={(e) => onItemChange(idx, 'grade', e.target.value)}
+                        disabled={!item.master_record_id && !item.raw_material_id}
+                      />
+                    </label>
 
-            <label>
-              Inventory Number
-              <input
-                type="text"
-                value={item.inventory_number}
-                onChange={(e) => onItemChange(idx, 'inventory_number', e.target.value)}
-              />
-            </label>
+                    <label>
+                      Inventory Number
+                      <input
+                        type="text"
+                        value={item.inventory_number}
+                        onChange={(e) => onItemChange(idx, 'inventory_number', e.target.value)}
+                        disabled={!item.master_record_id && !item.raw_material_id}
+                      />
+                    </label>
+                  </>
+                ) : null}
+              </>
+            )}
 
             <label>
               Unit
@@ -276,6 +320,7 @@ function ItemsReview({ items, onItemChange, onRawMaterialSelect, onAddItem, onRe
                 type="text"
                 value={item.unit}
                 onChange={(e) => onItemChange(idx, 'unit', e.target.value)}
+                placeholder={cfg.quantityType === 'kg' ? 'kg' : 'nos'}
               />
             </label>
 
@@ -313,9 +358,9 @@ function ItemsReview({ items, onItemChange, onRawMaterialSelect, onAddItem, onRe
             </label>
           </div>
 
-          {!item.raw_material_id && item.rm_id && item.rm_code ? (
-            <p className="muted" style={{ marginTop: 8, color: '#854d0e' }}>
-              This raw material will be created in the raw material master if RM ID {item.rm_id} does not already exist.
+          {!isOther && !(item.master_record_id || item.raw_material_id) ? (
+            <p className="muted" style={{ marginTop: 8, color: '#b91c1c' }}>
+              Link an existing {cfg.label.toLowerCase()} from the master before registering this GIRN.
             </p>
           ) : null}
 
@@ -325,7 +370,8 @@ function ItemsReview({ items, onItemChange, onRawMaterialSelect, onAddItem, onRe
             <span>Total: <strong>₹{fmt(item.total_amount)}</strong></span>
           </div>
         </div>
-      ))}
+        );
+      })}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
         <strong>Grand Total: ₹{fmt(grandTotal)}</strong>
@@ -413,18 +459,38 @@ export default function CreateGIRNPage() {
     }));
   }
 
-  function handleRawMaterialSelect(idx, mapped) {
+  function handleMasterSelect(idx, mapped) {
     setItems((prev) => {
       const next = [...prev];
       next[idx] = calcItem({
         ...next[idx],
+        master_record_id: mapped.master_record_id,
+        master_record_label: mapped.master_record_label,
         raw_material_id: mapped.raw_material_id,
         raw_material_label: mapped.raw_material_label,
+        item_code: mapped.item_code || mapped.rm_id || next[idx].item_code,
         rm_id: mapped.rm_id || next[idx].rm_id,
         rm_code: mapped.rm_code || next[idx].rm_code,
+        item_description: mapped.item_description || mapped.rm_code || next[idx].item_description,
         grade: mapped.grade || next[idx].grade,
         unit: mapped.unit || next[idx].unit,
         inventory_number: mapped.inventory_number || next[idx].inventory_number,
+      });
+      return next;
+    });
+  }
+
+  function handleCategoryChange(idx, category) {
+    const cfg = getCategoryConfig(category);
+    setItems((prev) => {
+      const next = [...prev];
+      next[idx] = calcItem({
+        ...EMPTY_ITEM,
+        quantity: next[idx].quantity,
+        unit_rate: next[idx].unit_rate,
+        vat_percentage: next[idx].vat_percentage,
+        item_category: category,
+        quantity_type: cfg.quantityType,
       });
       return next;
     });
@@ -434,14 +500,30 @@ export default function CreateGIRNPage() {
     setItems((prev) => {
       const next = [...prev];
       const item = { ...next[idx], [field]: value };
-      if (field === 'rm_id' || field === 'rm_code') {
-        item.raw_material_id = null;
-        item.raw_material_label = '';
-      }
       next[idx] = calcItem(item);
       return next;
     });
   }
+
+  function itemIsValid(item) {
+    if (toNumber(item.quantity) <= 0) return false;
+    if (item.item_category === 'other') {
+      return Boolean(String(item.item_description || '').trim());
+    }
+    return Boolean(item.master_record_id || item.raw_material_id);
+  }
+
+  const canRegister =
+    (header.supplier_id || String(header.supplier_name || '').trim()) &&
+    header.received_by &&
+    header.received_date &&
+    items.length > 0 &&
+    items.every(itemIsValid);
+
+  const allOilOrOther = items.length > 0 && items.every((item) => {
+    const cat = item.item_category || 'raw_material';
+    return cat === 'oil' || cat === 'other';
+  });
 
   function addItem() {
     setItems((prev) => [...prev, { ...EMPTY_ITEM }]);
@@ -451,17 +533,6 @@ export default function CreateGIRNPage() {
     setItems((prev) => prev.filter((_, itemIdx) => itemIdx !== idx));
   }
 
-  const canRegister =
-    (header.supplier_id || String(header.supplier_name || '').trim()) &&
-    header.received_by &&
-    header.received_date &&
-    items.length > 0 &&
-    items.every(
-      (item) =>
-        (item.raw_material_id || (String(item.rm_id).trim() && String(item.rm_code).trim())) &&
-        toNumber(item.quantity) > 0
-    );
-
   async function registerGirn(submitForInspection = false) {
     setSubmitting(true);
     setError(null);
@@ -469,10 +540,16 @@ export default function CreateGIRNPage() {
     try {
       const payload = {
         ...header,
+        auto_approve: allOilOrOther && !submitForInspection,
         items: items.map((item) => ({
-          raw_material_id: item.raw_material_id || null,
-          rm_id: item.rm_id || null,
-          rm_code: item.rm_code || null,
+          item_category: item.item_category || 'raw_material',
+          master_record_id: item.master_record_id || item.raw_material_id || null,
+          quantity_type: item.quantity_type || getCategoryConfig(item.item_category).quantityType,
+          item_code: item.item_code || item.rm_id || null,
+          item_description: item.item_description || item.rm_code || null,
+          raw_material_id: item.item_category === 'raw_material' ? (item.master_record_id || item.raw_material_id) : null,
+          rm_id: item.rm_id || item.item_code || null,
+          rm_code: item.rm_code || item.item_description || null,
           grade: item.grade || null,
           inventory_number: item.inventory_number || null,
           unit: item.unit || null,
@@ -487,7 +564,7 @@ export default function CreateGIRNPage() {
 
       const { data } = await api.post('/girn', payload);
       const newId = data.girn.id;
-      if (submitForInspection) {
+      if (submitForInspection && !allOilOrOther) {
         await api.post(`/girn/${newId}/submit`);
       }
       navigate(`/girn/${newId}`);
@@ -605,7 +682,8 @@ export default function CreateGIRNPage() {
             <ItemsReview
               items={items}
               onItemChange={handleItemChange}
-              onRawMaterialSelect={handleRawMaterialSelect}
+              onMasterSelect={handleMasterSelect}
+              onCategoryChange={handleCategoryChange}
               onAddItem={addItem}
               onRemoveItem={removeItem}
             />
