@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 import api from '../api/client';
 import { getCategoryConfig, requiresInspection } from './girnCategoryConfig';
 
@@ -194,7 +195,7 @@ function ItemsTab({ items }) {
 
   return (
     <div className="employees-table-wrap">
-      <table className="employees-table">
+      <table className="app-table">
         <thead>
           <tr>
             <th>#</th>
@@ -248,103 +249,127 @@ function ItemsTab({ items }) {
 }
 
 // ─── Inspection Tab ────────────────────────────────────────────────────────────
-function ItemInspectionPanel({ girnId, item, isPending, onSave }) {
+function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspection }) {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [loadError, setLoadError] = useState(null);
-  const [loadingTemplate, setLoadingTemplate] = useState(false);
+  const [loadingPlan, setLoadingPlan] = useState(false);
   const [lotNumber, setLotNumber] = useState(item.lot_number || '');
 
   const category = item.item_category || 'raw_material';
   const cfg = getCategoryConfig(category);
 
-  const [checkpoints, setCheckpoints] = useState([]);
+  const [plan, setPlan] = useState(null);
+  const [sampleSize, setSampleSize] = useState(null);
+  const [execution, setExecution] = useState(initialInspection || null);
+  const [valueInputs, setValueInputs] = useState({});
+  const [docFiles, setDocFiles] = useState({});
+  const [docVerified, setDocVerified] = useState({});
   const [quantityOk, setQuantityOk] = useState(item.quantity_ok ?? item.quantity ?? '');
   const [quantityNotOk, setQuantityNotOk] = useState(item.quantity_not_ok ?? '');
+
+  const submitted = Boolean(execution);
 
   useEffect(() => {
     if (!open || !girnId || !item.id) return undefined;
 
     let cancelled = false;
-    setLoadingTemplate(true);
+    setLoadingPlan(true);
     setLoadError(null);
 
-    api.get(`/girn/${girnId}/items/${item.id}/inspection-template`)
+    api.get(`/girn/${girnId}/items/${item.id}/inspection`)
       .then(({ data }) => {
         if (cancelled) return;
-        setCheckpoints(data.checkpoints || []);
+        setPlan(data.plan);
+        setSampleSize(data.sample_size);
+        setExecution(data.execution || initialInspection || null);
+
+        const inputs = {};
+        for (const param of data.plan?.parameters || []) {
+          const saved = data.execution?.values?.find((v) => v.plan_parameter_id === param.id);
+          inputs[param.id] = {
+            measured_value: saved?.measured_value ?? '',
+            result: saved?.result ?? (param.check_type === 'dimensional' ? '' : 'pass'),
+            remarks: saved?.remarks ?? '',
+          };
+        }
+        setValueInputs(inputs);
+
+        const verified = {};
+        for (const doc of data.plan?.documents || []) {
+          const saved = data.execution?.documents?.find((d) => d.document_type === doc.document_type);
+          verified[doc.document_type] = saved?.verified ?? false;
+        }
+        setDocVerified(verified);
       })
       .catch((err) => {
         if (cancelled) return;
-        console.error('Inspection template load error:', err);
-        setLoadError(err.response?.data?.error || 'Unable to load inspection fields from master.');
-        setCheckpoints([]);
+        console.error('Inspection load error:', err);
+        setLoadError(err.response?.data?.error || 'Unable to load inspection plan.');
       })
       .finally(() => {
-        if (!cancelled) setLoadingTemplate(false);
+        if (!cancelled) setLoadingPlan(false);
       });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [open, girnId, item.id]);
+    return () => { cancelled = true; };
+  }, [open, girnId, item.id, initialInspection]);
 
-  const updateCheckpoint = (idx, field, value) => {
-    setCheckpoints((prev) => {
-      const next = [...prev];
-      next[idx] = { ...next[idx], [field]: value };
-      return next;
-    });
-  };
+  function updateValue(paramId, field, value) {
+    setValueInputs((prev) => ({
+      ...prev,
+      [paramId]: { ...prev[paramId], [field]: value },
+    }));
+  }
 
-  const allPassed = checkpoints.length > 0 && checkpoints.every((c) => c.passed);
-  const someResults = checkpoints.length > 0;
-
-  async function handleSave() {
+  async function handleSubmit() {
     setSaving(true);
     setSaveError(null);
     try {
-      const payload = { checkpoints };
+      const formData = new FormData();
+      const values = (plan?.parameters || []).map((param) => ({
+        plan_parameter_id: param.id,
+        measured_value: valueInputs[param.id]?.measured_value === ''
+          ? null
+          : parseFloat(valueInputs[param.id]?.measured_value),
+        result: valueInputs[param.id]?.result || 'fail',
+        remarks: valueInputs[param.id]?.remarks || null,
+      }));
+      formData.append('values', JSON.stringify(values));
+      formData.append('documents', JSON.stringify(docVerified));
+
       if (category === 'gauge') {
-        payload.quantity_ok = parseFloat(quantityOk) || 0;
-        payload.quantity_not_ok = parseFloat(quantityNotOk) || 0;
+        formData.append('quantity_ok', parseFloat(quantityOk) || 0);
+        formData.append('quantity_not_ok', parseFloat(quantityNotOk) || 0);
       }
-      const { data } = await onSave(item.id, payload);
-      if (data?.lot_number) {
-        setLotNumber(data.lot_number);
+
+      for (const [docType, file] of Object.entries(docFiles)) {
+        if (file) formData.append(`doc_${docType}`, file);
       }
+
+      const { data } = await onSave(item.id, formData);
+      if (data?.execution) setExecution(data.execution);
+      if (data?.lot_number) setLotNumber(data.lot_number);
     } catch (err) {
-      setSaveError(err.response?.data?.error || 'Unable to save inspection.');
+      setSaveError(err.response?.data?.error || 'Unable to submit inspection.');
     } finally {
       setSaving(false);
     }
   }
 
   const itemLabel = item.master_record_label || item.raw_material_label || item.item_description || item.item_code || `Item ${item.id}`;
+  const resultLabel = execution?.overall_result;
+  const resultColor = resultLabel === 'pass' ? '#166534' : resultLabel === 'fail' ? '#991b1b' : '#854d0e';
 
   return (
-    <div
-      style={{
-        border: '1px solid #e5e7eb',
-        borderRadius: 8,
-        marginBottom: 12,
-        overflow: 'hidden',
-      }}
-    >
+    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, marginBottom: 12, overflow: 'hidden' }}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         style={{
-          width: '100%',
-          background: '#f9fafb',
-          border: 'none',
-          padding: '12px 16px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          cursor: 'pointer',
-          textAlign: 'left',
+          width: '100%', background: '#f9fafb', border: 'none', padding: '12px 16px',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          cursor: 'pointer', textAlign: 'left',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -355,18 +380,9 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave }) {
           {lotNumber ? (
             <span style={{ fontSize: 12, fontWeight: 600, color: '#166534' }}>LOT: {lotNumber}</span>
           ) : null}
-          {someResults ? (
-            <span
-              style={{
-                padding: '2px 8px',
-                borderRadius: 99,
-                fontSize: 11,
-                fontWeight: 600,
-                background: allPassed ? '#dcfce7' : '#fef9c3',
-                color: allPassed ? '#166534' : '#854d0e',
-              }}
-            >
-              {allPassed ? 'All Passed' : 'Incomplete'}
+          {resultLabel ? (
+            <span style={{ padding: '2px 8px', borderRadius: 99, fontSize: 11, fontWeight: 600, color: resultColor, background: '#f3f4f6' }}>
+              {resultLabel.toUpperCase()}
             </span>
           ) : null}
         </div>
@@ -375,93 +391,152 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave }) {
 
       {open ? (
         <div style={{ padding: 16 }}>
-          {loadingTemplate ? (
-            <p className="muted">Loading inspection fields from master...</p>
-          ) : null}
-          {loadError ? (
-            <p className="error-message" style={{ marginBottom: 12 }}>{loadError}</p>
-          ) : null}
-          {!loadingTemplate && !loadError && checkpoints.length === 0 ? (
-            <p className="muted">
-              No inspection section found on this item&apos;s master record. Add an &quot;Inspection&quot; section with fields in the master schema.
-            </p>
-          ) : null}
+          {loadingPlan ? <p className="muted">Loading inspection plan...</p> : null}
+          {loadError ? <p className="error-message" style={{ marginBottom: 12 }}>{loadError}</p> : null}
 
-          {category === 'gauge' && isPending ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
-              <label>
-                OK Qty
-                <input type="number" min="0" value={quantityOk} onChange={(e) => setQuantityOk(e.target.value)} />
-              </label>
-              <label>
-                Not OK Qty
-                <input type="number" min="0" value={quantityNotOk} onChange={(e) => setQuantityNotOk(e.target.value)} />
-              </label>
-              <div>
-                <p className="component-detail-label">Received</p>
-                <p className="component-detail-value">{item.quantity}</p>
+          {!loadingPlan && !loadError && plan ? (
+            <>
+              <div style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
+                <div>
+                  <p className="employee-detail-label">Plan</p>
+                  <p className="employee-detail-value">{plan.plan_code} (rev {plan.revision})</p>
+                </div>
+                <div>
+                  <p className="employee-detail-label">Lot Qty</p>
+                  <p className="employee-detail-value">{item.quantity}</p>
+                </div>
+                <div>
+                  <p className="employee-detail-label">Sample Size</p>
+                  <p className="employee-detail-value">{sampleSize ?? '—'}</p>
+                </div>
               </div>
-            </div>
-          ) : null}
 
-          <div className="attendance-table-wrap">
-            <table className="attendance-table">
-              <thead>
-                <tr>
-                  <th>Checkpoint</th>
-                  <th>Standard</th>
-                  <th>Passed</th>
-                  <th>Inspector Note</th>
-                </tr>
-              </thead>
-              <tbody>
-                {checkpoints.map((cp, idx) => (
-                  <tr key={idx}>
-                    <td>{cp.checkpoint}</td>
-                    <td>{cp.standard || '—'}</td>
-                    <td>
-                      {isPending ? (
-                        <input
-                          type="checkbox"
-                          checked={cp.passed}
-                          onChange={(e) => updateCheckpoint(idx, 'passed', e.target.checked)}
-                        />
-                      ) : (
-                        <span style={{ fontWeight: 700, color: cp.passed ? '#16a34a' : '#dc2626' }}>
-                          {cp.passed ? 'Pass' : 'Fail'}
+              {category === 'gauge' && isPending && !submitted ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
+                  <label>
+                    OK Qty
+                    <input type="number" min="0" value={quantityOk} onChange={(e) => setQuantityOk(e.target.value)} />
+                  </label>
+                  <label>
+                    Not OK Qty
+                    <input type="number" min="0" value={quantityNotOk} onChange={(e) => setQuantityNotOk(e.target.value)} />
+                  </label>
+                </div>
+              ) : null}
+
+              <div className="employee-table-wrap" style={{ marginBottom: 16 }}>
+                <table className="app-table">
+                  <thead>
+                    <tr>
+                      <th>Parameter</th>
+                      <th>Type</th>
+                      <th>Spec</th>
+                      <th>Measured</th>
+                      <th>Result</th>
+                      <th>Remarks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(plan.parameters || []).map((param) => {
+                      const spec = param.check_type === 'dimensional'
+                        ? `${param.nominal_value ?? '—'} ${param.unit || ''} (+${param.tol_plus ?? 0}/-${param.tol_minus ?? 0})`
+                        : param.instrument_required || '—';
+                      const input = valueInputs[param.id] || {};
+                      return (
+                        <tr key={param.id}>
+                          <td>{param.parameter_name}{param.is_mandatory ? ' *' : ''}</td>
+                          <td>{param.check_type}</td>
+                          <td>{spec}</td>
+                          <td>
+                            {param.check_type === 'dimensional' ? (
+                              submitted ? (input.measured_value ?? '—') : (
+                                <input
+                                  type="number"
+                                  value={input.measured_value}
+                                  onChange={(e) => updateValue(param.id, 'measured_value', e.target.value)}
+                                  style={{ width: 80 }}
+                                />
+                              )
+                            ) : '—'}
+                          </td>
+                          <td>
+                            {submitted || param.check_type === 'dimensional' ? (
+                              <span style={{ fontWeight: 600, color: input.result === 'pass' ? '#16a34a' : '#dc2626' }}>
+                                {(input.result || '—').toUpperCase()}
+                              </span>
+                            ) : (
+                              <select
+                                value={input.result || 'pass'}
+                                onChange={(e) => updateValue(param.id, 'result', e.target.value)}
+                              >
+                                <option value="pass">Pass</option>
+                                <option value="fail">Fail</option>
+                                <option value="na">N/A</option>
+                              </select>
+                            )}
+                          </td>
+                          <td>
+                            {submitted ? (input.remarks || '—') : (
+                              <input
+                                type="text"
+                                value={input.remarks || ''}
+                                onChange={(e) => updateValue(param.id, 'remarks', e.target.value)}
+                                style={{ width: '100%' }}
+                              />
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {(plan.documents || []).length > 0 ? (
+                <div style={{ marginBottom: 16 }}>
+                  <h4 style={{ margin: '0 0 8px' }}>Documents</h4>
+                  {(plan.documents || []).map((doc) => {
+                    const saved = execution?.documents?.find((d) => d.document_type === doc.document_type);
+                    return (
+                      <div key={doc.document_type} style={{ marginBottom: 10, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ minWidth: 140, fontWeight: 500 }}>
+                          {doc.document_type}{doc.is_mandatory ? ' *' : ''}
                         </span>
-                      )}
-                    </td>
-                    <td>
-                      {isPending ? (
-                        <input
-                          type="text"
-                          value={cp.inspector_note}
-                          onChange={(e) => updateCheckpoint(idx, 'inspector_note', e.target.value)}
-                          style={{ width: '100%' }}
-                        />
-                      ) : (
-                        cp.inspector_note || '—'
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                        {submitted ? (
+                          saved ? (
+                            <a href={saved.file_url} target="_blank" rel="noopener noreferrer">View file</a>
+                          ) : '—'
+                        ) : (
+                          <>
+                            <input
+                              type="file"
+                              onChange={(e) => setDocFiles((prev) => ({ ...prev, [doc.document_type]: e.target.files?.[0] || null }))}
+                            />
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <input
+                                type="checkbox"
+                                checked={docVerified[doc.document_type] || false}
+                                onChange={(e) => setDocVerified((prev) => ({ ...prev, [doc.document_type]: e.target.checked }))}
+                              />
+                              Verified
+                            </label>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
 
-          {isPending ? (
-            <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-              <button
-                type="button"
-                className="primary-button"
-                disabled={saving}
-                onClick={handleSave}
-              >
-                {saving ? 'Saving...' : 'Save Inspection'}
-              </button>
-              {saveError ? <span className="error-message" style={{ fontSize: 13 }}>{saveError}</span> : null}
-            </div>
+              {isPending && !submitted ? (
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button type="button" className="primary-button" disabled={saving} onClick={handleSubmit}>
+                    {saving ? 'Submitting...' : 'Submit Inspection'}
+                  </button>
+                  {saveError ? <span className="error-message" style={{ fontSize: 13 }}>{saveError}</span> : null}
+                </div>
+              ) : null}
+            </>
           ) : null}
         </div>
       ) : null}
@@ -493,7 +568,7 @@ function InspectionTab({ girn, items, onSaveInspection }) {
         </p>
       ) : (
         <p className="muted" style={{ marginBottom: 16 }}>
-          Complete inspection using the fields defined in each item&apos;s master inspection section. Oil and Others lines are excluded.
+          Complete inspection using the active plan for each item&apos;s master record. Oil and Others lines are excluded.
         </p>
       )}
       {inspectableItems.map((item) => (
@@ -503,6 +578,7 @@ function InspectionTab({ girn, items, onSaveInspection }) {
           item={item}
           isPending={isPending}
           onSave={onSaveInspection}
+          initialInspection={item.inspection}
         />
       ))}
     </div>
@@ -551,7 +627,10 @@ export default function GIRNDetailPage() {
   }
 
   async function handleSaveInspection(itemId, payload) {
-    const { data } = await api.post(`/girn/${id}/items/${itemId}/inspect`, payload);
+    const isFormData = payload instanceof FormData;
+    const { data } = await api.post(`/girn/${id}/items/${itemId}/inspection`, payload, isFormData ? {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    } : undefined);
     await loadGirn();
     return { data };
   }
@@ -559,8 +638,9 @@ export default function GIRNDetailPage() {
   const items = girn?.items || [];
 
   return (
-    <main className="app-shell employee-details-page masters-page component-details-page">
-      <header className="app-header">
+    <main className="app-shell employee-shell">
+      <header className="app-header employee-card">
+        <p onClick={()=> navigate('/girn')} style={{cursor: 'pointer'}}><ArrowLeft size={16} style={{marginRight: 4, display: 'inline'}}/>Back to GIRN</p>
         <div className="header-title-block">
           <p className="eyebrow">Procurement</p>
           <h1>{girn ? girn.girn_number : 'GIRN Detail'}</h1>
@@ -568,20 +648,15 @@ export default function GIRNDetailPage() {
             <p className="muted">{girn.supplier_name} · {girn.received_date}</p>
           ) : null}
         </div>
-      </header>
-
-      <section className="card form-card">
-        {/* Tabs */}
-        <div
-          className="tab-row"
-          style={{ display: 'flex', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}
-        >
+        <div className="pill-tabs">
           {['overview', 'items', 'inspection'].map((t) => (
             <button
               key={t}
               type="button"
-              className={tab === t ? 'primary-button' : 'secondary-button'}
+              className={`pill-tab ${tab === t ? 'pill-tab-active' : ''}`}
               onClick={() => setTab(t)}
+              aria-selected = {tab === t}
+            role = 'tab'
             >
               {t.charAt(0).toUpperCase() + t.slice(1)}
               {t === 'items' && items.length > 0 ? (
@@ -591,14 +666,11 @@ export default function GIRNDetailPage() {
               ) : null}
             </button>
           ))}
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => navigate('/girn')}
-          >
-            Back to GIRN list
-          </button>
         </div>
+      </header>
+
+      <section className="card form-card">
+        {/* Tabs */}
 
         {actionError ? (
           <p className="error-message" style={{ marginBottom: 16 }}>{actionError}</p>

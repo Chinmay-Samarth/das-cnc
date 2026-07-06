@@ -56,7 +56,7 @@ export const GIRN_CATEGORIES = {
   },
   gauge: {
     label: 'Gauge',
-    masterSlug: 'gauge',
+    masterSlug: 'gauge-instruments',
     quantityType: 'number',
     requiresInspection: true,
     updatesStock: true,

@@ -140,6 +140,19 @@ button:disabled {
   background: #f3f3fe;
 }
 
+.cancel-button {
+  background: var(--red-text);
+  color: white;
+  padding: 10px 18px;
+  border-radius: 6px;
+  border: 1px solid #dfe3e8;
+  margin: 10px 0px;
+}
+
+.cancel-button:hover:not(:disabled) {
+  background: #be123c;
+}
+
 .date-pickers{
   margin-left: 0 !important;
   margin-right: 0 !important;
@@ -1204,6 +1217,16 @@ button:hover:not(:disabled) {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 32px 0px;
+  border-radius: 12px;
+  background: none;
+  padding: 14px;
+  margin-top: 25px;
+}
+
+.inspection-plan-grid{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 32px;
   border-radius: 12px;
   background: none;
   padding: 14px;

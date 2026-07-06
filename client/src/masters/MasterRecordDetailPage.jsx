@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import ImageLightbox from '../components/shared/ImageLightBox'
+import InspectionPlanBuilder from './InspectionPlanBuilder'
+import { isInspectableMasterSlug } from './inspectableMasterSlugs'
 import { ArrowLeft, Pencil } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -203,6 +205,7 @@ export default function MasterRecordDetailPage() {
   const [schema,     setSchema]     = useState(null)
   const [flatValues, setFlatValues] = useState({})
   const [repValues,  setRepValues]  = useState({})
+  const [pageTab, setPageTab] = useState('details')
   const [activeTab,  setActiveTab]  = useState(0)
   const [loading,    setLoading]    = useState(true)
   const [error,      setError]      = useState(null)
@@ -210,6 +213,7 @@ export default function MasterRecordDetailPage() {
   useEffect(() => {
     setLoading(true)
     setError(null)
+    setPageTab('details')
     setActiveTab(0)
 
     Promise.all([
@@ -307,6 +311,7 @@ export default function MasterRecordDetailPage() {
 
   const { master, sections } = schema
   const activeSection        = sections[activeTab]
+  const showInspectionPlan   = isInspectableMasterSlug(slug)
 
   return (
     <div className="app-shell employee-shell">
@@ -331,8 +336,26 @@ export default function MasterRecordDetailPage() {
           </div>
         </div>
 
+        {showInspectionPlan ? (
+          <div className="mrd-tab-bar" style={{ marginTop: 12 }}>
+            <button
+              type="button"
+              className={`mrd-tab${pageTab === 'details' ? ' is-active' : ''}`}
+              onClick={() => setPageTab('details')}
+            >
+              Details
+            </button>
+            <button
+              type="button"
+              className={`mrd-tab${pageTab === 'inspection-plan' ? ' is-active' : ''}`}
+              onClick={() => setPageTab('inspection-plan')}
+            >
+              Inspection Plan
+            </button>
+          </div>
+        ) : null}
 
-          {sections.length > 1 && (
+          {pageTab === 'details' && sections.length > 1 && (
           <div className="mrd-tab-bar" role="tablist">
             {sections.map((section, idx) => (
               <button
@@ -355,11 +378,11 @@ export default function MasterRecordDetailPage() {
         )}
       </header>
 
-      {/* ── Pill tab bar ── */}
-      
-
-      {/* ── Section content ── */}
-      {activeSection && (
+      {pageTab === 'inspection-plan' ? (
+        <div className="card" style={{ marginTop: 0 }}>
+          <InspectionPlanBuilder slug={slug} recordId={id} />
+        </div>
+      ) : activeSection ? (
         <div className="card" style={{ marginTop: 0 }}>
           <div className="mrd-section-title">{activeSection.name}</div>
           {activeSection.is_repeatable
@@ -367,7 +390,7 @@ export default function MasterRecordDetailPage() {
             : <FlatSectionView       section={activeSection} flatValues={flatValues} />
           }
         </div>
-      )}
+      ) : null}
     </div>
   )
 }

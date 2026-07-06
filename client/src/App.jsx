@@ -25,6 +25,7 @@ import MasterRecordEditPage from './masters/MasterRecordEditPage';
 import GIRNListPage from './girn/GIRNListPage';
 import CreateGIRNPage from './girn/CreateGIRNPage';
 import GIRNDetailPage from './girn/GIRNDetailPage';
+import NotFoundPage from './pages/NotFoundPage';
 
 function RequireAuth() {
   const { user, loading } = useAuth();
@@ -97,11 +98,11 @@ export default function App() {
             <Route path="/girn" element={<GIRNListPage />} />
             <Route path="/girn/create" element={<CreateGIRNPage />} />
             <Route path="/girn/:id" element={<GIRNDetailPage />} />
+            <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Route>
 
         <Route path="/" element={<Navigate to="/home" replace />} />
-        <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
     </AuthProvider>
   );

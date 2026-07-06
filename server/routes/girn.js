@@ -8,11 +8,11 @@ const { ensureSupplier, supplierPayloadFromInvoice } = require('../services/girn
 const { classifyLineItems } = require('../services/girnItemClassifier');
 const { getCategoryConfig, girnNeedsInspection, girnCanAutoApprove } = require('../config/girnCategoryConfig');
 const { applyStockForGirn, rollbackStock } = require('../services/girnStockEngine');
+const { validateGirnInspection } = require('../services/girnInspectionEngine');
 const { assignLotToGirnItem } = require('../services/componentLotEngine');
-const { validateGirnInspection, allCheckpointsPassed } = require('../services/girnInspectionEngine');
-const { getInspectionCheckpointsForItem } = require('../services/girnInspectionTemplateEngine');
 
 const router = express.Router();
+router.use('/', require('./girn/inspections'));
 const upload = multer({ storage: multer.memoryStorage() });
 
 const supabase = createClient(
@@ -66,6 +66,35 @@ function toNumber(value) {
   const number = parseFloat(value);
   return Number.isFinite(number) ? number : 0;
 }
+
+async function loadInspectionsForItems(itemIds = []) {
+  if (!itemIds.length) return {};
+
+  const { data: inspections, error } = await supabase
+    .from('girn_inspections')
+    .select('*')
+    .in('girn_item_id', itemIds);
+
+  if (error) throw error;
+  if (!inspections?.length) return {};
+
+  const inspectionIds = inspections.map((i) => i.id);
+  const [{ data: values }, { data: documents }] = await Promise.all([
+    supabase.from('girn_inspection_values').select('*').in('inspection_id', inspectionIds),
+    supabase.from('girn_inspection_documents').select('*').in('inspection_id', inspectionIds),
+  ]);
+
+  const byItemId = {};
+  for (const insp of inspections) {
+    byItemId[insp.girn_item_id] = {
+      ...insp,
+      values: (values || []).filter((v) => v.inspection_id === insp.id),
+      documents: (documents || []).filter((d) => d.inspection_id === insp.id),
+    };
+  }
+  return byItemId;
+}
+
 
 function inferRmId(description = '') {
   const match = String(description).match(/\b\d{3,}\b/);
@@ -445,16 +474,7 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
     if (itemsError) throw itemsError;
 
     const itemIds = (items || []).map((i) => i.id);
-    let inspectionLogs = [];
-    if (itemIds.length > 0) {
-      const { data: logs, error: logsError } = await supabase
-        .from('girn_inspection_logs')
-        .select('*')
-        .in('girn_item_id', itemIds);
-
-      if (logsError) throw logsError;
-      inspectionLogs = logs || [];
-    }
+    const inspectionsByItem = await loadInspectionsForItems(itemIds);
 
     const masterRecordIds = (items || [])
       .map((i) => i.master_record_id || i.raw_material_id)
@@ -480,7 +500,7 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
         ...item,
         master_record_label: lookup.label ?? null,
         raw_material_label: lookup.label ?? null,
-        inspection_logs: inspectionLogs.filter((l) => l.girn_item_id === item.id),
+        inspection: inspectionsByItem[item.id] || null,
       };
     });
 
@@ -676,132 +696,6 @@ router.post('/:id/submit', verifyEmployeeAuth, async (req, res) => {
   }
 });
 
-// ─── INSPECTION TEMPLATE FROM MASTER ──────────────────────────────────────────
-router.get('/:id/items/:itemId/inspection-template', verifyEmployeeAuth, async (req, res) => {
-  try {
-    const { id, itemId } = req.params;
-
-    const { data: item, error: itemError } = await supabase
-      .from('girn_items')
-      .select('*')
-      .eq('id', itemId)
-      .eq('girn_id', id)
-      .maybeSingle();
-
-    if (itemError) throw itemError;
-    if (!item) return res.status(404).json({ error: 'GIRN item not found' });
-
-    const { data: logs } = await supabase
-      .from('girn_inspection_logs')
-      .select('*')
-      .eq('girn_item_id', itemId);
-
-    const checkpoints = await getInspectionCheckpointsForItem(item, logs || []);
-
-    return res.json({ checkpoints });
-  } catch (err) {
-    console.error('GIRN inspection template error:', err);
-    return res.status(500).json({ error: err.message || 'Unable to load inspection template' });
-  }
-});
-
-// ─── SAVE INSPECTION LOGS FOR AN ITEM ──────────────────────────────────────────
-router.post('/:id/items/:itemId/inspect', verifyEmployeeAuth, async (req, res) => {
-  try {
-    const { id, itemId } = req.params;
-    const { checkpoints = [], quantity_ok, quantity_not_ok } = req.body;
-
-    const { data: girn, error: girnError } = await supabase
-      .from('girns')
-      .select('id, status')
-      .eq('id', id)
-      .maybeSingle();
-
-    if (girnError) throw girnError;
-    if (!girn) return res.status(404).json({ error: 'GIRN not found' });
-    if (girn.status !== 'pending_inspection') {
-      return res.status(409).json({ error: 'Inspection can only be saved when GIRN is pending inspection' });
-    }
-
-    const { data: item, error: itemError } = await supabase
-      .from('girn_items')
-      .select('*')
-      .eq('id', itemId)
-      .eq('girn_id', id)
-      .maybeSingle();
-
-    if (itemError) throw itemError;
-    if (!item) return res.status(404).json({ error: 'GIRN item not found' });
-
-    const category = item.item_category || 'raw_material';
-    const cfg = getCategoryConfig(category);
-
-    if (!cfg.requiresInspection) {
-      return res.status(409).json({ error: 'This item category does not require inspection' });
-    }
-
-    const itemUpdate = {};
-    if (category === 'gauge') {
-      itemUpdate.quantity_ok = toNumber(quantity_ok);
-      itemUpdate.quantity_not_ok = toNumber(quantity_not_ok);
-      const total = toNumber(item.quantity);
-      if (itemUpdate.quantity_ok + itemUpdate.quantity_not_ok !== total) {
-        return res.status(400).json({ error: 'OK + Not OK quantities must equal received quantity' });
-      }
-    }
-
-    if (Object.keys(itemUpdate).length) {
-      const { error: qtyError } = await supabase
-        .from('girn_items')
-        .update(itemUpdate)
-        .eq('id', itemId);
-      if (qtyError) throw qtyError;
-    }
-
-    const { error: deleteError } = await supabase
-      .from('girn_inspection_logs')
-      .delete()
-      .eq('girn_item_id', itemId);
-
-    if (deleteError) throw deleteError;
-
-    if (checkpoints.length > 0) {
-      const logRows = checkpoints.map((cp) => ({
-        girn_item_id: itemId,
-        checkpoint: cp.checkpoint,
-        standard: cp.standard || null,
-        passed: cp.passed === true || cp.passed === 'true',
-        inspector_note: cp.inspector_note || null,
-      }));
-
-      const { error: insertError } = await supabase
-        .from('girn_inspection_logs')
-        .insert(logRows);
-
-      if (insertError) throw insertError;
-    }
-
-    let lotNumber = item.lot_number;
-    if (
-      category === 'component' &&
-      cfg.assignsLot &&
-      allCheckpointsPassed(checkpoints) &&
-      item.master_record_id &&
-      !lotNumber
-    ) {
-      lotNumber = await assignLotToGirnItem(itemId, item.master_record_id);
-    }
-
-    return res.json({
-      message: 'Inspection saved successfully',
-      lot_number: lotNumber || null,
-    });
-  } catch (err) {
-    console.error('GIRN inspect error:', err);
-    return res.status(500).json({ error: 'Unable to save inspection' });
-  }
-});
-
 // ─── APPROVE ───────────────────────────────────────────────────────────────────
 router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
   const { id } = req.params;
@@ -829,32 +723,24 @@ router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
     if (itemsError) throw itemsError;
 
     const itemIds = (items || []).map((i) => i.id);
-    let inspectionLogs = [];
-    if (itemIds.length > 0) {
-      const { data: logs, error: logsError } = await supabase
-        .from('girn_inspection_logs')
-        .select('*')
-        .in('girn_item_id', itemIds);
-      if (logsError) throw logsError;
-      inspectionLogs = logs || [];
-    }
+    const inspectionsByItem = await loadInspectionsForItems(itemIds);
 
-    const itemsWithLogs = (items || []).map((item) => ({
+    const itemsWithInspections = (items || []).map((item) => ({
       ...item,
-      inspection_logs: inspectionLogs.filter((l) => l.girn_item_id === item.id),
+      inspection: inspectionsByItem[item.id] || null,
     }));
 
-    const inspectionError = await validateGirnInspection(itemsWithLogs);
+    const inspectionError = await validateGirnInspection(itemsWithInspections);
     if (inspectionError) {
       return res.status(400).json({ error: inspectionError });
     }
 
-    for (const item of itemsWithLogs) {
+    for (const item of itemsWithInspections) {
       if (
         item.item_category === 'component' &&
         !item.lot_number &&
         item.master_record_id &&
-        allCheckpointsPassed(item.inspection_logs)
+        item.inspection?.overall_result === 'pass'
       ) {
         await assignLotToGirnItem(item.id, item.master_record_id);
         const { data: refreshed } = await supabase
@@ -866,7 +752,7 @@ router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
       }
     }
 
-    const stockResult = await applyStockForGirn(id, itemsWithLogs);
+    const stockResult = await applyStockForGirn(id, itemsWithInspections);
     stockUpdates = stockResult.stockUpdates;
     ledgerIds = stockResult.ledgerIds;
 

@@ -1,17 +1,11 @@
 const { getCategoryConfig, requiresInspection } = require('../config/girnCategoryConfig');
-const { getInspectionCheckpointsForItem } = require('./girnInspectionTemplateEngine');
 
 function toNumber(value) {
   const n = parseFloat(value);
   return Number.isFinite(n) ? n : 0;
 }
 
-function allCheckpointsPassed(checkpoints = []) {
-  if (!checkpoints.length) return false;
-  return checkpoints.every((cp) => cp.passed === true || cp.passed === 'true');
-}
-
-async function itemInspectionComplete(item, logs = []) {
+function itemInspectionComplete(item, inspection) {
   const category = item.item_category || 'raw_material';
 
   if (!requiresInspection(category)) {
@@ -26,17 +20,8 @@ async function itemInspectionComplete(item, logs = []) {
     if (ok <= 0 && ng > 0) return false;
   }
 
-  const template = await getInspectionCheckpointsForItem(item, logs);
-  if (!template.length) {
-    return false;
-  }
-
-  const merged = template.map((cp) => {
-    const saved = logs.find((log) => log.checkpoint === cp.checkpoint);
-    return saved ? { ...cp, passed: saved.passed } : cp;
-  });
-
-  return allCheckpointsPassed(merged);
+  if (!inspection) return false;
+  return inspection.overall_result === 'pass';
 }
 
 async function validateGirnInspection(items = []) {
@@ -47,7 +32,7 @@ async function validateGirnInspection(items = []) {
       continue;
     }
 
-    const complete = await itemInspectionComplete(item, item.inspection_logs || []);
+    const complete = itemInspectionComplete(item, item.inspection);
     if (!complete) {
       incomplete.push(item.id);
     }
@@ -61,7 +46,6 @@ async function validateGirnInspection(items = []) {
 }
 
 module.exports = {
-  allCheckpointsPassed,
   itemInspectionComplete,
   validateGirnInspection,
 };
