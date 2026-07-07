@@ -133,7 +133,7 @@ export default function CustomerDetailsPage() {
             <button
             type="button"
             className={'neutral-button'}
-            onClick={() => navigate(`/customers/${id}/edit`)}
+            onClick={() => setTab('edit')}
           >
             < Pencil size={16} style={{marginRight: 4, display: "inline"}}/>Edit
           </button>
@@ -360,7 +360,7 @@ export default function CustomerDetailsPage() {
               </button>
               <button
                 type="button"
-                className="secondary-button"
+                className="cancel-button"
                 onClick={() => navigate(`/customers/${id}`)}
                 disabled={submitting}
               >

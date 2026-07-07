@@ -582,7 +582,7 @@ export default function CreateGIRNPage() {
         <div className="header-title-block">
           <p className="eyebrow">Procurement</p>
           <h1>New GIRN</h1>
-          <p className="muted">Upload a scanned invoice, review OCR details, then register the GIRN.</p>
+          {/* <p className="muted">Upload a scanned invoice, review OCR details, then register the GIRN.</p> */}
         </div>
       </header>
 
@@ -620,25 +620,26 @@ export default function CreateGIRNPage() {
         {error ? <p className="error-message" style={{ marginBottom: 16 }}>{error}</p> : null}
 
         {step === 'scan' ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <div style={{ display: 'flex', flexDirection: 'row', gap: 20 }}>
             <div className="card">
               <h2>1. Confirm receiver</h2>
               <p className="muted">The receiver is taken from the logged-in user. Change it only if needed.</p>
               <div style={{ marginTop: 12 }}>
-                <p className="component-detail-label">Received By</p>
-                <strong>
+                <p className="employee-detail-label">Received By</p>
+                <strong className='employee-detail-value'>
                   {selectedEmployee
                     ? `${selectedEmployee.full_name}${selectedEmployee.employee_code ? ` (${selectedEmployee.employee_code})` : ''}`
                     : user?.name
                       ? `${user.name}${user.code ? ` (${user.code})` : ''}`
                       : 'Not selected'}
                 </strong>
-                <div style={{ maxWidth: 360, marginTop: 12 }}>
+                {/* <div style={{ maxWidth: 360, marginTop: 12 }}>
                   <EmployeeSelect
                     value={header.received_by}
                     onChange={(employeeId) => setHeader((prev) => ({ ...prev, received_by: employeeId }))}
+                    
                   />
-                </div>
+                </div> */}
               </div>
             </div>
 
@@ -691,7 +692,7 @@ export default function CreateGIRNPage() {
             <div style={{ display: 'flex', gap: 12, marginTop: 24, flexWrap: 'wrap' }}>
               <button
                 type="button"
-                className="secondary-button"
+                className="neutral-button"
                 onClick={() => setStep('scan')}
                 disabled={submitting}
               >
@@ -699,7 +700,7 @@ export default function CreateGIRNPage() {
               </button>
               <button
                 type="button"
-                className="secondary-button"
+                className="neutral-button"
                 disabled={!canRegister || submitting}
                 onClick={() => registerGirn(false)}
               >

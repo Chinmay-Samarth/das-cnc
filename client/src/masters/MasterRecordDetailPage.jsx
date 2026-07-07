@@ -198,6 +198,31 @@ function RepeatableSectionView({ section, repeatableValues }) {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+function getRecordTitle(schema, flatValues) {
+  if (!schema?.sections) return null
+
+  for (const section of schema.sections) {
+    const sectionData = flatValues[section.slug] || {}
+    const nameField = section.fields.find(field => {
+      const slug = field.slug || ''
+      const label = field.label || ''
+      return /name/i.test(slug) || /name/i.test(label)
+    })
+
+    if (!nameField) continue
+
+    const cell = sectionData[nameField.slug]
+    if (!cell) continue
+
+    if (typeof cell === 'string') return cell
+    if (cell.value) return String(cell.value)
+    if (cell._label) return String(cell._label)
+    if (cell.linked_record_id) return String(cell.linked_record_id)
+  }
+
+  return null
+}
+
 export default function MasterRecordDetailPage() {
   const { slug, id } = useParams()
   const navigate     = useNavigate()
@@ -312,6 +337,7 @@ export default function MasterRecordDetailPage() {
   const { master, sections } = schema
   const activeSection        = sections[activeTab]
   const showInspectionPlan   = isInspectableMasterSlug(slug)
+  const recordTitle          = getRecordTitle(schema, flatValues)
 
   return (
     <div className="app-shell employee-shell">
@@ -321,7 +347,7 @@ export default function MasterRecordDetailPage() {
           <p onClick={()=> navigate(`/masters/${slug}`)} style={{cursor: 'pointer'}}><ArrowLeft size={16} style={{marginRight: 4, display: 'inline'}}/>Back to {slug}</p>
         <div className="employee-title-block">
           <div className="">
-            <h1 className="">{master.name}</h1>
+            <h1 className="">{recordTitle || master.name}</h1>
             <p className="muted">#{id.slice(0, 8)}</p>
           </div>
           <div className="employee-top-bar">

@@ -156,11 +156,11 @@ export default function EmployeeDetailsPage() {
   useEffect(() => {
     if (location.pathname.endsWith('/edit')) {
       setTab('edit');
-    } else if (!['documents', 'address', 'commercials'].includes(tab)) {
+    } else if (!['documents', 'address', 'commercials', 'edit'].includes(tab)) {
       // only reset to details if we're not on one of the local tabs
       setTab('details');
     }
-  }, [location.pathname]);
+  }, [location.pathname, tab]);
 
   // ── load employee ─────────────────────────────────────────────────────────
 
@@ -357,14 +357,16 @@ export default function EmployeeDetailsPage() {
               <p className='muted'>ID: {employee?.employee_code}</p>
             </div>
           </div>
-          <div className="employee-top-bar" >
+          <div className="employee-top-bar">
             <button
-              type="button"
-              onClick={() => navigate(`/employees/${id}/edit`)}
-              className='neutral-button employee-edit'
-            >
-              <Pencil size={16} style={{marginRight: 4, display: 'inline'}}/>Edit
-            </button>
+            type="button"
+            onClick={() => setTab('edit')}
+            className="neutral-button"
+            aria-selected = {tab === 'edit'}
+            role = 'tab'
+          >
+            <Pencil size={16} style={{display: 'inline', marginRight: 4}}/>Edit
+          </button>
           </div>
         </div>
         <div className="pill-tabs" >
@@ -413,6 +415,7 @@ export default function EmployeeDetailsPage() {
           >
             Commercials
           </button>
+          
           {/* <button
             type="button"
             onClick={() => navigate(`/employees/${id}/edit`)}
@@ -760,7 +763,7 @@ export default function EmployeeDetailsPage() {
 
                 <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
                   <button type="submit" className="primary-button" disabled={submitting}>{submitting ? 'Saving...' : 'Save changes'}</button>
-                  <button type="button" className="secondary-button" onClick={() => navigate(`/employees/${id}`)} disabled={submitting}>Cancel</button>
+                  <button type="button" className="cancel-button" onClick={() => navigate(`/employees/${id}`)} disabled={submitting}>Cancel</button>
                 </div>
               </form>
             )}

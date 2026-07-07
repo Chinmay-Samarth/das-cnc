@@ -82,7 +82,7 @@ function OverviewTab({ girn, onAction, actionLoading }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <button
                 type="button"
-                className="secondary-button"
+                className="neutral-button"
                 style={{ width: 'fit-content', padding: '4px 10px' }}
                 onClick={() => window.open(`/invoices/${girn.invoice_id}`, '_blank')}
               >
