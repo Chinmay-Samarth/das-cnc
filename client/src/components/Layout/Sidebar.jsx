@@ -13,6 +13,7 @@ const navItems = [
   { to: '/customers', label: 'Customers'},
   { to: '/invoices', label: 'Invoices' },
   { to: '/girn', label: 'GIRN' },
+  { to: '/stock', label: 'Stock' },
 ];
 
 export default function Sidebar({ onNavigate }) {

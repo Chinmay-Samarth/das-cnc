@@ -156,7 +156,7 @@ export default function EmployeeDetailsPage() {
   useEffect(() => {
     if (location.pathname.endsWith('/edit')) {
       setTab('edit');
-    } else if (!['documents', 'address', 'commercials', 'edit'].includes(tab)) {
+    } else if (!['details', 'attendance', 'documents', 'address', 'commercials', 'edit'].includes(tab)) {
       // only reset to details if we're not on one of the local tabs
       setTab('details');
     }
@@ -477,7 +477,7 @@ export default function EmployeeDetailsPage() {
             {/* {Attendance Tab} */}
             {tab === 'attendance' && (
               <>
-               {/* Attendance section — untouched */}
+                {/* Attendance section — untouched */}
                 <section className="employee-details-attendance">
                   <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
                     <h2>Attendance &amp; report</h2>
@@ -536,7 +536,7 @@ export default function EmployeeDetailsPage() {
                       )}
                     </>
                   )}
-                </section>
+                </section> 
               </>
             )}
 

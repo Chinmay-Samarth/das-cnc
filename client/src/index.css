@@ -587,7 +587,7 @@ button:hover:not(:disabled) {
 .attendance-content-grid {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
-  gap: 32px;
+  gap:32px;
   align-items: start;
 }
 
@@ -599,12 +599,16 @@ button:hover:not(:disabled) {
 
 .attendance-side-column {
   min-width: 0;
+  width: 100%;
 }
 
 .attendance-health-panel {
   position: sticky;
   top: 20px;
-  margin-left: 5vh;
+  margin-left: clamp(0px, 2vw, 24px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 .attendance-records-header {
@@ -650,6 +654,7 @@ button:hover:not(:disabled) {
   width: 100%;
   height: auto;
   display: block;
+  margin-bottom: 10px;
 }
 
 .attendance-gauge-center {
@@ -659,6 +664,10 @@ button:hover:not(:disabled) {
   transform: translateX(-50%);
   text-align: center;
   width: 100%;
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .attendance-gauge-score {
@@ -674,12 +683,13 @@ button:hover:not(:disabled) {
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.05em;
+
 }
 
 .attendance-gauge-delta {
-  margin: 8px 0 0;
   font-size: 12px;
   color: #94a3b8;
+  
 }
 
 .attendance-gauge-inline {
@@ -761,6 +771,11 @@ button:hover:not(:disabled) {
   font-size: x-large;
 }
 
+.card-header{
+  font-weight: 600;
+  font-size: x-large;
+}
+
 .count-chip {
   padding: 3px 10px;
   border-radius: 999px;
@@ -769,7 +784,7 @@ button:hover:not(:disabled) {
   color: #1e40af;
   font-size: 12px;
   font-weight: 700;
-  margin-bottom: 3vh;
+  /* margin-bottom: 3vh; */
 }
 
 .last-btn{
@@ -1073,6 +1088,13 @@ button:hover:not(:disabled) {
   margin-bottom: 2vh;
 }
 
+.inventory-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 2vh;
+}
+
 .summary-metric {
   display: grid;
   align-items: center;
@@ -1221,6 +1243,25 @@ button:hover:not(:disabled) {
   background: none;
   padding: 14px;
   margin-top: 25px;
+}
+
+.girn-detail-grid{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 32px 0px;
+  border-radius: 12px;
+  background: none;
+  padding: 14px;
+  margin-top: 25px;
+}
+
+.total-row td{
+  font-size: 25px;
+  font-weight: 700;
+  color: black;
+}
+.total-row{
+  background: #f3f3fe;
 }
 
 .inspection-plan-grid{
@@ -2037,10 +2078,17 @@ button:hover:not(:disabled) {
 
   .attendance-content-grid {
     grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .attendance-side-column {
+    order: 2;
   }
 
   .attendance-health-panel {
     position: static;
+    margin-left: 0;
+    padding: 16px;
   }
 
   .attendance-pagination {

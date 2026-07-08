@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import api from '../api/client'
 import ImageLightbox from '../components/shared/ImageLightBox'
 import InspectionPlanBuilder from './InspectionPlanBuilder'
 import { isInspectableMasterSlug } from './inspectableMasterSlugs'
+import { isStockableMasterSlug } from './stockableMasterSlugs'
 import { ArrowLeft, Pencil } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -196,6 +197,75 @@ function RepeatableSectionView({ section, repeatableValues }) {
   )
 }
 
+// ─── Stock tab (inline) ───────────────────────────────────────────────────────
+
+function formatStockDate(iso) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+  })
+}
+
+function MasterRecordStockTab({ recordId }) {
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    let mounted = true
+    setLoading(true)
+    setError(null)
+    api.get('/inventory/stock', { params: { master_record_id: recordId, limit: 100 } })
+      .then(({ data }) => {
+        if (!mounted) return
+        setRows(data.rows || [])
+      })
+      .catch((err) => {
+        if (!mounted) return
+        setError(err.response?.data?.error || 'Unable to load stock.')
+      })
+      .finally(() => {
+        if (mounted) setLoading(false)
+      })
+    return () => { mounted = false }
+  }, [recordId])
+
+  if (loading) return <p className="muted">Loading stock...</p>
+  if (error) return <p className="error-message">{error}</p>
+  if (!rows.length) return <p className="muted">No stock recorded for this item yet.</p>
+
+  return (
+    <div className="attendance-table-wrap">
+      <table className="attendance-table">
+        <thead>
+          <tr>
+            <th>Lot</th>
+            <th>Current stock</th>
+            <th>Unit</th>
+            <th>Last movement</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <td>{row.lot_number || '—'}</td>
+              <td>{Number(row.current_stock).toLocaleString('en-IN')}</td>
+              <td>{row.unit || '—'}</td>
+              <td>{formatStockDate(row.last_movement_at)}</td>
+              <td>
+                <Link to={`/stock/${row.id}`} className="secondary-button" style={{ fontSize: 13, padding: '4px 10px' }}>
+                  View ledger
+                </Link>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 function getRecordTitle(schema, flatValues) {
@@ -337,6 +407,8 @@ export default function MasterRecordDetailPage() {
   const { master, sections } = schema
   const activeSection        = sections[activeTab]
   const showInspectionPlan   = isInspectableMasterSlug(slug)
+  const showStockTab         = isStockableMasterSlug(slug)
+  const showRecordTabs       = showInspectionPlan || showStockTab
   const recordTitle          = getRecordTitle(schema, flatValues)
 
   return (
@@ -362,7 +434,7 @@ export default function MasterRecordDetailPage() {
           </div>
         </div>
 
-        {showInspectionPlan ? (
+        {showRecordTabs ? (
           <div className="mrd-tab-bar" style={{ marginTop: 12 }}>
             <button
               type="button"
@@ -371,13 +443,24 @@ export default function MasterRecordDetailPage() {
             >
               Details
             </button>
-            <button
-              type="button"
-              className={`mrd-tab${pageTab === 'inspection-plan' ? ' is-active' : ''}`}
-              onClick={() => setPageTab('inspection-plan')}
-            >
-              Inspection Plan
-            </button>
+            {showInspectionPlan ? (
+              <button
+                type="button"
+                className={`mrd-tab${pageTab === 'inspection-plan' ? ' is-active' : ''}`}
+                onClick={() => setPageTab('inspection-plan')}
+              >
+                Inspection Plan
+              </button>
+            ) : null}
+            {showStockTab ? (
+              <button
+                type="button"
+                className={`mrd-tab${pageTab === 'stock' ? ' is-active' : ''}`}
+                onClick={() => setPageTab('stock')}
+              >
+                Stock
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -407,6 +490,11 @@ export default function MasterRecordDetailPage() {
       {pageTab === 'inspection-plan' ? (
         <div className="card" style={{ marginTop: 0 }}>
           <InspectionPlanBuilder slug={slug} recordId={id} />
+        </div>
+      ) : pageTab === 'stock' ? (
+        <div className="card" style={{ marginTop: 0 }}>
+          <div className="mrd-section-title">Stock</div>
+          <MasterRecordStockTab recordId={id} />
         </div>
       ) : activeSection ? (
         <div className="card" style={{ marginTop: 0 }}>

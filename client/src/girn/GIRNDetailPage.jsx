@@ -43,8 +43,8 @@ function StatusBadge({ status }) {
 function DetailItem({ label, value }) {
   return (
     <div>
-      <p className="component-detail-label">{label}</p>
-      <p className="component-detail-value">{value || '—'}</p>
+      <p className="employee-detail-label">{label}</p>
+      <p className="employee-detail-value">{value || '—'}</p>
     </div>
   );
 }
@@ -61,7 +61,7 @@ function OverviewTab({ girn, onAction, actionLoading }) {
   return (
     <div>
       <div
-        className="employee-detail-grid"
+        className="girn-detail-grid"
         style={{ marginBottom: 20 }}
       >
         <DetailItem label="GIRN Number" value={girn.girn_number} />
@@ -134,7 +134,7 @@ function OverviewTab({ girn, onAction, actionLoading }) {
               </button>
               <button
                 type="button"
-                className="secondary-button"
+                className="cancel-button"
                 disabled={actionLoading}
                 onClick={() => setShowReject((v) => !v)}
               >
@@ -177,7 +177,7 @@ function OverviewTab({ girn, onAction, actionLoading }) {
             </button>
             <button
               type="button"
-              className="secondary-button"
+              className="cancel-button"
               onClick={() => setShowReject(false)}
             >
               Cancel
@@ -232,11 +232,11 @@ function ItemsTab({ items }) {
             </tr>
             );
           })}
-          <tr>
+          <tr className='total-row'>
             <td colSpan={9} style={{ textAlign: 'right', fontWeight: 700, paddingRight: 16 }}>
               Grand Total
             </td>
-            <td><strong>₹{fmt(grandTotal)}</strong></td>
+            <td>₹{fmt(grandTotal)}</td>
           </tr>
         </tbody>
       </table>
@@ -373,15 +373,21 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <span style={{ fontWeight: 600 }}>{itemLabel}</span>
-          <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: '#e0e7ff', color: '#3730a3' }}>
-            {cfg.label}
-          </span>
+      
+          
+          <div className="" style={{display: 'flex', flexDirection: 'column', gap: '10px'}}>
+            <div className="" style={{display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '10px'}}>
+              <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: '#e0e7ff', color: '#3730a3' }}>
+                {cfg.label}
+              </span>
+              <p style={{ fontWeight: 600, color: 'blue', fontSize: '20px'}}>{itemLabel}</p>
+            </div>
           {lotNumber ? (
             <span style={{ fontSize: 12, fontWeight: 600, color: '#166534' }}>LOT: {lotNumber}</span>
           ) : null}
+          </div>
           {resultLabel ? (
-            <span style={{ padding: '2px 8px', borderRadius: 99, fontSize: 11, fontWeight: 600, color: resultColor, background: '#f3f4f6' }}>
+            <span style={{ padding: '2px 8px', borderRadius: 99, fontSize: 11, fontWeight: 600, color: resultColor, background: '#f3f4f6', marginLeft: 'auto' }}>
               {resultLabel.toUpperCase()}
             </span>
           ) : null}
@@ -396,7 +402,7 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
 
           {!loadingPlan && !loadError && plan ? (
             <>
-              <div style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
+              <div style={{ display: 'grid', gap: 16, marginBottom: 16, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', whiteSpace: 'wrap' }}>
                 <div>
                   <p className="employee-detail-label">Plan</p>
                   <p className="employee-detail-value">{plan.plan_code} (rev {plan.revision})</p>
@@ -656,7 +662,7 @@ export default function GIRNDetailPage() {
               className={`pill-tab ${tab === t ? 'pill-tab-active' : ''}`}
               onClick={() => setTab(t)}
               aria-selected = {tab === t}
-            role = 'tab'
+              role = 'tab'
             >
               {t.charAt(0).toUpperCase() + t.slice(1)}
               {t === 'items' && items.length > 0 ? (

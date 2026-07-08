@@ -25,6 +25,8 @@ import MasterRecordEditPage from './masters/MasterRecordEditPage';
 import GIRNListPage from './girn/GIRNListPage';
 import CreateGIRNPage from './girn/CreateGIRNPage';
 import GIRNDetailPage from './girn/GIRNDetailPage';
+import StockListPage from './inventory/StockListPage';
+import StockDetailPage from './inventory/StockDetailPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 function RequireAuth() {
@@ -98,6 +100,8 @@ export default function App() {
             <Route path="/girn" element={<GIRNListPage />} />
             <Route path="/girn/create" element={<CreateGIRNPage />} />
             <Route path="/girn/:id" element={<GIRNDetailPage />} />
+            <Route path="/stock" element={<StockListPage />} />
+            <Route path="/stock/:id" element={<StockDetailPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Route>
