@@ -17,7 +17,8 @@
     "jsonwebtoken": "^9.0.2",
     "mindee": "^5.3.0",
     "multer": "^1.4.4-lts.1",
-    "node-cron": "^4.2.1"
+    "node-cron": "^4.2.1",
+    "socket.io": "^4.8.1"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"

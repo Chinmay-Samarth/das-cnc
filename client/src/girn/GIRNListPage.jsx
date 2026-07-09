@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { useSocket } from '../socket/socketContext';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val)) ? '—' : Number(val).toLocaleString('en-IN');
@@ -54,28 +55,32 @@ export default function GIRNListPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortKey, setSortKey] = useState('received_date');
   const [sortAsc, setSortAsc] = useState(false);
+  const { subscribe } = useSocket();
+
+  const loadGirns = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const { data } = await api.get('/girn');
+      setGirns(data.girns || []);
+    } catch (err) {
+      console.error('Failed to load GIRNs:', err);
+      setError(err.response?.data?.error || 'Unable to load GIRNs.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let mounted = true;
-    async function load() {
-      try {
-        setLoading(true);
-        setError(null);
-        const { data } = await api.get('/girn');
-        if (!mounted) return;
-        setGirns(data.girns || []);
-      } catch (err) {
-        console.error('Failed to load GIRNs:', err);
-        if (!mounted) return;
-        setError(err.response?.data?.error || 'Unable to load GIRNs.');
-      } finally {
-        if (!mounted) return;
-        setLoading(false);
-      }
-    }
-    load();
-    return () => { mounted = false; };
-  }, []);
+    loadGirns();
+  }, [loadGirns]);
+
+  useEffect(() => {
+    const unsubscribe = subscribe('girn:updated', () => {
+      loadGirns();
+    });
+    return unsubscribe;
+  }, [subscribe, loadGirns]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();

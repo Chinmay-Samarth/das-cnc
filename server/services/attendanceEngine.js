@@ -6,6 +6,7 @@
  */
 
 const { createClient } = require('@supabase/supabase-js');
+const { emitAttendanceUpdated } = require('../socket/emitter');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -15,6 +16,28 @@ const supabase = createClient(
 const LATE_GRACE_MINUTES        = 10;
 const HALF_DAY_THRESHOLD_MINUTES = 240;
 // const TZ = process.env.TIMEZONE || 'Asia/Kolkata';
+
+async function notifyAttendanceRecordChange(employeeId, shiftDate, action) {
+  try {
+    const { data } = await supabase
+      .from('attendance_records')
+      .select('id, employee_id, shift_date')
+      .eq('employee_id', employeeId)
+      .eq('shift_date', shiftDate)
+      .maybeSingle();
+
+    if (data) {
+      emitAttendanceUpdated({
+        date: data.shift_date,
+        recordId: data.id,
+        employeeId: data.employee_id,
+        action,
+      });
+    }
+  } catch (err) {
+    console.error('[DasCNC] socket attendance emit failed:', err);
+  }
+}
 
 
 // ─────────────────────────────────────────────
@@ -287,6 +310,8 @@ async function processBiometricEvent(payload) {
       .from('biometric_logs')
       .update({ matched: true })
       .eq('id', biometricLogId);
+
+    await notifyAttendanceRecordChange(employee.id, shift_date, 'punch');
 
     return {
       success: true,
@@ -604,6 +629,9 @@ async function markAbsentees() {
   }
 
   console.log(`[DasCNC] Absent sweep: marked ${toInsert.length} employees absent for ${yesterday}`);
+  if (toInsert.length > 0) {
+    emitAttendanceUpdated({ date: yesterday, action: 'absent' });
+  }
 }
 
 

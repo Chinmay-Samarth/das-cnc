@@ -3,8 +3,10 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import api from '../api/client'
 import ImageLightbox from '../components/shared/ImageLightBox'
 import InspectionPlanBuilder from './InspectionPlanBuilder'
+import BomBuilder from './BomBuilder'
 import { isInspectableMasterSlug } from './inspectableMasterSlugs'
 import { isStockableMasterSlug } from './stockableMasterSlugs'
+import { isBomsMasterSlug } from './bomsMasterSlugs'
 import { ArrowLeft, Pencil } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -235,8 +237,8 @@ function MasterRecordStockTab({ recordId }) {
   if (!rows.length) return <p className="muted">No stock recorded for this item yet.</p>
 
   return (
-    <div className="attendance-table-wrap">
-      <table className="attendance-table">
+    <div className="employees-table-wrap">
+      <table className="app-table">
         <thead>
           <tr>
             <th>Lot</th>
@@ -254,7 +256,7 @@ function MasterRecordStockTab({ recordId }) {
               <td>{row.unit || '—'}</td>
               <td>{formatStockDate(row.last_movement_at)}</td>
               <td>
-                <Link to={`/stock/${row.id}`} className="secondary-button" style={{ fontSize: 13, padding: '4px 10px' }}>
+                <Link to={`/stock/${row.id}`} className="neutral-button" style={{ fontSize: 13, padding: '4px 10px' }}>
                   View ledger
                 </Link>
               </td>
@@ -408,7 +410,8 @@ export default function MasterRecordDetailPage() {
   const activeSection        = sections[activeTab]
   const showInspectionPlan   = isInspectableMasterSlug(slug)
   const showStockTab         = isStockableMasterSlug(slug)
-  const showRecordTabs       = showInspectionPlan || showStockTab
+  const showBomsTab          = isBomsMasterSlug(slug)
+  const showRecordTabs       = showInspectionPlan || showStockTab || showBomsTab
   const recordTitle          = getRecordTitle(schema, flatValues)
 
   return (
@@ -461,6 +464,15 @@ export default function MasterRecordDetailPage() {
                 Stock
               </button>
             ) : null}
+            {showBomsTab ? (
+              <button
+                type="button"
+                className={`mrd-tab${pageTab === 'boms' ? ' is-active' : ''}`}
+                onClick={() => setPageTab('boms')}
+              >
+                BOMs
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -490,6 +502,10 @@ export default function MasterRecordDetailPage() {
       {pageTab === 'inspection-plan' ? (
         <div className="card" style={{ marginTop: 0 }}>
           <InspectionPlanBuilder slug={slug} recordId={id} />
+        </div>
+      ) : pageTab === 'boms' ? (
+        <div className="card" style={{ marginTop: 0 }}>
+          <BomBuilder slug={slug} recordId={id} recordTitle={recordTitle} />
         </div>
       ) : pageTab === 'stock' ? (
         <div className="card" style={{ marginTop: 0 }}>

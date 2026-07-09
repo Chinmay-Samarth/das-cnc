@@ -1,5 +1,6 @@
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/authContext';
+import { SocketProvider } from './socket/socketContext';
 import LoginPage from './auth/LoginPage';
 import AttendancePage from './attendance/attendance';
 import EmployeesPage from './employees/EmployeesPage';
@@ -60,6 +61,7 @@ function PublicOnly() {
 export default function App() {
   return (
     <AuthProvider>
+      <SocketProvider>
       <Routes>
         <Route element={<PublicOnly />}>
           <Route path="/auth/login" element={<LoginPage />} />
@@ -108,6 +110,7 @@ export default function App() {
 
         <Route path="/" element={<Navigate to="/home" replace />} />
       </Routes>
+      </SocketProvider>
     </AuthProvider>
   );
 }

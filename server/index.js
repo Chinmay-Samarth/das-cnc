@@ -3,11 +3,13 @@
  */
  
 require('dotenv').config();
+const http = require('http');
 const express    = require('express');
 const cron       = require('node-cron');
 const { markAbsentees } = require('./services/attendanceEngine');
 const {syncBiometricData} = require('./services/biometricSync')
 const cors = require("cors")
+const { initSocket, attachConnectionHandlers } = require('./socket');
  
 const app = express();
 app.use(express.json());
@@ -27,6 +29,7 @@ app.use('/api/auth', require('./login'));
 app.use('/api/attendance', require('./routes/attendance'));
 app.use('/api/employees', require('./routes/employees'));
 app.use('/api/components', require('./routes/components'));
+app.use('/api/masters', require('./routes/masters/boms'));
 app.use('/api/masters', require('./routes/masters/inspectionPlans'));
 app.use('/api/masters', require('./routes/masters'));
 app.use('/api/invoices', require('./routes/invoices'))
@@ -95,6 +98,10 @@ cron.schedule('*/5 * * * *', async () =>{
 // console.log('Biometric sync cron job scheduled to run every minute');
  
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+const server = http.createServer(app);
+const io = initSocket(server);
+attachConnectionHandlers(io);
+
+server.listen(PORT, () => {
   console.log(`DasCNC API running on port ${PORT}`);
 });

@@ -10,6 +10,7 @@ const { getCategoryConfig, girnNeedsInspection, girnCanAutoApprove } = require('
 const { applyStockForGirn, rollbackStock } = require('../services/girnStockEngine');
 const { validateGirnInspection } = require('../services/girnInspectionEngine');
 const { assignLotToGirnItem } = require('../services/componentLotEngine');
+const { emitGirnUpdated } = require('../socket/emitter');
 
 const router = express.Router();
 router.use('/', require('./girn/inspections'));
@@ -395,6 +396,8 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       }
     }
 
+    emitGirnUpdated({ girnId: newGirn.id, action: 'created', status: initialStatus });
+
     return res.status(201).json({
       message: shouldAutoApprove ? 'GIRN registered and approved' : 'GIRN created successfully',
       girn: { ...newGirn, status: initialStatus },
@@ -615,6 +618,8 @@ router.put('/:id', verifyEmployeeAuth, async (req, res) => {
       if (insertError) throw insertError;
     }
 
+    emitGirnUpdated({ girnId: updatedGirn.id, action: 'updated', status: updatedGirn.status });
+
     return res.json({ message: 'GIRN updated successfully', girn: updatedGirn });
   } catch (err) {
     console.error('GIRN update error:', err);
@@ -673,6 +678,7 @@ router.post('/:id/submit', verifyEmployeeAuth, async (req, res) => {
           .single();
 
         if (approveError) throw approveError;
+        emitGirnUpdated({ girnId: id, action: 'approved', status: 'approved' });
         return res.json({ message: 'GIRN approved (no inspection required)', girn: approved });
       } catch (approveErr) {
         await rollbackStock(stockUpdates, ledgerIds);
@@ -688,6 +694,8 @@ router.post('/:id/submit', verifyEmployeeAuth, async (req, res) => {
       .single();
 
     if (updateError) throw updateError;
+
+    emitGirnUpdated({ girnId: id, action: 'submitted', status: 'pending_inspection' });
 
     return res.json({ message: 'GIRN submitted for inspection', girn: updated });
   } catch (err) {
@@ -765,6 +773,8 @@ router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
 
     if (approveError) throw approveError;
 
+    emitGirnUpdated({ girnId: id, action: 'approved', status: 'approved' });
+
     return res.json({ message: 'GIRN approved and stock updated', girn: approved });
   } catch (err) {
     console.error('GIRN approve error — rolling back:', err);
@@ -802,6 +812,8 @@ router.post('/:id/reject', verifyEmployeeAuth, async (req, res) => {
       .single();
 
     if (updateError) throw updateError;
+
+    emitGirnUpdated({ girnId: id, action: 'rejected', status: 'rejected' });
 
     return res.json({ message: 'GIRN rejected', girn: rejected });
   } catch (err) {

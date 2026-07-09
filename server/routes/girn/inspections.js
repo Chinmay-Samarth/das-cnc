@@ -10,6 +10,7 @@ const {
   computeOverallResult,
 } = require('../../services/inspectionResultEngine');
 const { assignLotToGirnItem } = require('../../services/componentLotEngine');
+const { emitGirnUpdated } = require('../../socket/emitter');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -284,6 +285,8 @@ router.post(
       }
 
       const execution = await loadInspectionExecution(itemId);
+
+      emitGirnUpdated({ girnId, action: 'inspection', status: girn.status });
 
       return res.json({
         message: 'Inspection submitted successfully',

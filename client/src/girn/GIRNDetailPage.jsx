@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import api from '../api/client';
+import { useSocket } from '../socket/socketContext';
 import { getCategoryConfig, requiresInspection } from './girnCategoryConfig';
 
 const fmt = (val) =>
@@ -601,8 +602,9 @@ export default function GIRNDetailPage() {
   const [tab, setTab] = useState('overview');
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState(null);
+  const { subscribe, joinGirnRoom, leaveGirnRoom } = useSocket();
 
-  async function loadGirn() {
+  const loadGirn = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -614,9 +616,25 @@ export default function GIRNDetailPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [id]);
 
-  useEffect(() => { loadGirn(); }, [id]);
+  useEffect(() => {
+    loadGirn();
+  }, [loadGirn]);
+
+  useEffect(() => {
+    joinGirnRoom(id);
+    return () => leaveGirnRoom(id);
+  }, [id, joinGirnRoom, leaveGirnRoom]);
+
+  useEffect(() => {
+    const unsubscribe = subscribe('girn:updated', (payload) => {
+      if (payload?.girnId === id) {
+        loadGirn();
+      }
+    });
+    return unsubscribe;
+  }, [subscribe, id, loadGirn]);
 
   async function handleAction(type, payload = {}) {
     setActionLoading(true);

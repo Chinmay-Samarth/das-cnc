@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/client';
+import { useSocket } from '../socket/socketContext';
 
 export function toDisplayTime(value) {
   if (!value) return '--';
@@ -43,6 +44,18 @@ export default function useDailyAttendance(initialDate = null) {
       setLoading(false);
     }
   }, [queryDate]);
+
+  const { subscribe } = useSocket();
+
+  useEffect(() => {
+    const unsubscribe = subscribe('attendance:updated', (payload) => {
+      const targetDate = queryDate || toISODateString(new Date());
+      if (!payload?.date || payload.date === targetDate) {
+        loadDailyAttendance();
+      }
+    });
+    return unsubscribe;
+  }, [subscribe, queryDate, loadDailyAttendance]);
 
   useEffect(() => {
     mountedRef.current = true;

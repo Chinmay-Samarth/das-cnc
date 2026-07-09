@@ -14,6 +14,7 @@ const IST_OFFSET = '+05:30';
 const {
   processBiometricEvent
 } = require('../services/attendanceEngine');
+const { emitAttendanceUpdated } = require('../socket/emitter');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -257,6 +258,22 @@ router.post('/manual', verifyEmployeeAuth, async (req, res) => {
         });
 
       if (error) throw error;
+    }
+
+    const { data: savedRecord } = await supabase
+      .from('attendance_records')
+      .select('id, employee_id, shift_date')
+      .eq('employee_id', employee_id)
+      .eq('shift_date', shift_date)
+      .maybeSingle();
+
+    if (savedRecord) {
+      emitAttendanceUpdated({
+        date: savedRecord.shift_date,
+        recordId: savedRecord.id,
+        employeeId: savedRecord.employee_id,
+        action: 'manual',
+      });
     }
 
     return res.json({
