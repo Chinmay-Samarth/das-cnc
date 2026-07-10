@@ -4,6 +4,8 @@ const { setIo } = require('./emitter');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
 
+
+
 function initSocket(httpServer) {
   const corsOrigin = process.env.FRONTEND_URL || '*';
 
@@ -34,6 +36,7 @@ function initSocket(httpServer) {
 
 function attachConnectionHandlers(io) {
   io.on('connection', (socket) => {
+    console.log('user connected - ',socket.id)
     socket.join('attendance');
     socket.join('girns');
     socket.join('boms');

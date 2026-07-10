@@ -754,6 +754,12 @@ button:hover:not(:disabled) {
   font-weight: 600;
 }
 
+.status-pill.status-inactive {
+  background: #f3f4f6;
+  color: #4b5563;
+  border-color: #e5e7eb;
+}
+
 .error-message,
 .login-card .error-message {
   color: #b91c1c;

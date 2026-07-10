@@ -9,7 +9,8 @@ const supabase = createClient(
 
 async function syncBiometricData() {
   try {
-    console.log('Starting biometric sync');
+
+
 
     const result = {
       success: false,
@@ -31,7 +32,6 @@ async function syncBiometricData() {
 
     const lastRecord = state?.value ?? '0';
     if (!state) {
-      console.log('No last_record state found; defaulting to 0');
     }
 
     // calling biometric api
@@ -47,14 +47,14 @@ async function syncBiometricData() {
     });
 
     const { PunchData, MaxRecord } = response.data;
-    console.log('Biometric API response', {
-      lastRecord,
-      punchCount: PunchData?.length ?? 0,
-      MaxRecord
-    });
+    // console.log('Biometric API response', {
+    //   lastRecord,
+    //   punchCount: PunchData?.length ?? 0,
+    //   MaxRecord
+    // });
 
     if (!PunchData?.length) {
-      console.log('No new Punches');
+      // console.log('No new Punches');
       result.success = true;
       result.message = 'No new Punches';
       return result;
@@ -86,13 +86,13 @@ async function syncBiometricData() {
         console.error('sync_state update failed', syncError);
         throw syncError;
       }
-      console.log('Updated MaxRecords:', MaxRecord);
+      // console.log('Updated MaxRecords:', MaxRecord);
       result.maxRecord = MaxRecord;
     }
 
     result.success = true;
     result.message = 'Biometric sync completed successfully';
-    console.log(result.message);
+    // console.log(result.message);
     return result;
   } catch (err) {
     console.error('Sync Failed', err?.message ?? err, err?.stack ? err.stack : '');

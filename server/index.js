@@ -38,6 +38,7 @@ app.use('/api/customers', require('./routes/customers'))
 app.use('/api/girn', require('./routes/girn'));
 app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/search', require('./routes/search'));
+app.use('/api/work-centers', require('./routes/workCenters'));
 // app.use('/api/machines',   require('./routes/machines'));    // next module
  
 // Health check

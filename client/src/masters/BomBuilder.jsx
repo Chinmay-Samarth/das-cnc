@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import api from '../api/client';
 import MasterItemSelect from '../girn/MasterItemSelect';
 import { useSocket } from '../socket/socketContext';
@@ -152,7 +152,6 @@ function EditEdgeForm({ edge, onSave, onCancel, saving }) {
 
 function BomTreeNode({
   node,
-  depth = 1,
   readOnly,
   expandedIds,
   onToggleExpand,
@@ -182,16 +181,11 @@ function BomTreeNode({
   if (cyclic) {
     return (
       <li className="bom-tree-item bom-tree-item--cyclic">
-        <div className="bom-tree-row bom-tree-row--cyclic" style={{ '--bom-depth': depth }}>
+        <div className="bom-tree-row bom-tree-row--cyclic">
           <div className="bom-tree-col bom-tree-col-item">
             <span className="bom-tree-leaf-dot" aria-hidden />
             <span className="bom-tree-label muted">{label} — circular reference skipped</span>
           </div>
-          <div className="bom-tree-col bom-tree-col-type"><span className="muted">—</span></div>
-          <div className="bom-tree-col bom-tree-col-qty"><span className="muted">—</span></div>
-          <div className="bom-tree-col bom-tree-col-uom"><span className="muted">—</span></div>
-          <div className="bom-tree-col bom-tree-col-notes"><span className="muted">—</span></div>
-          <div className="bom-tree-col bom-tree-col-actions" />
         </div>
       </li>
     );
@@ -205,7 +199,6 @@ function BomTreeNode({
           isComponent ? 'bom-tree-row--assembly' : '',
           isInherited ? 'bom-tree-row--inherited' : '',
         ].filter(Boolean).join(' ')}
-        style={{ '--bom-depth': depth }}
       >
         <div className="bom-tree-col bom-tree-col-item">
           {canExpand ? (
@@ -254,9 +247,9 @@ function BomTreeNode({
           {showActions ? (
             <div className="bom-tree-actions">
               <button type="button" className="icon-button" title="Edit" onClick={() => setEditingEdgeId(edge.id)}>
-                <Pencil size={15} />
+                <Pencil size={15} style={{display: 'inline'}} />
               </button>
-              <button type="button" className="icon-button" title="Delete" onClick={() => onDeleteEdge(edge.id, label)}>
+              <button type="button" className="trash-btn" title="Delete" onClick={() => onDeleteEdge(edge.id, label)}>
                 <Trash2 size={15} /> 
               </button>
               {canAddChildren ? (
@@ -265,7 +258,7 @@ function BomTreeNode({
                   className="neutral-button bom-add-child-btn"
                   onClick={() => onOpenAddForm(recordId)}
                 >
-                  <Plus size={14} /> Child
+                  <Plus size={14} style={{display: 'inline'}} /> Child
                 </button>
               ) : null}
             </div>
@@ -276,7 +269,7 @@ function BomTreeNode({
       {canExpand && isBranchOpen ? (
         <ul className="bom-tree-branch">
           {canAddChildren && isAddingHere ? (
-            <li className="bom-tree-item bom-tree-item--form" style={{ '--bom-depth': depth + 1 }}>
+            <li className="bom-tree-item bom-tree-item--form">
               <AddChildForm
                 parentId={recordId}
                 saving={saving}
@@ -294,7 +287,6 @@ function BomTreeNode({
               <BomTreeNode
                 key={nodeKey(child)}
                 node={child}
-                depth={depth + 1}
                 readOnly={readOnly}
                 expandedIds={expandedIds}
                 onToggleExpand={onToggleExpand}
@@ -310,7 +302,7 @@ function BomTreeNode({
               />
             ))
           ) : canAddChildren && !isAddingHere ? (
-            <li className="bom-tree-item bom-tree-item--empty" style={{ '--bom-depth': depth + 1 }}>
+            <li className="bom-tree-item bom-tree-item--empty">
               <span className="muted">No child lines</span>
             </li>
           ) : null}
@@ -337,7 +329,6 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
   const [addingParentId, setAddingParentId] = useState(null);
   const [editingEdgeId, setEditingEdgeId] = useState(null);
   const { subscribe, joinBomRoom, leaveBomRoom } = useSocket();
-  const skipSocketRefreshRef = useRef(false);
 
   const expandNode = useCallback((id) => {
     setExpandedIds((prev) => {
@@ -412,20 +403,13 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
 
   useEffect(() => {
     const unsubscribe = subscribe('bom:updated', (payload) => {
-      if (payload?.recordId !== recordId) return;
-      if (skipSocketRefreshRef.current) {
-        skipSocketRefreshRef.current = false;
-        return;
+      if (payload?.recordId === recordId) {
+        loadBom(null, true);
+        loadHistory();
       }
-      loadBom(null, true);
-      loadHistory();
     });
     return unsubscribe;
   }, [subscribe, recordId, loadBom, loadHistory]);
-
-  const markLocalBomMutation = useCallback(() => {
-    skipSocketRefreshRef.current = true;
-  }, []);
 
   async function handleAddChild(payload, parentId) {
     setSaving(true);
@@ -433,7 +417,6 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
     setMessage(null);
     try {
       const { data } = await api.post(`/masters/${slug}/records/${recordId}/bom/edges`, payload);
-      markLocalBomMutation();
       setVersion(data.version);
       setTree(data.tree || []);
       setHasActiveVersion(true);
@@ -459,7 +442,6 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
     setMessage(null);
     try {
       const { data } = await api.patch(`/masters/${slug}/records/${recordId}/bom/edges/${edgeId}`, payload);
-      markLocalBomMutation();
       setVersion(data.version);
       setTree(data.tree || []);
       setMessage(data.message || 'BOM line updated');
@@ -478,7 +460,6 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
     setMessage(null);
     try {
       const { data } = await api.delete(`/masters/${slug}/records/${recordId}/bom/edges/${edgeId}`);
-      markLocalBomMutation();
       setVersion(data.version);
       setTree(data.tree || []);
       setMessage(data.message || 'BOM line removed');
@@ -497,7 +478,6 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
       const { data } = await api.post(`/masters/${slug}/records/${recordId}/bom/activate`, {
         version_id: version?.id,
       });
-      markLocalBomMutation();
       setVersion(data.version);
       setTree(data.tree || []);
       setMessage(data.message || 'BOM activated');
@@ -624,7 +604,7 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
 
         <ul className="bom-tree-branch bom-tree-branch--root">
           <li className="bom-tree-item">
-            <div className="bom-tree-row bom-tree-row--root" style={{ '--bom-depth': 0 }}>
+            <div className="bom-tree-row bom-tree-row--root">
               <div className="bom-tree-col bom-tree-col-item">
                 <button
                   type="button"
@@ -651,7 +631,7 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
                     className="neutral-button bom-add-child-btn"
                     onClick={() => onOpenAddForm(recordId)}
                   >
-                    <Plus size={14} /> Add line
+                    <Plus size={14} style={{display: 'inline', marginRight: 4}} /> Add line
                   </button>
                 ) : null}
               </div>
@@ -660,7 +640,7 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
             {rootBranchOpen ? (
               <ul className="bom-tree-branch">
                 {rootAdding ? (
-                  <li className="bom-tree-item bom-tree-item--form" style={{ '--bom-depth': 1 }}>
+                  <li className="bom-tree-item bom-tree-item--form">
                     <AddChildForm
                       parentId={recordId}
                       saving={saving}
@@ -678,7 +658,6 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
                     <BomTreeNode
                       key={nodeKey(node)}
                       node={node}
-                      depth={1}
                       readOnly={viewingHistorical}
                       expandedIds={expandedIds}
                       onToggleExpand={onToggleExpand}
@@ -694,7 +673,7 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
                     />
                   ))
                 ) : !rootAdding ? (
-                  <li className="bom-tree-item bom-tree-item--empty" style={{ '--bom-depth': 1 }}>
+                  <li className="bom-tree-item bom-tree-item--empty">
                     <span className="muted">No BOM lines yet — use Add line above.</span>
                   </li>
                 ) : null}

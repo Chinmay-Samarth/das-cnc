@@ -28,6 +28,9 @@ import CreateGIRNPage from './girn/CreateGIRNPage';
 import GIRNDetailPage from './girn/GIRNDetailPage';
 import StockListPage from './inventory/StockListPage';
 import StockDetailPage from './inventory/StockDetailPage';
+import WorkCentersPage from './workCenters/WorkCentersPage';
+import AddWorkCenterPage from './workCenters/AddWorkCenterPage';
+import WorkCenterDetailsPage from './workCenters/WorkCenterDetailsPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 function RequireAuth() {
@@ -104,6 +107,10 @@ export default function App() {
             <Route path="/girn/:id" element={<GIRNDetailPage />} />
             <Route path="/stock" element={<StockListPage />} />
             <Route path="/stock/:id" element={<StockDetailPage />} />
+            <Route path="/work-centers" element={<WorkCentersPage />} />
+            <Route path="/work-centers/add" element={<AddWorkCenterPage />} />
+            <Route path="/work-centers/:id" element={<WorkCenterDetailsPage />} />
+            <Route path="/work-centers/:id/edit" element={<WorkCenterDetailsPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Route>
