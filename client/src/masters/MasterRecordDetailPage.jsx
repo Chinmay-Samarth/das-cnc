@@ -4,9 +4,11 @@ import api from '../api/client'
 import ImageLightbox from '../components/shared/ImageLightBox'
 import InspectionPlanBuilder from './InspectionPlanBuilder'
 import BomBuilder from './BomBuilder'
+import ActivityFlowBuilder from './ActivityFlowBuilder'
 import { isInspectableMasterSlug } from './inspectableMasterSlugs'
 import { isStockableMasterSlug } from './stockableMasterSlugs'
 import { isBomsMasterSlug } from './bomsMasterSlugs'
+import { isRoutableMasterSlug } from './routableMasterSlugs'
 import { ArrowLeft, Pencil } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -411,7 +413,8 @@ export default function MasterRecordDetailPage() {
   const showInspectionPlan   = isInspectableMasterSlug(slug)
   const showStockTab         = isStockableMasterSlug(slug)
   const showBomsTab          = isBomsMasterSlug(slug)
-  const showRecordTabs       = showInspectionPlan || showStockTab || showBomsTab
+  const showActivityFlowTab  = isRoutableMasterSlug(slug)
+  const showRecordTabs       = showInspectionPlan || showStockTab || showBomsTab || showActivityFlowTab
   const recordTitle          = getRecordTitle(schema, flatValues)
 
   return (
@@ -473,6 +476,15 @@ export default function MasterRecordDetailPage() {
                 BOMs
               </button>
             ) : null}
+            {showActivityFlowTab ? (
+              <button
+                type="button"
+                className={`mrd-tab${pageTab === 'activity-flow' ? ' is-active' : ''}`}
+                onClick={() => setPageTab('activity-flow')}
+              >
+                Activity Flow
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -506,6 +518,10 @@ export default function MasterRecordDetailPage() {
       ) : pageTab === 'boms' ? (
         <div className="card" style={{ marginTop: 0 }}>
           <BomBuilder slug={slug} recordId={id} recordTitle={recordTitle} />
+        </div>
+      ) : pageTab === 'activity-flow' ? (
+        <div className="card" style={{ marginTop: 0 }}>
+          <ActivityFlowBuilder slug={slug} recordId={id} />
         </div>
       ) : pageTab === 'stock' ? (
         <div className="card" style={{ marginTop: 0 }}>

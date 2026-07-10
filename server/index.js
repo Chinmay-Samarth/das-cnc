@@ -31,6 +31,7 @@ app.use('/api/employees', require('./routes/employees'));
 app.use('/api/components', require('./routes/components'));
 app.use('/api/masters', require('./routes/masters/boms'));
 app.use('/api/masters', require('./routes/masters/inspectionPlans'));
+app.use('/api/masters', require('./routes/masters/activityFlows'));
 app.use('/api/masters', require('./routes/masters'));
 app.use('/api/invoices', require('./routes/invoices'))
 app.use('/api/suppliers', require('./routes/supplier'));

@@ -4012,3 +4012,217 @@ textarea {
   }
 }
 
+/* ─── Activity Flow Builder ───────────────────────────────────────────────── */
+.af-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 640px;
+}
+
+.af-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.af-toolbar-left,
+.af-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.af-workspace {
+  display: grid;
+  grid-template-columns: 180px 1fr 260px;
+  gap: 12px;
+  min-height: 560px;
+}
+
+.af-palette,
+.af-inspector-panel {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+  overflow: auto;
+  max-height: 560px;
+}
+
+.af-palette-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  margin-bottom: 8px;
+}
+
+.af-palette-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.af-palette-item:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.af-palette-item:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.af-canvas-wrap {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+  min-height: 560px;
+  height: 560px;
+  background: #f8fafc;
+}
+
+.af-node {
+  min-width: 150px;
+  max-width: 200px;
+  background: #fff;
+  border: 2px solid #64748b;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  padding-bottom: 8px;
+}
+
+.af-node.is-selected {
+  box-shadow: 0 0 0 2px #93c5fd, 0 2px 8px rgba(15, 23, 42, 0.12);
+}
+
+.af-node-type {
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 8px;
+  border-radius: 8px 8px 0 0;
+}
+
+.af-node-label {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 10px 2px;
+  color: #111827;
+}
+
+.af-node-meta {
+  font-size: 11px;
+  color: #6b7280;
+  padding: 0 10px 4px;
+}
+
+.af-handle {
+  width: 10px !important;
+  height: 10px !important;
+  background: #64748b !important;
+  border: 2px solid #fff !important;
+}
+
+.af-inspector {
+  display: grid;
+  gap: 10px;
+}
+
+.af-inspector-empty {
+  padding: 12px 4px;
+}
+
+.af-inspector-type {
+  font-size: 12px;
+  font-weight: 700;
+  border-left: 4px solid;
+  padding-left: 8px;
+}
+
+.af-inspector-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.af-select-btn {
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.af-dropdown {
+  position: absolute;
+  z-index: 50;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  max-height: 220px;
+  overflow: auto;
+}
+
+.af-dropdown input {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.af-dropdown button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.af-dropdown button:hover {
+  background: #eff6ff;
+}
+
+@media (max-width: 1100px) {
+  .af-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .af-canvas-wrap {
+    min-height: 420px;
+    height: 420px;
+  }
+
+  .af-palette,
+  .af-inspector-panel {
+    max-height: none;
+  }
+}
+
