@@ -6,6 +6,7 @@ const {
   getStockById,
   getLedger,
 } = require('../services/inventoryQueryEngine');
+const { reconcileAllStockFromLedger } = require('../services/backflushEngine');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
@@ -82,6 +83,16 @@ router.get('/ledger', async (req, res) => {
   } catch (err) {
     console.error('Inventory ledger error:', err);
     return res.status(500).json({ error: 'Unable to load ledger' });
+  }
+});
+
+router.post('/reconcile', async (req, res) => {
+  try {
+    const result = await reconcileAllStockFromLedger();
+    return res.json(result);
+  } catch (err) {
+    console.error('Inventory reconcile error:', err);
+    return res.status(500).json({ error: err.message || 'Unable to reconcile stock' });
   }
 });
 

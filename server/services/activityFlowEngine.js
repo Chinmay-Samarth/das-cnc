@@ -622,11 +622,10 @@ async function insertSkeleton(masterRecordId, createdBy) {
   }
 
   const skeleton = [
-    { activity_type: 'material_issue', label: 'Material Issue', sequence: 1, x: 280, y: 0 },
-    { activity_type: 'machining', label: 'Machining', sequence: 2, x: 280, y: 140 },
-    { activity_type: 'inspection', label: 'Inspection', sequence: 3, x: 280, y: 280, inspection_kind: 'in_process' },
-    { activity_type: 'packing', label: 'Packing', sequence: 4, x: 280, y: 420 },
-    { activity_type: 'dispatch', label: 'Dispatch', sequence: 5, x: 280, y: 560 },
+    { activity_type: 'machining', label: 'Machining', sequence: 1, x: 280, y: 0 },
+    { activity_type: 'inspection', label: 'Inspection', sequence: 2, x: 280, y: 140, inspection_kind: 'in_process' },
+    { activity_type: 'packing', label: 'Packing', sequence: 3, x: 280, y: 280 },
+    { activity_type: 'dispatch', label: 'Dispatch', sequence: 4, x: 280, y: 420 },
   ];
 
   // Machining needs work_center — create without WC first as draft skeleton;

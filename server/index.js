@@ -40,6 +40,9 @@ app.use('/api/girn', require('./routes/girn'));
 app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/search', require('./routes/search'));
 app.use('/api/work-centers', require('./routes/workCenters'));
+app.use('/api/blanket-pos', require('./routes/blanketPos'));
+app.use('/api/delivery-schedules', require('./routes/deliverySchedules'));
+app.use('/api/production', require('./routes/production'));
 // app.use('/api/machines',   require('./routes/machines'));    // next module
  
 // Health check

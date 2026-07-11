@@ -10,7 +10,7 @@ const { getCategoryConfig, girnNeedsInspection, girnCanAutoApprove } = require('
 const { applyStockForGirn, rollbackStock } = require('../services/girnStockEngine');
 const { validateGirnInspection } = require('../services/girnInspectionEngine');
 const { assignLotToGirnItem } = require('../services/componentLotEngine');
-const { emitGirnUpdated } = require('../socket/emitter');
+const { emitGirnUpdated, emitInventoryUpdated } = require('../socket/emitter');
 
 const router = express.Router();
 router.use('/', require('./girn/inspections'));
@@ -397,6 +397,9 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
     }
 
     emitGirnUpdated({ girnId: newGirn.id, action: 'created', status: initialStatus });
+    if (shouldAutoApprove) {
+      emitInventoryUpdated({ action: 'girn_approved', girnId: newGirn.id });
+    }
 
     return res.status(201).json({
       message: shouldAutoApprove ? 'GIRN registered and approved' : 'GIRN created successfully',
@@ -679,6 +682,7 @@ router.post('/:id/submit', verifyEmployeeAuth, async (req, res) => {
 
         if (approveError) throw approveError;
         emitGirnUpdated({ girnId: id, action: 'approved', status: 'approved' });
+        emitInventoryUpdated({ action: 'girn_approved', girnId: id });
         return res.json({ message: 'GIRN approved (no inspection required)', girn: approved });
       } catch (approveErr) {
         await rollbackStock(stockUpdates, ledgerIds);
@@ -774,6 +778,7 @@ router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
     if (approveError) throw approveError;
 
     emitGirnUpdated({ girnId: id, action: 'approved', status: 'approved' });
+    emitInventoryUpdated({ action: 'girn_approved', girnId: id });
 
     return res.json({ message: 'GIRN approved and stock updated', girn: approved });
   } catch (err) {

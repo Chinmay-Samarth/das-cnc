@@ -482,7 +482,7 @@ export default function MasterRecordDetailPage() {
                 className={`mrd-tab${pageTab === 'activity-flow' ? ' is-active' : ''}`}
                 onClick={() => setPageTab('activity-flow')}
               >
-                Activity Flow
+                Flow Chart
               </button>
             ) : null}
           </div>

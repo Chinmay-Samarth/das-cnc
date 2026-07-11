@@ -36,10 +36,18 @@ function initSocket(httpServer) {
 
 function attachConnectionHandlers(io) {
   io.on('connection', (socket) => {
-    console.log('user connected - ',socket.id)
+    console.log('user connected - ', socket.id);
     socket.join('attendance');
     socket.join('girns');
     socket.join('boms');
+    socket.join('production');
+    socket.join('delivery-schedules');
+    socket.join('inventory');
+
+    const employeeId = socket.user?.sub;
+    if (employeeId) {
+      socket.join(`production-employee:${employeeId}`);
+    }
 
     socket.on('join:bom', (recordId) => {
       if (recordId) socket.join(`bom:${recordId}`);
@@ -55,6 +63,22 @@ function attachConnectionHandlers(io) {
 
     socket.on('leave:girn', (girnId) => {
       if (girnId) socket.leave(`girn:${girnId}`);
+    });
+
+    socket.on('join:blanket-po', (blanketPoId) => {
+      if (blanketPoId) socket.join(`blanket-po:${blanketPoId}`);
+    });
+
+    socket.on('leave:blanket-po', (blanketPoId) => {
+      if (blanketPoId) socket.leave(`blanket-po:${blanketPoId}`);
+    });
+
+    socket.on('join:production-card', (cardId) => {
+      if (cardId) socket.join(`production-card:${cardId}`);
+    });
+
+    socket.on('leave:production-card', (cardId) => {
+      if (cardId) socket.leave(`production-card:${cardId}`);
     });
   });
 }

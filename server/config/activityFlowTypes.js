@@ -1,6 +1,4 @@
 const ACTIVITY_TYPES = [
-  'material_issue',
-  'storage',
   'machining',
   'inspection',
   'outsource',
@@ -17,8 +15,6 @@ const EDGE_KINDS = ['default', 'optional', 'rework'];
 const INSPECTION_KINDS = ['in_process', 'final'];
 
 const DEFAULT_LABELS = {
-  material_issue: 'Material Issue',
-  storage: 'Storage',
   machining: 'Machining',
   inspection: 'Inspection',
   outsource: 'Outsource',
@@ -28,6 +24,9 @@ const DEFAULT_LABELS = {
   packing: 'Packing',
   dispatch: 'Dispatch',
   note: 'Note',
+  // legacy (display only; no longer creatable)
+  material_issue: 'Material Issue',
+  storage: 'Storage',
 };
 
 module.exports = {

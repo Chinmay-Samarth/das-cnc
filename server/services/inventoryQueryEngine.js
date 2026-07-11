@@ -230,6 +230,11 @@ async function getLedger({ itemCategory, masterRecordId, lotNumber }) {
       .filter((e) => e.reason === 'girn' && e.reference_id)
       .map((e) => e.reference_id)
   )];
+  const cardIds = [...new Set(
+    (entries || [])
+      .filter((e) => e.reason === 'backflush' && e.reference_id)
+      .map((e) => e.reference_id)
+  )];
 
   let girnMap = {};
   if (girnIds.length) {
@@ -242,14 +247,31 @@ async function getLedger({ itemCategory, masterRecordId, lotNumber }) {
     girnMap = Object.fromEntries((girns || []).map((g) => [g.id, g.girn_number]));
   }
 
+  let cardMap = {};
+  if (cardIds.length) {
+    const { data: cards, error: cardError } = await supabase
+      .from('production_cards')
+      .select('id, card_number')
+      .in('id', cardIds);
+    if (cardError) throw cardError;
+    cardMap = Object.fromEntries((cards || []).map((c) => [c.id, c.card_number]));
+  }
+
   const chronological = [...(entries || [])].reverse();
   let running = 0;
   const withBalance = chronological.map((entry) => {
     running += toNumber(entry.change_qty);
     return {
       ...entry,
-      balance_after: running,
-      girn_number: entry.reference_id ? girnMap[entry.reference_id] || null : null,
+      change_qty: toNumber(entry.change_qty),
+      balance_after: Math.round(running * 10000) / 10000,
+      girn_number: entry.reason === 'girn' && entry.reference_id
+        ? girnMap[entry.reference_id] || null
+        : null,
+      production_card_number:
+        entry.reason === 'backflush' && entry.reference_id
+          ? cardMap[entry.reference_id] || null
+          : null,
     };
   });
 

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { GIRN_CATEGORIES } from '../girn/girnCategoryConfig';
 import StatTile from '../components/shared/StatTile';
+import { useSocket } from '../socket/socketContext';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val)) ? '—' : Number(val).toLocaleString('en-IN');
@@ -51,6 +52,7 @@ function formatDate(iso) {
 
 export default function StockListPage() {
   const navigate = useNavigate();
+  const { subscribe } = useSocket();
   const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState([]);
   const [total, setTotal] = useState(0);
@@ -69,9 +71,9 @@ export default function StockListPage() {
     setSummary(data.summary || []);
   }, []);
 
-  const loadStock = useCallback(async () => {
+  const loadStock = useCallback(async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setError(null);
       const params = {
         page,
@@ -89,13 +91,20 @@ export default function StockListPage() {
       console.error('Stock load error:', err);
       setError(err.response?.data?.error || 'Unable to load stock.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [page, categoryFilter, search, sortKey, sortAsc]);
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
   useEffect(() => { loadStock(); }, [loadStock]);
   useEffect(() => { setPage(1); }, [categoryFilter, search, sortKey, sortAsc]);
+
+  useEffect(() => {
+    return subscribe('inventory:updated', () => {
+      loadSummary();
+      loadStock({ silent: true });
+    });
+  }, [subscribe, loadSummary, loadStock]);
 
   const handleSort = (key) => {
     if (sortKey === key) setSortAsc((v) => !v);

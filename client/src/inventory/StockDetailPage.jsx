@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { ArrowLeft } from 'lucide-react';
+import { useSocket } from '../socket/socketContext';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val)) ? '—' : Number(val).toLocaleString('en-IN');
@@ -20,31 +21,41 @@ function formatDate(iso) {
 export default function StockDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { subscribe } = useSocket();
   const [stock, setStock] = useState(null);
   const [ledger, setLedger] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    let mounted = true;
-    async function load() {
-      try {
-        setLoading(true);
-        setError(null);
-        const { data } = await api.get(`/inventory/stock/${id}`);
-        if (!mounted) return;
-        setStock(data.stock);
-        setLedger(data.ledger || []);
-      } catch (err) {
-        if (!mounted) return;
-        setError(err.response?.data?.error || 'Unable to load stock detail.');
-      } finally {
-        if (mounted) setLoading(false);
-      }
+  const load = useCallback(async ({ silent = false } = {}) => {
+    try {
+      if (!silent) setLoading(true);
+      setError(null);
+      const { data } = await api.get(`/inventory/stock/${id}`);
+      setStock(data.stock);
+      setLedger(data.ledger || []);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Unable to load stock detail.');
+    } finally {
+      if (!silent) setLoading(false);
     }
-    load();
-    return () => { mounted = false; };
   }, [id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    return subscribe('inventory:updated', (payload) => {
+      if (
+        !payload?.stockId ||
+        payload.stockId === id ||
+        (stock?.master_record_id && payload.masterRecordId === stock.master_record_id)
+      ) {
+        load({ silent: true });
+      }
+    });
+  }, [subscribe, load, id, stock?.master_record_id]);
 
   const masterLink = stock?.master_slug && stock?.master_record_id
     ? `/masters/${stock.master_slug}/records/${stock.master_record_id}`
@@ -129,6 +140,8 @@ export default function StockDetailPage() {
                           <Link to={`/girn/${entry.reference_id}`}>
                             {entry.girn_number || entry.reference_id.slice(0, 8)}
                           </Link>
+                        ) : entry.reason === 'backflush' ? (
+                          entry.production_card_number || entry.note || 'Backflush'
                         ) : (
                           entry.note || '—'
                         )}

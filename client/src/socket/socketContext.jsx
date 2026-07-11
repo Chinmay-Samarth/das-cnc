@@ -20,7 +20,7 @@ function getSocketUrl() {
     return window.location.origin;
   }
   // const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-  const apiUrl = import.meta.env.VITE_API_URL || 'https://das-cnc.onrender.com/api';
+   const apiUrl = import.meta.env.VITE_API_URL || 'https://das-cnc.onrender.com/api';
   return apiUrl.replace(/\/api\/?$/, '');
 }
 
@@ -95,6 +95,22 @@ export function SocketProvider({ children }) {
     socketRef.current?.emit('leave:girn', girnId);
   }, []);
 
+  const joinBlanketPoRoom = useCallback((blanketPoId) => {
+    socketRef.current?.emit('join:blanket-po', blanketPoId);
+  }, []);
+
+  const leaveBlanketPoRoom = useCallback((blanketPoId) => {
+    socketRef.current?.emit('leave:blanket-po', blanketPoId);
+  }, []);
+
+  const joinProductionCardRoom = useCallback((cardId) => {
+    socketRef.current?.emit('join:production-card', cardId);
+  }, []);
+
+  const leaveProductionCardRoom = useCallback((cardId) => {
+    socketRef.current?.emit('leave:production-card', cardId);
+  }, []);
+
   const value = useMemo(
     () => ({
       socket,
@@ -104,8 +120,24 @@ export function SocketProvider({ children }) {
       leaveBomRoom,
       joinGirnRoom,
       leaveGirnRoom,
+      joinBlanketPoRoom,
+      leaveBlanketPoRoom,
+      joinProductionCardRoom,
+      leaveProductionCardRoom,
     }),
-    [socket, connected, subscribe, joinBomRoom, leaveBomRoom, joinGirnRoom, leaveGirnRoom]
+    [
+      socket,
+      connected,
+      subscribe,
+      joinBomRoom,
+      leaveBomRoom,
+      joinGirnRoom,
+      leaveGirnRoom,
+      joinBlanketPoRoom,
+      leaveBlanketPoRoom,
+      joinProductionCardRoom,
+      leaveProductionCardRoom,
+    ]
   );
 
   return (

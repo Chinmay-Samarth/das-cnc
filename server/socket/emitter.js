@@ -27,9 +27,55 @@ function emitBomUpdated(payload) {
   }
 }
 
+/**
+ * @param {{ action: string, cardId?: string, employeeId?: string, deliveryScheduleId?: string, blanketPoId?: string }} payload
+ */
+function emitProductionUpdated(payload) {
+  if (!io) return;
+  io.to('production').emit('production:updated', payload);
+  if (payload.cardId) {
+    io.to(`production-card:${payload.cardId}`).emit('production:updated', payload);
+  }
+  if (payload.employeeId) {
+    io.to(`production-employee:${payload.employeeId}`).emit('production:updated', payload);
+  }
+  if (payload.deliveryScheduleId) {
+    io.to('delivery-schedules').emit('delivery-schedule:updated', {
+      action: 'production_linked',
+      scheduleId: payload.deliveryScheduleId,
+      blanketPoId: payload.blanketPoId || null,
+    });
+  }
+}
+
+/**
+ * @param {{ action: string, scheduleId?: string, blanketPoId?: string, ruleId?: string, lineId?: string }} payload
+ */
+function emitDeliveryScheduleUpdated(payload) {
+  if (!io) return;
+  io.to('delivery-schedules').emit('delivery-schedule:updated', payload);
+  if (payload.blanketPoId) {
+    io.to(`blanket-po:${payload.blanketPoId}`).emit('delivery-schedule:updated', payload);
+  }
+  if (payload.scheduleId) {
+    io.to(`delivery-schedule:${payload.scheduleId}`).emit('delivery-schedule:updated', payload);
+  }
+}
+
+/**
+ * @param {{ action: string, masterRecordId?: string, itemCategory?: string, stockId?: string }} payload
+ */
+function emitInventoryUpdated(payload) {
+  if (!io) return;
+  io.to('inventory').emit('inventory:updated', payload);
+}
+
 module.exports = {
   setIo,
   emitAttendanceUpdated,
   emitGirnUpdated,
   emitBomUpdated,
+  emitProductionUpdated,
+  emitDeliveryScheduleUpdated,
+  emitInventoryUpdated,
 };

@@ -31,6 +31,12 @@ import StockDetailPage from './inventory/StockDetailPage';
 import WorkCentersPage from './workCenters/WorkCentersPage';
 import AddWorkCenterPage from './workCenters/AddWorkCenterPage';
 import WorkCenterDetailsPage from './workCenters/WorkCenterDetailsPage';
+import BlanketPosPage from './blanketPos/BlanketPosPage';
+import AddBlanketPoPage from './blanketPos/AddBlanketPoPage';
+import BlanketPoDetailsPage from './blanketPos/BlanketPoDetailsPage';
+import DeliverySchedulesPage from './blanketPos/DeliverySchedulesPage';
+import MyTodayPage from './production/MyTodayPage';
+import ProductionBoardPage from './production/ProductionBoardPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 function RequireAuth() {
@@ -111,6 +117,12 @@ export default function App() {
             <Route path="/work-centers/add" element={<AddWorkCenterPage />} />
             <Route path="/work-centers/:id" element={<WorkCenterDetailsPage />} />
             <Route path="/work-centers/:id/edit" element={<WorkCenterDetailsPage />} />
+            <Route path="/blanket-pos" element={<BlanketPosPage />} />
+            <Route path="/blanket-pos/add" element={<AddBlanketPoPage />} />
+            <Route path="/blanket-pos/:id" element={<BlanketPoDetailsPage />} />
+            <Route path="/delivery-schedules" element={<DeliverySchedulesPage />} />
+            <Route path="/production/today" element={<MyTodayPage />} />
+            <Route path="/production" element={<ProductionBoardPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Route>

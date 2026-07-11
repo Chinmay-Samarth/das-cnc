@@ -1,6 +1,4 @@
 export const ACTIVITY_TYPES = [
-  { value: 'material_issue', label: 'Material Issue', color: '#64748b' },
-  { value: 'storage', label: 'Storage', color: '#78716c' },
   { value: 'machining', label: 'Machining', color: '#2563eb' },
   { value: 'inspection', label: 'Inspection', color: '#7c3aed' },
   { value: 'outsource', label: 'Outsource', color: '#ea580c' },
@@ -12,12 +10,21 @@ export const ACTIVITY_TYPES = [
   { value: 'note', label: 'Note', color: '#6b7280' },
 ];
 
+/** Labels for legacy nodes that may still exist on older flows */
+const LEGACY_TYPES = {
+  material_issue: { value: 'material_issue', label: 'Material Issue', color: '#64748b' },
+  storage: { value: 'storage', label: 'Storage', color: '#78716c' },
+};
+
 export function getActivityTypeMeta(type) {
-  return ACTIVITY_TYPES.find((t) => t.value === type) || {
-    value: type,
-    label: type,
-    color: '#6b7280',
-  };
+  return (
+    ACTIVITY_TYPES.find((t) => t.value === type) ||
+    LEGACY_TYPES[type] || {
+      value: type,
+      label: type,
+      color: '#6b7280',
+    }
+  );
 }
 
 export const SCHEDULABLE_TYPES = new Set(['machining', 'assembly']);
