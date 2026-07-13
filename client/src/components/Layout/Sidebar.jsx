@@ -1,37 +1,85 @@
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../auth/authContext';
-import { useMastersNav } from '../../context/MastersNavContext';
 import { useEffect, useState } from 'react';
-import api from "../../api/client"
-import {LogOut} from 'lucide-react'
+import api from '../../api/client';
+import {
+  LogOut,
+  Home,
+  FileText,
+  Truck,
+  UserCheck,
+  Factory,
+  LayoutGrid,
+  Users,
+  CalendarCheck,
+  Building2,
+  Package,
+  Warehouse,
+  ClipboardList,
+  Receipt,
+  Wrench,
+} from 'lucide-react';
 
-const navItems = [
-  { to: '/home', label: 'Home' },
-  { to: '/attendance', label: 'Attendance' },
-  { to: '/employees', label: 'Employees' },
-  { to: '/suppliers', label: 'Suppliers' },
-  { to: '/customers', label: 'Customers'},
-  { to: '/blanket-pos', label: 'Blanket POs' },
-  { to: '/delivery-schedules', label: 'Delivery Schedules' },
-  { to: '/production/today', label: 'My Today' },
-  { to: '/production', label: 'Production' },
-  { to: '/invoices', label: 'Invoices' },
-  { to: '/girn', label: 'GIRN' },
-  { to: '/stock', label: 'Stock' },
-  { to: '/work-centers', label: 'Work Centers' },
+const NAV_SECTIONS = [
+  {
+    id: 'home',
+    label: null,
+    items: [{ to: '/home', label: 'Home', icon: Home, end: true }],
+  },
+  {
+    id: 'sourcing',
+    label: 'Sourcing',
+    items: [{ to: '/blanket-pos', label: 'Blanket POs', icon: FileText }],
+  },
+  {
+    id: 'logistics',
+    label: 'Logistics',
+    items: [{ to: '/delivery-schedules', label: 'Delivery Schedules', icon: Truck }],
+  },
+  {
+    id: 'operator',
+    label: 'Operator',
+    items: [{ to: '/production/today', label: 'My Today', icon: UserCheck }],
+  },
+  {
+    id: 'shopfloor',
+    label: 'Shop floor',
+    items: [
+      { to: '/production', label: 'Production', icon: Factory, end: true },
+      { to: '/production/work-centers', label: 'WC Board', icon: LayoutGrid },
+    ],
+  },
+  {
+    id: 'catalog',
+    label: 'Catalog',
+    items: [
+      { to: '/work-centers', label: 'Work Centers', icon: Wrench },
+      { to: '/customers', label: 'Customers', icon: Building2 },
+      { to: '/suppliers', label: 'Suppliers', icon: Package },
+      { to: '/stock', label: 'Stock', icon: Warehouse },
+      { to: '/girn', label: 'GIRN', icon: ClipboardList },
+      { to: '/invoices', label: 'Invoices', icon: Receipt },
+    ],
+  },
+  {
+    id: 'people',
+    label: 'People',
+    items: [
+      { to: '/attendance', label: 'Attendance', icon: CalendarCheck },
+      { to: '/employees', label: 'Employees', icon: Users },
+    ],
+  },
 ];
 
 export default function Sidebar({ onNavigate }) {
-  const location = useLocation();
   const { user, logout } = useAuth();
+  const [masters, setMasters] = useState([]);
 
-  const [masters, setMasters] = useState([])
-
-  useEffect(()=>{
-    api.get('/masters/sidebar').then(res => {
-      setMasters(res.data)
-    })
-  },[])
+  useEffect(() => {
+    api.get('/masters/sidebar').then((res) => {
+      setMasters(res.data || []);
+    });
+  }, []);
 
   return (
     <>
@@ -40,33 +88,47 @@ export default function Sidebar({ onNavigate }) {
       </div>
 
       <nav className="sidebar-nav">
-        <p className="sidebar-section-label">Navigation</p>
-        {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === '/home'}
-            className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
-            onClick={onNavigate}
-          >
-            {item.label}
-          </NavLink>
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.id} className="sidebar-domain">
+            {section.label ? <p className="sidebar-section-label">{section.label}</p> : null}
+            {section.items.map((item) => {
+              const Icon = item.icon;
+              return (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end || false}
+                  className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
+                  onClick={onNavigate}
+                >
+                  {Icon ? <Icon size={16} className="sidebar-link-icon" aria-hidden /> : null}
+                  <span>{item.label}</span>
+                </NavLink>
+              );
+            })}
+          </div>
         ))}
-        {masters.map((m)=>(
-          <NavLink
-          key={m.slug}
-          to={`/masters/${m.slug}`}
-          className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
-          onClick={(onNavigate)}
-          >
-            {m.name.replace(/\s*Master$/i, "")}
-          </NavLink>
-        ))}
+
+        {masters.length ? (
+          <div className="sidebar-domain">
+            <p className="sidebar-section-label">Masters</p>
+            {masters.map((m) => (
+              <NavLink
+                key={m.slug}
+                to={`/masters/${m.slug}`}
+                className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
+                onClick={onNavigate}
+              >
+                <span>{m.name.replace(/\s*Master$/i, '')}</span>
+              </NavLink>
+            ))}
+          </div>
+        ) : null}
       </nav>
 
       <div className="sidebar-footer">
         <div className="sidebar-avatar">
-           {user?.name
+          {user?.name
             ?.split(' ')
             .map((n) => n[0])
             .slice(0, 2)
@@ -75,15 +137,10 @@ export default function Sidebar({ onNavigate }) {
         </div>
         <div className="sidebar-user-info">
           <span className="sidebar-user">{user?.name}</span>
-          <span className="sidebar-user-role">{user?.job_description || 'Worker'}</span>  
+          <span className="sidebar-user-role">{user?.job_description || 'Worker'}</span>
         </div>
-        <button type="button" className="logout-btn" onClick={logout}>
-          {/* <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-            <polyline points="16 17 21 12 16 7" />
-            <line x1="21" y1="12" x2="9" y2="12" />
-          </svg> */}
-            <LogOut size={15} />
+        <button type="button" className="logout-btn" onClick={logout} aria-label="Log out">
+          <LogOut size={15} />
         </button>
       </div>
     </>

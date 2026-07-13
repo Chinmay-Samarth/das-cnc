@@ -37,6 +37,8 @@ import BlanketPoDetailsPage from './blanketPos/BlanketPoDetailsPage';
 import DeliverySchedulesPage from './blanketPos/DeliverySchedulesPage';
 import MyTodayPage from './production/MyTodayPage';
 import ProductionBoardPage from './production/ProductionBoardPage';
+import WorkCenterBoardPage from './production/WorkCenterBoardPage';
+import ProductionCardTrackingPage from './production/ProductionCardTrackingPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 function RequireAuth() {
@@ -122,6 +124,8 @@ export default function App() {
             <Route path="/blanket-pos/:id" element={<BlanketPoDetailsPage />} />
             <Route path="/delivery-schedules" element={<DeliverySchedulesPage />} />
             <Route path="/production/today" element={<MyTodayPage />} />
+            <Route path="/production/work-centers" element={<WorkCenterBoardPage />} />
+            <Route path="/production/cards/:id" element={<ProductionCardTrackingPage />} />
             <Route path="/production" element={<ProductionBoardPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>

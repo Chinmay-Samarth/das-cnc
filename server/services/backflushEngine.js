@@ -1,6 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const { loadBomEdges, enrichEdges } = require('./bomEngine');
-const { emitInventoryUpdated } = require('../socket/emitter');
+const { emitInventoryBackflushed } = require('../socket/emitter');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -151,11 +151,15 @@ async function backflushRawMaterials({
 
       const synced = await syncStockFromLedger('raw_material', edge.child_element_id, null);
 
-      emitInventoryUpdated({
-        action: 'backflush',
+      emitInventoryBackflushed({
+        raw_material_lot_id: synced?.id || null,
+        master_record_id: edge.child_element_id,
+        remaining_stock: synced?.current_stock != null ? Number(synced.current_stock) : null,
+        deducted_qty: need,
+        production_card_id: productionCardId,
+        stockId: synced?.id || null,
         itemCategory: 'raw_material',
         masterRecordId: edge.child_element_id,
-        stockId: synced?.id || null,
         referenceId: productionCardId,
       });
 

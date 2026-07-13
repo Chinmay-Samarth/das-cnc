@@ -308,6 +308,45 @@ router.delete(
   })
 );
 
+// GET /api/work-centers/:id/operators
+router.get(
+  '/:id/operators',
+  verifyEmployeeAuth,
+  wrap(async (req, res) => {
+    if (!isValidUUID(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid work center id' });
+    }
+    await getWorkCenterById(req.params.id);
+    const {
+      listOperatorsForWorkCenter,
+    } = require('../services/productionAssignEngine');
+    const operators = await listOperatorsForWorkCenter(req.params.id);
+    return res.json({ operators });
+  })
+);
+
+// PUT /api/work-centers/:id/operators
+router.put(
+  '/:id/operators',
+  verifyEmployeeAuth,
+  wrap(async (req, res) => {
+    if (!isValidUUID(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid work center id' });
+    }
+    await getWorkCenterById(req.params.id);
+    const {
+      setOperatorsForWorkCenter,
+    } = require('../services/productionAssignEngine');
+    const employeeIds = Array.isArray(req.body?.employee_ids)
+      ? req.body.employee_ids
+      : Array.isArray(req.body?.operators)
+        ? req.body.operators.map((o) => o.employee_id || o)
+        : [];
+    const operators = await setOperatorsForWorkCenter(req.params.id, employeeIds);
+    return res.json({ operators });
+  })
+);
+
 // GET /api/work-centers/:id/machines
 router.get(
   '/:id/machines',

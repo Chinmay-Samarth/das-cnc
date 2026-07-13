@@ -203,24 +203,68 @@ async function listBlankets() {
 
   const ids = (data || []).map((b) => b.id);
   let countMap = new Map();
+  let valueMap = new Map();
   if (ids.length) {
     const { data: lines, error: lineErr } = await supabase
       .from('blanket_po_lines')
-      .select('blanket_po_id')
+      .select('blanket_po_id, unit_price, released_qty')
       .in('blanket_po_id', ids);
     if (lineErr) throw lineErr;
     for (const row of lines || []) {
       countMap.set(row.blanket_po_id, (countMap.get(row.blanket_po_id) || 0) + 1);
+      const prev = valueMap.get(row.blanket_po_id) || { released_value: 0, line_value: 0 };
+      const price = Number(row.unit_price) || 0;
+      const released = Number(row.released_qty) || 0;
+      prev.released_value += released * price;
+      // Contract value proxy: at least released; detail may refine
+      prev.line_value += Math.max(released, 1) * price;
+      valueMap.set(row.blanket_po_id, prev);
+    }
+  }
+
+  // Enrich with schedule qty totals for better progress denominators
+  if (ids.length) {
+    const { data: schedLines } = await supabase
+      .from('blanket_po_lines')
+      .select('id, blanket_po_id, unit_price')
+      .in('blanket_po_id', ids);
+    const lineIds = (schedLines || []).map((l) => l.id);
+    if (lineIds.length) {
+      const { data: schedules } = await supabase
+        .from('delivery_schedules')
+        .select('blanket_po_line_id, quantity, status')
+        .in('blanket_po_line_id', lineIds)
+        .neq('status', 'cancelled');
+      const lineById = Object.fromEntries((schedLines || []).map((l) => [l.id, l]));
+      const contractByPo = new Map();
+      for (const s of schedules || []) {
+        const line = lineById[s.blanket_po_line_id];
+        if (!line) continue;
+        const price = Number(line.unit_price) || 0;
+        const qty = Number(s.quantity) || 0;
+        contractByPo.set(
+          line.blanket_po_id,
+          (contractByPo.get(line.blanket_po_id) || 0) + qty * price
+        );
+      }
+      for (const [poId, contract] of contractByPo.entries()) {
+        const prev = valueMap.get(poId) || { released_value: 0, line_value: 0 };
+        prev.contract_value = contract;
+        valueMap.set(poId, prev);
+      }
     }
   }
 
   return (data || []).map((row) => {
     const customer = Array.isArray(row.customers) ? row.customers[0] : row.customers;
     const { customers, ...rest } = row;
+    const vals = valueMap.get(row.id) || {};
     return {
       ...rest,
       customer_name: customer?.name || null,
       line_count: countMap.get(row.id) || 0,
+      released_value: Math.round((vals.released_value || 0) * 100) / 100,
+      contract_value: Math.round((vals.contract_value || vals.line_value || 0) * 100) / 100,
     };
   });
 }

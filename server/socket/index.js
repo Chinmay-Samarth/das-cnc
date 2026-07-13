@@ -1,10 +1,16 @@
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const { setIo } = require('./emitter');
+const { registerSocket, unregisterSocket } = require('./presence');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+function isUuid(value) {
+  return typeof value === 'string' && UUID_RE.test(value);
+}
 
 function initSocket(httpServer) {
   const corsOrigin = process.env.FRONTEND_URL || '*';
@@ -14,6 +20,9 @@ function initSocket(httpServer) {
       origin: corsOrigin,
       methods: ['GET', 'POST'],
     },
+    // Helpful under flaky shop-floor networks
+    pingInterval: 25000,
+    pingTimeout: 20000,
   });
 
   io.use((socket, next) => {
@@ -36,7 +45,8 @@ function initSocket(httpServer) {
 
 function attachConnectionHandlers(io) {
   io.on('connection', (socket) => {
-    console.log('user connected - ', socket.id);
+    const employeeId = socket.user?.sub || null;
+
     socket.join('attendance');
     socket.join('girns');
     socket.join('boms');
@@ -44,41 +54,60 @@ function attachConnectionHandlers(io) {
     socket.join('delivery-schedules');
     socket.join('inventory');
 
-    const employeeId = socket.user?.sub;
     if (employeeId) {
       socket.join(`production-employee:${employeeId}`);
+      registerSocket(employeeId, socket.id);
     }
 
-    socket.on('join:bom', (recordId) => {
-      if (recordId) socket.join(`bom:${recordId}`);
-    });
+    socket.workCenterRooms = new Set();
 
+    socket.on('join:bom', (recordId) => {
+      if (isUuid(recordId)) socket.join(`bom:${recordId}`);
+    });
     socket.on('leave:bom', (recordId) => {
-      if (recordId) socket.leave(`bom:${recordId}`);
+      if (isUuid(recordId)) socket.leave(`bom:${recordId}`);
     });
 
     socket.on('join:girn', (girnId) => {
-      if (girnId) socket.join(`girn:${girnId}`);
+      if (isUuid(girnId)) socket.join(`girn:${girnId}`);
     });
-
     socket.on('leave:girn', (girnId) => {
-      if (girnId) socket.leave(`girn:${girnId}`);
+      if (isUuid(girnId)) socket.leave(`girn:${girnId}`);
     });
 
     socket.on('join:blanket-po', (blanketPoId) => {
-      if (blanketPoId) socket.join(`blanket-po:${blanketPoId}`);
+      if (isUuid(blanketPoId)) socket.join(`blanket-po:${blanketPoId}`);
     });
-
     socket.on('leave:blanket-po', (blanketPoId) => {
-      if (blanketPoId) socket.leave(`blanket-po:${blanketPoId}`);
+      if (isUuid(blanketPoId)) socket.leave(`blanket-po:${blanketPoId}`);
     });
 
     socket.on('join:production-card', (cardId) => {
-      if (cardId) socket.join(`production-card:${cardId}`);
+      if (isUuid(cardId)) socket.join(`production-card:${cardId}`);
+    });
+    socket.on('leave:production-card', (cardId) => {
+      if (isUuid(cardId)) socket.leave(`production-card:${cardId}`);
     });
 
-    socket.on('leave:production-card', (cardId) => {
-      if (cardId) socket.leave(`production-card:${cardId}`);
+    socket.on('join:work-center', (workCenterId) => {
+      if (!isUuid(workCenterId)) return;
+      const room = `wc:${workCenterId}`;
+      socket.join(room);
+      socket.workCenterRooms.add(room);
+    });
+
+    socket.on('leave:work-center', (workCenterId) => {
+      if (!isUuid(workCenterId)) return;
+      const room = `wc:${workCenterId}`;
+      socket.leave(room);
+      socket.workCenterRooms.delete(room);
+    });
+
+    socket.on('disconnect', () => {
+      if (employeeId) {
+        unregisterSocket(employeeId, socket.id);
+      }
+      socket.workCenterRooms.clear();
     });
   });
 }

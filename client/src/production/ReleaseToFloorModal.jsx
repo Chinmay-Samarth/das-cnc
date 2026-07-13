@@ -2,26 +2,18 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { formatScheduleLabel, formatDueLabel } from '../blanketPos/scheduleLabels';
 
-/** Manager modal: assign employee + preview daily split, then release to floor */
+/** Manager modal: preview auto WC assign + daily split, then release to floor */
 export default function ReleaseToFloorModal({ schedule, open, onClose, onReleased }) {
-  const [employees, setEmployees] = useState([]);
-  const [employeeId, setEmployeeId] = useState('');
   const [split, setSplit] = useState([]);
+  const [assignPreview, setAssignPreview] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (!open) return;
-    setError(null);
-    setEmployeeId('');
-    api
-      .get('/employees')
-      .then(({ data }) => setEmployees(data.employees || data || []))
-      .catch(() => setEmployees([]));
-  }, [open]);
-
-  useEffect(() => {
     if (!open || !schedule) return;
+    setError(null);
+    setAssignPreview(null);
+
     api
       .post('/production/preview-split', {
         quantity: schedule.quantity,
@@ -32,22 +24,25 @@ export default function ReleaseToFloorModal({ schedule, open, onClose, onRelease
         setSplit([]);
         setError(err.response?.data?.error || 'Unable to preview daily split');
       });
+
+    api
+      .post('/production/preview-assign', {
+        delivery_schedule_id: schedule.id,
+        work_date: new Date().toISOString().slice(0, 10),
+      })
+      .then(({ data }) => setAssignPreview(data))
+      .catch(() => setAssignPreview(null));
   }, [open, schedule]);
 
   if (!open || !schedule) return null;
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!employeeId) {
-      setError('Select an employee');
-      return;
-    }
     setBusy(true);
     setError(null);
     try {
       const { data } = await api.post('/production/release', {
         delivery_schedule_id: schedule.id,
-        assigned_employee_id: employeeId,
       });
       onReleased?.(data);
       onClose();
@@ -57,6 +52,15 @@ export default function ReleaseToFloorModal({ schedule, open, onClose, onRelease
       setBusy(false);
     }
   }
+
+  const wcLabel = assignPreview?.work_center
+    ? `${assignPreview.work_center.code} — ${assignPreview.work_center.name}`
+    : null;
+  const operatorLabel = assignPreview?.assignee
+    ? `${assignPreview.assignee.full_name}${
+        assignPreview.assignee.employee_code ? ` (${assignPreview.assignee.employee_code})` : ''
+      }`
+    : null;
 
   return (
     <div className="pc-modal-backdrop" role="presentation" onClick={onClose}>
@@ -79,29 +83,48 @@ export default function ReleaseToFloorModal({ schedule, open, onClose, onRelease
             : schedule.rule_month_day != null
               ? ` · monthly day ${schedule.rule_month_day} rule`
               : ''}
-          . Splits equally across Mon–Sat days through the due date and assigns one employee.
+          . Splits equally across Mon–Sat days and auto-assigns operators by work-center backlog.
         </p>
 
         {error ? <p className="error-message">{error}</p> : null}
 
         <form onSubmit={handleSubmit}>
-          <label>
-            Assign employee <span className="req">*</span>
-            <select
-              value={employeeId}
-              onChange={(e) => setEmployeeId(e.target.value)}
-              required
-              disabled={busy}
-            >
-              <option value="">Select employee…</option>
-              {employees.map((emp) => (
-                <option key={emp.id} value={emp.id}>
-                  {emp.full_name}
-                  {emp.employee_code ? ` (${emp.employee_code})` : ''}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="pc-assign-preview">
+            <h3>First operation (auto-assign)</h3>
+            {assignPreview?.node ? (
+              <ul className="pc-assign-facts">
+                <li>
+                  <span>Operation</span>
+                  <strong>{assignPreview.node.label}</strong>
+                </li>
+                <li>
+                  <span>Work center</span>
+                  <strong>{wcLabel || '—'}</strong>
+                </li>
+                <li>
+                  <span>Operator (today)</span>
+                  <strong>
+                    {operatorLabel || (
+                      <em className="pc-unassigned-hint">
+                        Unassigned — no one present
+                      </em>
+                    )}
+                  </strong>
+                </li>
+              </ul>
+            ) : (
+              <p className="muted">
+                {assignPreview?.reason ||
+                  'Resolving first machining/assembly work center…'}
+              </p>
+            )}
+            {assignPreview?.reason && assignPreview?.node ? (
+              <p className="muted" style={{ marginTop: 8 }}>
+                {assignPreview.reason}. Cards stay READY until someone punches in or you run
+                Assign unassigned.
+              </p>
+            ) : null}
+          </div>
 
           <div className="pc-split-preview">
             <h3>Daily plan preview</h3>

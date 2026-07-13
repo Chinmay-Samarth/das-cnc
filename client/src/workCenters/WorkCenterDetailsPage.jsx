@@ -1,8 +1,34 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, Trash2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  Pencil,
+  Trash2,
+  Users,
+  Search,
+  Check,
+  UserMinus,
+  Star,
+  Save,
+} from 'lucide-react';
 import api from '../api/client';
 import AvailableMachineSelect from './AvailableMachineSelect';
+import {
+  StatusBadge,
+  EmptyState,
+  MetricCard,
+  TruncatedText,
+} from '../components/mes';
+
+function initials(name) {
+  if (!name) return '?';
+  return name
+    .split(/\s+/)
+    .map((n) => n[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+}
 
 const emptyFormData = {
   name: '',
@@ -40,14 +66,22 @@ export default function WorkCenterDetailsPage() {
   const [addingMachine, setAddingMachine] = useState(false);
   const [removingId, setRemovingId] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [operators, setOperators] = useState([]);
+  const [allEmployees, setAllEmployees] = useState([]);
+  const [selectedOperatorIds, setSelectedOperatorIds] = useState([]);
+  const [savingOperators, setSavingOperators] = useState(false);
+  const [operatorError, setOperatorError] = useState(null);
+  const [operatorSearch, setOperatorSearch] = useState('');
 
   useEffect(() => {
     if (location.pathname.endsWith('/edit')) {
       setTab('edit');
+    } else if (location.hash === '#operators') {
+      setTab('operators');
     } else {
       setTab('details');
     }
-  }, [location.pathname]);
+  }, [location.pathname, location.hash]);
 
   useEffect(() => {
     let mounted = true;
@@ -62,6 +96,44 @@ export default function WorkCenterDetailsPage() {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    api
+      .get('/employees')
+      .then(({ data }) => {
+        if (!mounted) return;
+        const list = (data.employees || data || []).filter((e) => e.is_active !== false);
+        setAllEmployees(list);
+      })
+      .catch(() => setAllEmployees([]));
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadOperators() {
+      if (!id) return;
+      try {
+        const { data } = await api.get(`/work-centers/${id}/operators`);
+        if (!mounted) return;
+        const ops = data.operators || [];
+        setOperators(ops);
+        setSelectedOperatorIds(ops.map((o) => o.employee_id));
+      } catch (err) {
+        if (!mounted) return;
+        setOperatorError(err.response?.data?.error || 'Unable to load operators.');
+      }
+    }
+
+    loadOperators();
+    return () => {
+      mounted = false;
+    };
+  }, [id, reloadKey]);
 
   useEffect(() => {
     let mounted = true;
@@ -183,7 +255,81 @@ export default function WorkCenterDetailsPage() {
     }
   };
 
+  const toggleOperator = (employeeId) => {
+    setSelectedOperatorIds((ids) =>
+      ids.includes(employeeId) ? ids.filter((x) => x !== employeeId) : [...ids, employeeId]
+    );
+  };
+
+  const handleSaveOperators = async () => {
+    setSavingOperators(true);
+    setOperatorError(null);
+    try {
+      const { data } = await api.put(`/work-centers/${id}/operators`, {
+        employee_ids: selectedOperatorIds,
+      });
+      setOperators(data.operators || []);
+      setSelectedOperatorIds((data.operators || []).map((o) => o.employee_id));
+    } catch (err) {
+      setOperatorError(err.response?.data?.error || 'Unable to save operators.');
+    } finally {
+      setSavingOperators(false);
+    }
+  };
+
   const machines = workCenter?.machines || [];
+
+  const savedIdSet = useMemo(
+    () => new Set(operators.map((o) => o.employee_id)),
+    [operators]
+  );
+
+  const isDirty = useMemo(() => {
+    if (selectedOperatorIds.length !== operators.length) return true;
+    return selectedOperatorIds.some((eid) => !savedIdSet.has(eid));
+  }, [selectedOperatorIds, operators.length, savedIdSet]);
+
+  const selectedMembers = useMemo(() => {
+    const byId = Object.fromEntries(allEmployees.map((e) => [e.id, e]));
+    return selectedOperatorIds.map((eid, idx) => {
+      const fromSaved = operators.find((o) => o.employee_id === eid);
+      const emp = byId[eid];
+      return {
+        employee_id: eid,
+        full_name: fromSaved?.full_name || emp?.full_name || 'Unknown',
+        employee_code: fromSaved?.employee_code || emp?.employee_code || null,
+        is_primary: idx === 0,
+        is_saved: savedIdSet.has(eid),
+      };
+    });
+  }, [selectedOperatorIds, allEmployees, operators, savedIdSet]);
+
+  const filteredEmployees = useMemo(() => {
+    const q = operatorSearch.trim().toLowerCase();
+    return allEmployees
+      .filter((e) => {
+        if (!q) return true;
+        return (
+          String(e.full_name || '')
+            .toLowerCase()
+            .includes(q) ||
+          String(e.employee_code || '')
+            .toLowerCase()
+            .includes(q)
+        );
+      })
+      .sort((a, b) => {
+        const aSel = selectedOperatorIds.includes(a.id) ? 0 : 1;
+        const bSel = selectedOperatorIds.includes(b.id) ? 0 : 1;
+        if (aSel !== bSel) return aSel - bSel;
+        return String(a.full_name || '').localeCompare(String(b.full_name || ''));
+      });
+  }, [allEmployees, operatorSearch, selectedOperatorIds]);
+
+  const resetOperators = () => {
+    setSelectedOperatorIds(operators.map((o) => o.employee_id));
+    setOperatorError(null);
+  };
 
   return (
     <main className="app-shell employee-shell">
@@ -227,6 +373,21 @@ export default function WorkCenterDetailsPage() {
           >
             Details
           </button>
+          <button
+            type="button"
+            className={`pill-tab ${tab === 'operators' ? 'pill-tab-active' : ''}`}
+            onClick={() => {
+              setTab('operators');
+              navigate(`/work-centers/${id}#operators`);
+            }}
+            aria-selected={tab === 'operators'}
+            role="tab"
+          >
+            Operators
+            {operators.length ? (
+              <span style={{ marginLeft: 6, opacity: 0.75 }}>({operators.length})</span>
+            ) : null}
+          </button>
         </div>
       </header>
 
@@ -237,6 +398,197 @@ export default function WorkCenterDetailsPage() {
           <p className="error-message">{error}</p>
         ) : !workCenter ? (
           <p className="muted">Work center not found.</p>
+        ) : tab === 'operators' ? (
+          <>
+            <div style={{ marginBottom: 16 }}>
+              <h2 style={{ margin: '0 0 4px', fontSize: 18 }}>Operators</h2>
+              <p className="muted" style={{ margin: 0, maxWidth: '56ch' }}>
+                People eligible for auto-assignment at this work center when they are present.
+                First selected member is treated as primary.
+              </p>
+            </div>
+
+            <div className="mes-metric-grid" style={{ marginBottom: 16 }}>
+              <MetricCard
+                label="Linked"
+                value={selectedOperatorIds.length}
+                hint={isDirty ? 'Unsaved changes' : 'Saved roster'}
+                icon={Users}
+                tone={isDirty ? 'amber' : 'info'}
+              />
+              <MetricCard
+                label="Primary"
+                value={selectedMembers[0]?.full_name?.split(' ')[0] || '—'}
+                hint={selectedMembers[0]?.employee_code || 'Set by first in list'}
+                icon={Star}
+              />
+              <MetricCard
+                label="Directory"
+                value={allEmployees.length}
+                hint="Active employees"
+                icon={Search}
+              />
+            </div>
+
+            {operatorError ? <p className="error-message">{operatorError}</p> : null}
+
+            <div className="wc-ops-layout">
+              <div className="wc-ops-panel">
+                <div className="wc-ops-panel-head">
+                  <div>
+                    <h3>Current roster</h3>
+                    <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                      Remove anyone who should no longer receive cards here.
+                    </p>
+                  </div>
+                  <StatusBadge status={isDirty ? 'pending' : 'assigned'}>
+                    {isDirty ? 'Unsaved' : 'Saved'}
+                  </StatusBadge>
+                </div>
+
+                {!selectedMembers.length ? (
+                  <EmptyState
+                    icon={Users}
+                    title="No operators linked"
+                    description="Pick people from the directory on the right. They become eligible for equalized backlog assignment when present."
+                  />
+                ) : (
+                  <div className="wc-ops-roster">
+                    {selectedMembers.map((m) => (
+                      <div
+                        key={m.employee_id}
+                        className={`wc-ops-member${m.is_primary ? ' is-primary' : ''}`}
+                      >
+                        <span className="mes-avatar" title={m.full_name}>
+                          {initials(m.full_name)}
+                        </span>
+                        <div className="wc-ops-member-info">
+                          <strong>
+                            <TruncatedText>{m.full_name}</TruncatedText>
+                          </strong>
+                          <span>
+                            {m.employee_code || 'No code'}
+                            {m.is_primary ? ' · Primary' : ''}
+                            {!m.is_saved ? ' · New' : ''}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          className="mes-btn mes-btn-secondary"
+                          style={{ padding: '8px 10px' }}
+                          disabled={savingOperators}
+                          onClick={() => toggleOperator(m.employee_id)}
+                          title="Remove from roster"
+                          aria-label={`Remove ${m.full_name}`}
+                        >
+                          <UserMinus size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="wc-ops-panel">
+                <div className="wc-ops-panel-head">
+                  <div>
+                    <h3>Add from directory</h3>
+                    <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                      Search and toggle employees onto this work center.
+                    </p>
+                  </div>
+                </div>
+
+                <label style={{ display: 'block', marginBottom: 0 }}>
+                  <span className="mes-detail-label">Search</span>
+                  <div style={{ position: 'relative' }}>
+                    <Search
+                      size={15}
+                      style={{
+                        position: 'absolute',
+                        left: 12,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        color: 'var(--text-secondary)',
+                        pointerEvents: 'none',
+                      }}
+                    />
+                    <input
+                      type="search"
+                      value={operatorSearch}
+                      onChange={(e) => setOperatorSearch(e.target.value)}
+                      placeholder="Name or employee code…"
+                      disabled={savingOperators}
+                      style={{ paddingLeft: 36, width: '100%' }}
+                    />
+                  </div>
+                </label>
+
+                <div className="wc-ops-directory">
+                  {filteredEmployees.map((emp) => {
+                    const selected = selectedOperatorIds.includes(emp.id);
+                    return (
+                      <button
+                        key={emp.id}
+                        type="button"
+                        className={`wc-ops-dir-row${selected ? ' is-selected' : ''}`}
+                        disabled={savingOperators}
+                        onClick={() => toggleOperator(emp.id)}
+                        aria-pressed={selected}
+                      >
+                        <span className="wc-ops-check" aria-hidden>
+                          <Check size={12} strokeWidth={3} />
+                        </span>
+                        <span className="mes-avatar">{initials(emp.full_name)}</span>
+                        <div className="wc-ops-member-info">
+                          <strong>
+                            <TruncatedText>{emp.full_name}</TruncatedText>
+                          </strong>
+                          <span>{emp.employee_code || 'No code'}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {!filteredEmployees.length ? (
+                    <p className="muted" style={{ padding: 12, margin: 0 }}>
+                      No employees match “{operatorSearch}”.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="wc-ops-footer">
+              <div>
+                {isDirty ? (
+                  <span className="wc-ops-dirty">You have unsaved roster changes</span>
+                ) : (
+                  <span className="muted" style={{ fontSize: 13 }}>
+                    Roster matches what is saved
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="mes-btn mes-btn-secondary"
+                  disabled={savingOperators || !isDirty}
+                  onClick={resetOperators}
+                >
+                  Discard
+                </button>
+                <button
+                  type="button"
+                  className="mes-btn mes-btn-primary"
+                  disabled={savingOperators || !isDirty}
+                  onClick={handleSaveOperators}
+                >
+                  <Save size={15} />
+                  {savingOperators ? 'Saving…' : 'Save roster'}
+                </button>
+              </div>
+            </div>
+          </>
         ) : tab === 'details' ? (
           <>
             <div className="employee-details-grid">
@@ -253,6 +605,14 @@ export default function WorkCenterDetailsPage() {
                 <DetailItem
                   label="Status"
                   value={workCenter.is_active ? 'Active' : 'Inactive'}
+                />
+                <DetailItem
+                  label="Operators"
+                  value={
+                    operators.length
+                      ? operators.map((o) => o.full_name).join(', ')
+                      : 'None linked'
+                  }
                 />
               </div>
             </div>

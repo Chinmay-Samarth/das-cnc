@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import {
+  ArrowLeft,
+  Package,
+  CalendarRange,
+  Truck,
+  Plus,
+} from 'lucide-react';
 import api from '../api/client';
 import ComponentSelect from './ComponentSelect';
 import ReleaseToFloorModal from '../production/ReleaseToFloorModal';
@@ -12,21 +18,31 @@ import {
 } from './scheduleLabels';
 import { useSocket } from '../socket/socketContext';
 import { formatDisplayDate } from '../utils/dateFormat';
+import {
+  PageHeader,
+  StatusBadge,
+  MetricCard,
+  ProgressBar,
+  EmptyState,
+  TruncatedText,
+} from '../components/mes';
 
-function statusClass(status) {
-  if (status === 'active' || status === 'released') return 'status-pill status-active';
-  if (status === 'planned' || status === 'draft') return 'status-pill';
-  return 'status-pill status-inactive';
+function formatMoney(n) {
+  return `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 }
 
-function DetailItem({ label, value }) {
-  return (
-    <div>
-      <p className="employee-detail-label">{label}</p>
-      <p className="employee-detail-value">{value ?? '—'}</p>
-    </div>
-  );
+function carrierLabel(status) {
+  if (status === 'released') return 'Released to floor';
+  if (status === 'planned') return 'Awaiting release';
+  if (status === 'cancelled') return 'Cancelled';
+  return status || '—';
 }
+
+const TABS = [
+  { id: 'lines', label: 'Lines', icon: Package },
+  { id: 'rules', label: 'Schedule rules', icon: CalendarRange },
+  { id: 'schedules', label: 'Schedules', icon: Truck },
+];
 
 export default function BlanketPoDetailsPage() {
   const { id } = useParams();
@@ -39,15 +55,14 @@ export default function BlanketPoDetailsPage() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [releaseSchedule, setReleaseSchedule] = useState(null);
+  const [showTerms, setShowTerms] = useState(false);
 
-  // Lines form
   const [compId, setCompId] = useState('');
   const [compLabel, setCompLabel] = useState('');
   const [unitPrice, setUnitPrice] = useState('');
   const [uom, setUom] = useState('pcs');
   const [lineNotes, setLineNotes] = useState('');
 
-  // Rules
   const [rules, setRules] = useState([]);
   const [ruleForm, setRuleForm] = useState({
     blanket_po_line_id: '',
@@ -57,7 +72,6 @@ export default function BlanketPoDetailsPage() {
     default_quantity: '1',
   });
 
-  // Schedules
   const [schedules, setSchedules] = useState([]);
   const [genForm, setGenForm] = useState({
     rule_id: '',
@@ -99,19 +113,22 @@ export default function BlanketPoDetailsPage() {
     setSchedules(data.schedules || []);
   }, [id]);
 
-  const reload = useCallback(async ({ silent = false } = {}) => {
-    if (!silent) setLoading(true);
-    setError(null);
-    try {
-      const b = await loadBlanket();
-      await Promise.all([loadRulesForLines(b.lines || []), loadSchedules()]);
-    } catch (err) {
-      setError(err.response?.data?.error || 'Unable to load blanket PO.');
-      setBlanket(null);
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [loadBlanket, loadRulesForLines, loadSchedules]);
+  const reload = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!silent) setLoading(true);
+      setError(null);
+      try {
+        const b = await loadBlanket();
+        await Promise.all([loadRulesForLines(b.lines || []), loadSchedules()]);
+      } catch (err) {
+        setError(err.response?.data?.error || 'Unable to load blanket PO.');
+        setBlanket(null);
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [loadBlanket, loadRulesForLines, loadSchedules]
+  );
 
   useEffect(() => {
     reload();
@@ -232,10 +249,6 @@ export default function BlanketPoDetailsPage() {
     });
   }
 
-  async function handleRelease(schedule) {
-    setReleaseSchedule(schedule);
-  }
-
   async function handleCancelSchedule(scheduleId) {
     if (!window.confirm('Cancel this delivery schedule?')) return;
     await runAction(() => api.post(`/delivery-schedules/${scheduleId}/cancel`));
@@ -255,23 +268,62 @@ export default function BlanketPoDetailsPage() {
   const lines = blanket?.lines || [];
   const activeRules = rules.filter((r) => r.is_active);
 
+  const drawDown = useMemo(() => {
+    const released = lines.reduce(
+      (s, l) => s + Number(l.released_qty || 0) * Number(l.unit_price || 0),
+      0
+    );
+    const contract = schedules
+      .filter((s) => s.status !== 'cancelled')
+      .reduce((s, row) => {
+        const line = lines.find((l) => l.id === row.blanket_po_line_id);
+        const price = Number(line?.unit_price || 0);
+        return s + Number(row.quantity || 0) * price;
+      }, 0);
+    return {
+      released,
+      contract: contract > 0 ? contract : Math.max(released, 1),
+    };
+  }, [lines, schedules]);
+
+  const sortedSchedules = useMemo(
+    () =>
+      [...schedules].sort((a, b) => {
+        const da = a.due_date || '9999-12-31';
+        const db = b.due_date || '9999-12-31';
+        if (da !== db) return da < db ? -1 : 1;
+        return String(a.schedule_number || '').localeCompare(String(b.schedule_number || ''));
+      }),
+    [schedules]
+  );
+
+  const plannedCount = schedules.filter((s) => s.status === 'planned').length;
+  const releasedCount = schedules.filter((s) => s.status === 'released').length;
+
   return (
-    <main className="app-shell employee-shell">
-      <header className="app-header employee-card">
-        <p onClick={() => navigate('/blanket-pos')} style={{ cursor: 'pointer' }}>
-          <ArrowLeft size={16} style={{ marginRight: 4, display: 'inline' }} />
-          Back to blanket POs
-        </p>
-        <div className="employee-title-block">
-          <div>
-            <h1>{blanket?.blanket_number || 'Blanket PO'}</h1>
-            <p className="muted">{blanket?.customer_name}</p>
-          </div>
-          <div className="employee-top-bar" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+    <main className="mes-shell">
+      <PageHeader
+        eyebrow="Sourcing"
+        title={blanket?.blanket_number || 'Blanket PO'}
+        subtitle={
+          blanket
+            ? `${blanket.customer_name || 'Customer'} · locked part pricing and delivery plan`
+            : 'Loading contract…'
+        }
+        actions={
+          <>
+            <button
+              type="button"
+              className="mes-btn mes-btn-secondary"
+              onClick={() => navigate('/blanket-pos')}
+            >
+              <ArrowLeft size={16} />
+              All contracts
+            </button>
             {blanket?.status === 'draft' || blanket?.status === 'on_hold' ? (
               <button
                 type="button"
-                className="primary-button"
+                className="mes-btn mes-btn-primary"
                 disabled={busy}
                 onClick={() => handleStatus('activate')}
               >
@@ -281,7 +333,7 @@ export default function BlanketPoDetailsPage() {
             {blanket?.status === 'active' ? (
               <button
                 type="button"
-                className="neutral-button"
+                className="mes-btn mes-btn-secondary"
                 disabled={busy}
                 onClick={() => handleStatus('hold')}
               >
@@ -291,56 +343,135 @@ export default function BlanketPoDetailsPage() {
             {blanket?.status === 'active' || blanket?.status === 'on_hold' ? (
               <button
                 type="button"
-                className="cancel-button"
+                className="mes-btn mes-btn-secondary"
                 disabled={busy}
                 onClick={() => handleStatus('close')}
               >
                 Close
               </button>
             ) : null}
+          </>
+        }
+      />
+
+      {loading ? <p className="muted">Loading contract…</p> : null}
+      {error ? <p className="error-message">{error}</p> : null}
+
+      {!loading && blanket ? (
+        <>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              marginBottom: 16,
+              flexWrap: 'wrap',
+            }}
+          >
+            <StatusBadge status={blanket.status} />
+            <span className="muted" style={{ fontSize: 13 }}>
+              {blanket.valid_from
+                ? `Valid ${formatDisplayDate(blanket.valid_from)} — ${
+                    blanket.valid_to ? formatDisplayDate(blanket.valid_to) : 'present'
+                  }`
+                : blanket.status === 'draft'
+                  ? 'Not activated yet'
+                  : '—'}
+            </span>
           </div>
-        </div>
 
-        <div className="pill-tabs">
-          {['lines', 'rules', 'schedules'].map((t) => (
-            <button
-              key={t}
-              type="button"
-              className={`pill-tab ${tab === t ? 'pill-tab-active' : ''}`}
-              onClick={() => setTab(t)}
-            >
-              {t === 'lines' ? 'Lines' : t === 'rules' ? 'Schedule rules' : 'Schedules'}
-            </button>
-          ))}
-        </div>
-      </header>
+          <div className="mes-metric-grid">
+            <MetricCard
+              label="Drawn down"
+              value={formatMoney(drawDown.released)}
+              hint={`of ${formatMoney(drawDown.contract)} scheduled`}
+              tone="info"
+            />
+            <MetricCard label="Lines" value={lines.length} icon={Package} />
+            <MetricCard
+              label="Active rules"
+              value={activeRules.length}
+              hint={`${rules.length} total`}
+              icon={CalendarRange}
+            />
+            <MetricCard
+              label="Schedules"
+              value={schedules.length}
+              hint={`${plannedCount} planned · ${releasedCount} released`}
+              icon={Truck}
+            />
+          </div>
 
-      <section className="card employee-main">
-        {loading ? <p className="muted">Loading...</p> : null}
-        {error ? <p className="error-message">{error}</p> : null}
-
-        {!loading && blanket ? (
-          <>
-            <div className="employee-detail-grid" style={{ marginBottom: 20 }}>
-              <DetailItem label="Status" value={blanket.status} />
-              <DetailItem label="Currency" value={blanket.currency} />
-              <DetailItem
-                label="Valid"
-                value={
-                  blanket.valid_from
-                    ? `${formatDisplayDate(blanket.valid_from)} — ${blanket.valid_to ? formatDisplayDate(blanket.valid_to) : 'present'}`
-                    : blanket.status === 'draft'
-                      ? 'Not activated yet'
-                      : '—'
-                }
-              />
-              <DetailItem label="Payment terms" value={blanket.payment_terms} />
-              <DetailItem label="Notes" value={blanket.notes} />
+          <div className="mes-card" style={{ marginBottom: 20 }}>
+            <ProgressBar
+              value={drawDown.released}
+              max={drawDown.contract}
+              label="Contract draw-down"
+            />
+            <div className="mes-detail-grid" style={{ marginTop: 16 }}>
+              <div>
+                <p className="mes-detail-label">Currency</p>
+                <p className="mes-detail-value">{blanket.currency || 'INR'}</p>
+              </div>
+              <div>
+                <p className="mes-detail-label">Customer</p>
+                <p className="mes-detail-value">
+                  <TruncatedText>{blanket.customer_name || '—'}</TruncatedText>
+                </p>
+              </div>
+              <div>
+                <p className="mes-detail-label">Payment terms</p>
+                <p className="mes-detail-value">{blanket.payment_terms || '—'}</p>
+              </div>
             </div>
+            <button
+              type="button"
+              className="mes-btn mes-btn-secondary"
+              style={{ marginTop: 12 }}
+              onClick={() => setShowTerms((v) => !v)}
+            >
+              {showTerms ? 'Hide notes' : 'Show notes'}
+            </button>
+            {showTerms ? (
+              <p className="mes-detail-value" style={{ marginTop: 12 }}>
+                {blanket.notes || 'No notes on this contract.'}
+              </p>
+            ) : null}
+          </div>
 
-            {tab === 'lines' ? (
-              <>
-                <h2 style={{ fontSize: 16, marginBottom: 12 }}>Lines</h2>
+          <div className="pill-tabs" style={{ marginBottom: 16 }} role="tablist">
+            {TABS.map((t) => {
+              const Icon = t.icon;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === t.id}
+                  className={`pill-tab ${tab === t.id ? 'pill-tab-active' : ''}`}
+                  onClick={() => setTab(t.id)}
+                >
+                  <Icon size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {tab === 'lines' ? (
+            <section className="mes-card">
+              <h2 style={{ margin: '0 0 4px', fontSize: 16 }}>Contract lines</h2>
+              <p className="muted" style={{ marginTop: 0, marginBottom: 16 }}>
+                Locked unit prices for each component on this blanket.
+              </p>
+
+              {!lines.length ? (
+                <EmptyState
+                  icon={Package}
+                  title="No lines yet"
+                  description="Add a component and locked unit price to start planning deliveries."
+                />
+              ) : (
                 <div className="employees-table-wrap" style={{ marginBottom: 20 }}>
                   <table className="app-table">
                     <thead>
@@ -357,15 +488,17 @@ export default function BlanketPoDetailsPage() {
                       {lines.map((l) => (
                         <tr key={l.id}>
                           <td>{l.line_no}</td>
-                          <td>{l.component_label}</td>
+                          <td>
+                            <TruncatedText as="strong">{l.component_label}</TruncatedText>
+                          </td>
                           <td>{l.uom}</td>
-                          <td>{l.unit_price}</td>
+                          <td>₹{Number(l.unit_price).toLocaleString('en-IN')}</td>
                           <td>{l.released_qty}</td>
                           <td>
                             {Number(l.released_qty) === 0 ? (
                               <button
                                 type="button"
-                                className="cancel-button"
+                                className="mes-btn mes-btn-secondary"
                                 disabled={busy}
                                 onClick={() => handleDeleteLine(l.id)}
                               >
@@ -375,22 +508,23 @@ export default function BlanketPoDetailsPage() {
                           </td>
                         </tr>
                       ))}
-                      {!lines.length ? (
-                        <tr>
-                          <td colSpan="6" className="muted">
-                            No lines yet.
-                          </td>
-                        </tr>
-                      ) : null}
                     </tbody>
                   </table>
                 </div>
+              )}
 
-                {blanket.status !== 'closed' && blanket.status !== 'cancelled' ? (
-                  <form onSubmit={handleAddLine} className="af-inspector" style={{ maxWidth: 480 }}>
-                    <h3 style={{ margin: 0, fontSize: 14 }}>Add line</h3>
+              {blanket.status !== 'closed' && blanket.status !== 'cancelled' ? (
+                <form
+                  onSubmit={handleAddLine}
+                  className="mes-card"
+                  style={{ background: 'var(--bg-raised)', boxShadow: 'none' }}
+                >
+                  <h3 style={{ margin: '0 0 12px', fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Plus size={16} /> Add line
+                  </h3>
+                  <div className="bpo-grid-2">
                     <label>
-                      <span className="employee-detail-label">Component</span>
+                      Component
                       <ComponentSelect
                         value={compId}
                         label={compLabel}
@@ -402,7 +536,7 @@ export default function BlanketPoDetailsPage() {
                       />
                     </label>
                     <label>
-                      <span className="employee-detail-label">Unit price</span>
+                      Unit price
                       <input
                         type="number"
                         min="0"
@@ -414,38 +548,46 @@ export default function BlanketPoDetailsPage() {
                       />
                     </label>
                     <label>
-                      <span className="employee-detail-label">UOM</span>
+                      UOM
                       <input value={uom} onChange={(e) => setUom(e.target.value)} disabled={busy} />
                     </label>
                     <label>
-                      <span className="employee-detail-label">Notes</span>
+                      Notes
                       <input
                         value={lineNotes}
                         onChange={(e) => setLineNotes(e.target.value)}
                         disabled={busy}
                       />
                     </label>
-                    <button
-                      type="submit"
-                      className="primary-button"
-                      disabled={busy || !compId || unitPrice === ''}
-                    >
-                      Add line
-                    </button>
-                  </form>
-                ) : null}
-              </>
-            ) : null}
+                  </div>
+                  <button
+                    type="submit"
+                    className="mes-btn mes-btn-primary"
+                    style={{ marginTop: 12 }}
+                    disabled={busy || !compId || unitPrice === ''}
+                  >
+                    Add line
+                  </button>
+                </form>
+              ) : null}
+            </section>
+          ) : null}
 
-            {tab === 'rules' ? (
-              <>
-                <h2 style={{ fontSize: 16, marginBottom: 12 }}>Recurring schedule rules</h2>
-                <p className="muted" style={{ marginTop: 0 }}>
-                  Add a draft rule, then activate it. Validity starts today and stays open until you
-                  deactivate or replace it. Activating a new rule for the same line + day retires the
-                  previous active one (stop date = today).
-                </p>
+          {tab === 'rules' ? (
+            <section className="mes-card">
+              <h2 style={{ margin: '0 0 4px', fontSize: 16 }}>Recurring schedule rules</h2>
+              <p className="muted" style={{ marginTop: 0, marginBottom: 16 }}>
+                Draft a rule, then activate it. Activating starts validity today; a new rule for the
+                same line + day retires the previous one.
+              </p>
 
+              {!rules.length ? (
+                <EmptyState
+                  icon={CalendarRange}
+                  title="No schedule rules"
+                  description="Add a weekly or monthly rule after the blanket is active and has lines."
+                />
+              ) : (
                 <div className="employees-table-wrap" style={{ marginBottom: 20 }}>
                   <table className="app-table">
                     <thead>
@@ -469,23 +611,29 @@ export default function BlanketPoDetailsPage() {
                             : 'draft';
                         return (
                           <tr key={r.id}>
-                            <td>{line?.component_label || r.blanket_po_line_id.slice(0, 8)}</td>
+                            <td>
+                              <TruncatedText>
+                                {line?.component_label || r.blanket_po_line_id.slice(0, 8)}
+                              </TruncatedText>
+                            </td>
                             <td>{r.cadence}</td>
                             <td>{formatRuleWhen(r)}</td>
                             <td>{r.default_quantity}</td>
                             <td>
                               {r.valid_from
-                                ? `${formatDisplayDate(r.valid_from)} — ${r.valid_to ? formatDisplayDate(r.valid_to) : 'present'}`
+                                ? `${formatDisplayDate(r.valid_from)} — ${
+                                    r.valid_to ? formatDisplayDate(r.valid_to) : 'present'
+                                  }`
                                 : '—'}
                             </td>
                             <td>
-                              <span className={statusClass(ruleStatus)}>{ruleStatus}</span>
+                              <StatusBadge status={ruleStatus} />
                             </td>
                             <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                               {!r.is_active && !r.valid_from ? (
                                 <button
                                   type="button"
-                                  className="primary-button"
+                                  className="mes-btn mes-btn-primary"
                                   disabled={busy || blanket.status !== 'active'}
                                   onClick={() => handleActivateRule(r.id)}
                                 >
@@ -495,7 +643,7 @@ export default function BlanketPoDetailsPage() {
                               {r.is_active ? (
                                 <button
                                   type="button"
-                                  className="neutral-button"
+                                  className="mes-btn mes-btn-secondary"
                                   disabled={busy}
                                   onClick={() => handleDeactivateRule(r.id)}
                                 >
@@ -506,25 +654,21 @@ export default function BlanketPoDetailsPage() {
                           </tr>
                         );
                       })}
-                      {!rules.length ? (
-                        <tr>
-                          <td colSpan="7" className="muted">
-                            No rules yet.
-                          </td>
-                        </tr>
-                      ) : null}
                     </tbody>
                   </table>
                 </div>
+              )}
 
-                {blanket.status === 'active' && lines.length ? (
-                  <form onSubmit={handleAddRule} className="af-inspector" style={{ maxWidth: 480 }}>
-                    <h3 style={{ margin: 0, fontSize: 14 }}>Add draft rule</h3>
-                    <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-                      Dates are set automatically when you activate.
-                    </p>
+              {blanket.status === 'active' && lines.length ? (
+                <form
+                  onSubmit={handleAddRule}
+                  className="mes-card"
+                  style={{ background: 'var(--bg-raised)', boxShadow: 'none' }}
+                >
+                  <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Add draft rule</h3>
+                  <div className="bpo-grid-2">
                     <label>
-                      <span className="employee-detail-label">Line</span>
+                      Line
                       <select
                         value={ruleForm.blanket_po_line_id}
                         onChange={(e) =>
@@ -542,7 +686,7 @@ export default function BlanketPoDetailsPage() {
                       </select>
                     </label>
                     <label>
-                      <span className="employee-detail-label">Cadence</span>
+                      Cadence
                       <select
                         value={ruleForm.cadence}
                         onChange={(e) => setRuleForm((f) => ({ ...f, cadence: e.target.value }))}
@@ -554,7 +698,7 @@ export default function BlanketPoDetailsPage() {
                     </label>
                     {ruleForm.cadence === 'weekly' ? (
                       <label>
-                        <span className="employee-detail-label">Weekday</span>
+                        Weekday
                         <select
                           value={ruleForm.weekday}
                           onChange={(e) => setRuleForm((f) => ({ ...f, weekday: e.target.value }))}
@@ -569,7 +713,7 @@ export default function BlanketPoDetailsPage() {
                       </label>
                     ) : (
                       <label>
-                        <span className="employee-detail-label">Day of month (1–28)</span>
+                        Day of month (1–28)
                         <input
                           type="number"
                           min="1"
@@ -582,7 +726,7 @@ export default function BlanketPoDetailsPage() {
                       </label>
                     )}
                     <label>
-                      <span className="employee-detail-label">Default quantity</span>
+                      Default quantity
                       <input
                         type="number"
                         min="0.0001"
@@ -595,29 +739,36 @@ export default function BlanketPoDetailsPage() {
                         disabled={busy}
                       />
                     </label>
-                    <button type="submit" className="primary-button" disabled={busy}>
-                      Add draft rule
-                    </button>
-                  </form>
-                ) : (
-                  <p className="muted">Activate the blanket and add lines to create schedule rules.</p>
-                )}
-              </>
-            ) : null}
+                  </div>
+                  <button type="submit" className="mes-btn mes-btn-primary" style={{ marginTop: 12 }} disabled={busy}>
+                    Add draft rule
+                  </button>
+                </form>
+              ) : (
+                <p className="muted" style={{ marginTop: 12 }}>
+                  Activate the blanket and add lines to create schedule rules.
+                </p>
+              )}
+            </section>
+          ) : null}
 
-            {tab === 'schedules' ? (
-              <>
-                <h2 style={{ fontSize: 16, marginBottom: 12 }}>Delivery schedules</h2>
+          {tab === 'schedules' ? (
+            <section className="mes-card">
+              <h2 style={{ margin: '0 0 4px', fontSize: 16 }}>Delivery schedules</h2>
+              <p className="muted" style={{ marginTop: 0, marginBottom: 16 }}>
+                Dated deliveries sorted by soonest due. Release planned rows to create shop-floor cards.
+              </p>
 
-                {blanket.status === 'active' && activeRules.length ? (
-                  <form
-                    onSubmit={handleGenerate}
-                    className="af-inspector"
-                    style={{ maxWidth: 520, marginBottom: 24 }}
-                  >
-                    <h3 style={{ margin: 0, fontSize: 14 }}>Generate from rule</h3>
+              {blanket.status === 'active' && activeRules.length ? (
+                <form
+                  onSubmit={handleGenerate}
+                  className="mes-card"
+                  style={{ background: 'var(--bg-raised)', boxShadow: 'none', marginBottom: 16 }}
+                >
+                  <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Generate from rule</h3>
+                  <div className="bpo-grid-3">
                     <label>
-                      <span className="employee-detail-label">Rule</span>
+                      Rule
                       <select
                         value={genForm.rule_id}
                         onChange={(e) => setGenForm((f) => ({ ...f, rule_id: e.target.value }))}
@@ -639,7 +790,7 @@ export default function BlanketPoDetailsPage() {
                       </select>
                     </label>
                     <label>
-                      <span className="employee-detail-label">Horizon start</span>
+                      Horizon start
                       <input
                         type="date"
                         value={genForm.horizon_start}
@@ -651,7 +802,7 @@ export default function BlanketPoDetailsPage() {
                       />
                     </label>
                     <label>
-                      <span className="employee-detail-label">Horizon end</span>
+                      Horizon end
                       <input
                         type="date"
                         value={genForm.horizon_end}
@@ -660,21 +811,23 @@ export default function BlanketPoDetailsPage() {
                         disabled={busy}
                       />
                     </label>
-                    <button type="submit" className="primary-button" disabled={busy}>
-                      Generate occurrences
-                    </button>
-                  </form>
-                ) : null}
+                  </div>
+                  <button type="submit" className="mes-btn mes-btn-primary" style={{ marginTop: 12 }} disabled={busy}>
+                    Generate occurrences
+                  </button>
+                </form>
+              ) : null}
 
-                {blanket.status === 'active' && lines.length ? (
-                  <form
-                    onSubmit={handleOneOff}
-                    className="af-inspector"
-                    style={{ maxWidth: 520, marginBottom: 24 }}
-                  >
-                    <h3 style={{ margin: 0, fontSize: 14 }}>Add one-off schedule</h3>
+              {blanket.status === 'active' && lines.length ? (
+                <form
+                  onSubmit={handleOneOff}
+                  className="mes-card"
+                  style={{ background: 'var(--bg-raised)', boxShadow: 'none', marginBottom: 16 }}
+                >
+                  <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Add one-off schedule</h3>
+                  <div className="bpo-grid-3">
                     <label>
-                      <span className="employee-detail-label">Line</span>
+                      Line
                       <select
                         value={oneOff.blanket_po_line_id}
                         onChange={(e) =>
@@ -692,7 +845,7 @@ export default function BlanketPoDetailsPage() {
                       </select>
                     </label>
                     <label>
-                      <span className="employee-detail-label">Due date</span>
+                      Due date
                       <input
                         type="date"
                         value={oneOff.due_date}
@@ -702,7 +855,7 @@ export default function BlanketPoDetailsPage() {
                       />
                     </label>
                     <label>
-                      <span className="employee-detail-label">Quantity</span>
+                      Quantity
                       <input
                         type="number"
                         min="0.0001"
@@ -713,99 +866,95 @@ export default function BlanketPoDetailsPage() {
                         disabled={busy}
                       />
                     </label>
-                    <button type="submit" className="primary-button" disabled={busy}>
-                      Add schedule
-                    </button>
-                  </form>
-                ) : null}
+                  </div>
+                  <button type="submit" className="mes-btn mes-btn-primary" style={{ marginTop: 12 }} disabled={busy}>
+                    Add schedule
+                  </button>
+                </form>
+              ) : null}
 
-                <div className="employees-table-wrap">
-                  <table className="app-table">
-                    <thead>
-                      <tr>
-                        <th>Number</th>
-                        <th>Due</th>
-                        <th>Component</th>
-                        <th>Qty</th>
-                        <th>Status</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {schedules.map((s) => (
-                        <tr key={s.id}>
-                          <td>{s.schedule_number}</td>
-                          <td>
-                            <strong>
-                              {formatDueLabel(s.due_date, s.due_weekday_label)}
-                            </strong>
-                            {s.rule_weekday_label || s.rule_month_day != null ? (
-                              <div className="muted" style={{ fontSize: 12 }}>
-                                Rule:{' '}
-                                {s.rule_cadence === 'weekly'
-                                  ? `Weekly ${s.rule_weekday_label}`
-                                  : s.rule_cadence === 'monthly'
-                                    ? `Monthly day ${s.rule_month_day}`
-                                    : s.rule_cadence}
-                              </div>
-                            ) : null}
-                          </td>
-                          <td>{s.component_label}</td>
-                          <td>{s.quantity}</td>
-                          <td>
-                            <span className={statusClass(s.status)}>{s.status}</span>
-                          </td>
-                          <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            {s.status === 'planned' || s.status === 'released' ? (
-                              <>
-                                {s.status === 'planned' ? (
-                                  <button
-                                    type="button"
-                                    className="neutral-button"
-                                    disabled={busy}
-                                    onClick={() => handleEditQty(s)}
-                                  >
-                                    Edit qty
-                                  </button>
-                                ) : null}
-                                <button
-                                  type="button"
-                                  className="primary-button"
-                                  disabled={busy}
-                                  onClick={() => handleRelease(s)}
-                                >
-                                  Release to shop floor
-                                </button>
-                              </>
-                            ) : null}
-                            {s.status !== 'cancelled' ? (
-                              <button
-                                type="button"
-                                className="neutral-button"
-                                disabled={busy}
-                                onClick={() => handleCancelSchedule(s.id)}
-                              >
-                                Cancel
-                              </button>
-                            ) : null}
-                          </td>
-                        </tr>
-                      ))}
-                      {!schedules.length ? (
-                        <tr>
-                          <td colSpan="6" className="muted">
-                            No schedules yet. Generate from a rule or add a one-off.
-                          </td>
-                        </tr>
-                      ) : null}
-                    </tbody>
-                  </table>
+              {!sortedSchedules.length ? (
+                <EmptyState
+                  icon={Truck}
+                  title="No delivery schedules yet"
+                  description="Generate from an active rule over a horizon, or add a one-off due date."
+                />
+              ) : (
+                <div className="mes-ship-stack">
+                  {sortedSchedules.map((s) => (
+                    <article key={s.id} className="mes-ship-card">
+                      <div>
+                        <p className="mes-ship-eta">
+                          {formatDueLabel(s.due_date, s.due_weekday_label)}
+                          <small>ETA / due</small>
+                        </p>
+                      </div>
+                      <div className="mes-ship-body">
+                        <h3>
+                          <TruncatedText>{s.schedule_number}</TruncatedText>
+                        </h3>
+                        <p>
+                          <TruncatedText>{s.component_label || '—'}</TruncatedText>
+                        </p>
+                        <p style={{ marginTop: 6 }}>
+                          Qty <strong>{s.quantity}</strong>
+                          {s.rule_weekday_label
+                            ? ` · weekly ${s.rule_weekday_label}`
+                            : s.rule_month_day != null
+                              ? ` · monthly day ${s.rule_month_day}`
+                              : ''}
+                        </p>
+                      </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'flex-end',
+                          gap: 8,
+                        }}
+                      >
+                        <StatusBadge status={s.status}>{carrierLabel(s.status)}</StatusBadge>
+                        <div className="" style={{display: 'flex', flexDirection: 'row', gap: 4}}>
+                        {s.status === 'planned' ? (
+                          <>
+                            <button
+                              type="button"
+                              className="mes-btn mes-btn-secondary"
+                              disabled={busy}
+                              onClick={() => handleEditQty(s)}
+                            >
+                              Edit qty
+                            </button>
+                            <button
+                              type="button"
+                              className="mes-btn mes-btn-primary"
+                              disabled={busy}
+                              onClick={() => setReleaseSchedule(s)}
+                            >
+                              Release to floor
+                            </button>
+                          </>
+                        ) : null}
+                        {s.status !== 'cancelled' ? (
+                          <button
+                            type="button"
+                            className="mes-btn mes-btn-secondary"
+                            disabled={busy}
+                            onClick={() => handleCancelSchedule(s.id)}
+                          >
+                            Cancel
+                          </button>
+                        ) : null}
+                        </div>
+                      </div>
+                    </article>
+                  ))}
                 </div>
-              </>
-            ) : null}
-          </>
-        ) : null}
-      </section>
+              )}
+            </section>
+          ) : null}
+        </>
+      ) : null}
 
       <ReleaseToFloorModal
         open={!!releaseSchedule}

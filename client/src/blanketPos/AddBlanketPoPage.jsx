@@ -1,41 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Check, Upload } from 'lucide-react';
+import { ArrowLeft, Check, CalendarRange } from 'lucide-react';
 import api from '../api/client';
 import ComponentSelect from './ComponentSelect';
 import { WEEKDAYS } from './scheduleLabels';
-
-const DAY_ALIASES = {
-  mon: 1,
-  monday: 1,
-  tue: 2,
-  tues: 2,
-  tuesday: 2,
-  wed: 3,
-  wednesday: 3,
-  thu: 4,
-  thur: 4,
-  thurs: 4,
-  thursday: 4,
-  fri: 5,
-  friday: 5,
-  sat: 6,
-  saturday: 6,
-  sun: 7,
-  sunday: 7,
-  1: 1,
-  2: 2,
-  3: 3,
-  4: 4,
-  5: 5,
-  6: 6,
-  7: 7,
-};
+import { EmptyState, PageHeader } from '../components/mes';
 
 const STEPS = [
   { id: 1, title: 'Customer', hint: 'Who is this contract for?' },
   { id: 2, title: 'Part & price', hint: 'Component and locked unit price' },
-  { id: 3, title: 'Weekly schedule', hint: 'Which days and how many?' },
+  { id: 3, title: 'Weekly schedule', hint: 'Days, quantities, and horizon' },
 ];
 
 function emptyWeek() {
@@ -45,24 +19,14 @@ function emptyWeek() {
   }, {});
 }
 
-function parseScheduleCsv(text) {
-  const next = emptyWeek();
-  const lines = String(text || '')
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
 
-  for (const line of lines) {
-    if (/^day|^weekday|^dow/i.test(line)) continue;
-    const parts = line.split(/[,;\t]/).map((p) => p.trim());
-    if (parts.length < 2) continue;
-    const dayKey = parts[0].toLowerCase();
-    const day = DAY_ALIASES[dayKey];
-    const qty = Number(parts[1].replace(/,/g, ''));
-    if (!day || !Number.isFinite(qty) || qty <= 0) continue;
-    next[day] = { enabled: true, qty: String(qty) };
-  }
-  return next;
+function plusWeeks(iso, weeks) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + weeks * 7);
+  return d.toISOString().slice(0, 10);
 }
 
 export default function AddBlanketPoPage() {
@@ -78,7 +42,8 @@ export default function AddBlanketPoPage() {
   const [uom, setUom] = useState('pcs');
   const [week, setWeek] = useState(emptyWeek);
   const [activateNow, setActivateNow] = useState(true);
-  const [csvHint, setCsvHint] = useState('');
+  const [horizonStart, setHorizonStart] = useState(todayStr);
+  const [horizonEnd, setHorizonEnd] = useState(() => plusWeeks(todayStr(), 4));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -116,26 +81,6 @@ export default function AddBlanketPoPage() {
     }));
   }
 
-  function handleCsvFile(file) {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const parsed = parseScheduleCsv(String(reader.result || ''));
-        const count = Object.values(parsed).filter((d) => d.enabled).length;
-        if (!count) {
-          setCsvHint('No valid rows found. Use: Monday,100');
-          return;
-        }
-        setWeek(parsed);
-        setCsvHint(`Loaded ${count} day${count === 1 ? '' : 's'} from ${file.name}`);
-      } catch {
-        setCsvHint('Could not read that file.');
-      }
-    };
-    reader.readAsText(file);
-  }
-
   function canNext() {
     if (step === 1) return Boolean(customerId);
     if (step === 2) {
@@ -148,6 +93,10 @@ export default function AddBlanketPoPage() {
   async function handleSubmit() {
     if (!enabledDays.length) {
       setError('Turn on at least one delivery day and enter a quantity.');
+      return;
+    }
+    if (activateNow && (!horizonStart || !horizonEnd || horizonEnd < horizonStart)) {
+      setError('Set a valid schedule horizon (end on or after start).');
       return;
     }
 
@@ -184,6 +133,11 @@ export default function AddBlanketPoPage() {
         await api.post(`/blanket-pos/${blanketId}/activate`);
         for (const ruleId of ruleIds) {
           await api.post(`/delivery-schedules/rules/${ruleId}/activate`);
+          await api.post('/delivery-schedules/generate', {
+            rule_id: ruleId,
+            horizon_start: horizonStart,
+            horizon_end: horizonEnd,
+          });
         }
       }
 
@@ -196,20 +150,18 @@ export default function AddBlanketPoPage() {
   }
 
   return (
-    <main className="app-shell bpo-setup-page">
-      <header className="app-header bpo-setup-header">
-        <button type="button" className="neutral-button bpo-back" onClick={() => navigate('/blanket-pos')}>
-          <ArrowLeft size={16} />
-          All contracts
-        </button>
-        <div className="header-title-block">
-          <p className="eyebrow">Demand management</p>
-          <h1>New customer contract</h1>
-          <p className="muted">
-            Pick the customer, lock the part price, then set their weekly delivery days.
-          </p>
-        </div>
-      </header>
+    <main className="mes-shell bpo-setup-page">
+      <PageHeader
+        eyebrow="Sourcing"
+        title="New customer contract"
+        subtitle="Pick the customer, lock the part price, set weekly delivery days, and generate dated schedules."
+        actions={
+          <button type="button" className="mes-btn mes-btn-secondary" onClick={() => navigate('/blanket-pos')}>
+            <ArrowLeft size={16} />
+            All contracts
+          </button>
+        }
+      />
 
       <nav className="bpo-steps" aria-label="Setup steps">
         {STEPS.map((s) => (
@@ -342,30 +294,19 @@ export default function AddBlanketPoPage() {
           <div className="bpo-panel">
             <h2>Weekly delivery schedule</h2>
             <p className="muted bpo-lead">
-              Tap the days the customer wants deliveries, then enter the usual quantity for each day.
-              Or upload a simple CSV from their schedule sheet.
+              Tap delivery days and enter quantities. When you activate, dated delivery schedules are
+              generated for the horizon below — no spreadsheet upload required.
             </p>
 
-            <div className="bpo-upload-row">
-              <label className="bpo-upload-btn">
-                <Upload size={16} />
-                Upload weekly schedule
-                <input
-                  type="file"
-                  accept=".csv,.txt,text/csv,text/plain"
-                  hidden
-                  disabled={submitting}
-                  onChange={(e) => {
-                    handleCsvFile(e.target.files?.[0]);
-                    e.target.value = '';
-                  }}
-                />
-              </label>
-              <span className="muted">Format: Monday,100 — one day per line</span>
-            </div>
-            {csvHint ? <p className="bpo-csv-hint">{csvHint}</p> : null}
+            {!enabledDays.length ? (
+              <EmptyState
+                icon={CalendarRange}
+                title="No delivery days yet"
+                description="Enable at least one weekday and set a quantity to build the recurring plan."
+              />
+            ) : null}
 
-            <div className="bpo-week-grid">
+            <div className="bpo-week-grid" style={{ marginTop: 16 }}>
               {WEEKDAYS.map((d) => {
                 const cell = week[d.value];
                 return (
@@ -397,6 +338,30 @@ export default function AddBlanketPoPage() {
               })}
             </div>
 
+            <div className="bpo-grid-2" style={{ marginTop: 20 }}>
+              <label>
+                Horizon start
+                <input
+                  type="date"
+                  value={horizonStart}
+                  onChange={(e) => setHorizonStart(e.target.value)}
+                  disabled={submitting || !activateNow}
+                />
+              </label>
+              <label>
+                Horizon end
+                <input
+                  type="date"
+                  value={horizonEnd}
+                  onChange={(e) => setHorizonEnd(e.target.value)}
+                  disabled={submitting || !activateNow}
+                />
+              </label>
+            </div>
+            <p className="muted" style={{ marginTop: 8 }}>
+              Defaults to today through four weeks. Schedules are created only when you activate.
+            </p>
+
             <label className="bpo-check">
               <input
                 type="checkbox"
@@ -405,8 +370,8 @@ export default function AddBlanketPoPage() {
                 disabled={submitting}
               />
               <span>
-                Activate contract now
-                <small>Starts validity today and turns on these weekly rules</small>
+                Activate & generate schedules
+                <small>Starts validity today, activates weekly rules, and creates dated deliveries</small>
               </span>
             </label>
 
@@ -435,6 +400,12 @@ export default function AddBlanketPoPage() {
                       : 'None selected'}
                   </strong>
                 </li>
+                <li>
+                  <span>Horizon</span>
+                  <strong>
+                    {activateNow ? `${horizonStart} → ${horizonEnd}` : 'Draft — no dates yet'}
+                  </strong>
+                </li>
               </ul>
             </div>
           </div>
@@ -444,7 +415,7 @@ export default function AddBlanketPoPage() {
           {step > 1 ? (
             <button
               type="button"
-              className="neutral-button"
+              className="mes-btn mes-btn-secondary"
               disabled={submitting}
               onClick={() => setStep((s) => s - 1)}
             >
@@ -453,7 +424,7 @@ export default function AddBlanketPoPage() {
           ) : (
             <button
               type="button"
-              className="neutral-button"
+              className="mes-btn mes-btn-secondary"
               disabled={submitting}
               onClick={() => navigate('/blanket-pos')}
             >
@@ -464,7 +435,7 @@ export default function AddBlanketPoPage() {
           {step < 3 ? (
             <button
               type="button"
-              className="primary-button"
+              className="mes-btn mes-btn-primary"
               disabled={submitting || !canNext()}
               onClick={() => setStep((s) => s + 1)}
             >
@@ -473,11 +444,15 @@ export default function AddBlanketPoPage() {
           ) : (
             <button
               type="button"
-              className="primary-button"
+              className="mes-btn mes-btn-primary"
               disabled={submitting || !enabledDays.length}
               onClick={handleSubmit}
             >
-              {submitting ? 'Saving…' : activateNow ? 'Save & activate' : 'Save as draft'}
+              {submitting
+                ? 'Saving…'
+                : activateNow
+                  ? 'Save, activate & schedule'
+                  : 'Save as draft'}
             </button>
           )}
         </div>

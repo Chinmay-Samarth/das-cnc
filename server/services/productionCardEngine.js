@@ -102,25 +102,38 @@ async function enrichCards(rows) {
   const recordIds = [...new Set(cards.map((c) => c.master_record_id).filter(Boolean))];
   const empIds = [...new Set(cards.map((c) => c.assigned_employee_id).filter(Boolean))];
   const scheduleIds = [...new Set(cards.map((c) => c.delivery_schedule_id).filter(Boolean))];
+  const wcIds = [...new Set(cards.map((c) => c.work_center_id).filter(Boolean))];
+  const nodeIds = [...new Set(cards.map((c) => c.current_activity_flow_node_id).filter(Boolean))];
 
-  const [{ data: lookups }, { data: employees }, { data: schedules }] = await Promise.all([
-    recordIds.length
-      ? supabase.from('v_master_lookup').select('record_id, label').in('record_id', recordIds)
-      : Promise.resolve({ data: [] }),
-    empIds.length
-      ? supabase.from('employees').select('id, full_name, employee_code').in('id', empIds)
-      : Promise.resolve({ data: [] }),
-    scheduleIds.length
-      ? supabase
-          .from('delivery_schedules')
-          .select('id, schedule_number, due_date, quantity, status, bom_version_id, activity_flow_version_id, blanket_po_line_id')
-          .in('id', scheduleIds)
-      : Promise.resolve({ data: [] }),
-  ]);
+  const [{ data: lookups }, { data: employees }, { data: schedules }, { data: workCenters }, { data: nodes }] =
+    await Promise.all([
+      recordIds.length
+        ? supabase.from('v_master_lookup').select('record_id, label').in('record_id', recordIds)
+        : Promise.resolve({ data: [] }),
+      empIds.length
+        ? supabase.from('employees').select('id, full_name, employee_code').in('id', empIds)
+        : Promise.resolve({ data: [] }),
+      scheduleIds.length
+        ? supabase
+            .from('delivery_schedules')
+            .select(
+              'id, schedule_number, due_date, quantity, status, bom_version_id, activity_flow_version_id, blanket_po_line_id'
+            )
+            .in('id', scheduleIds)
+        : Promise.resolve({ data: [] }),
+      wcIds.length
+        ? supabase.from('work_centers').select('id, name, code').in('id', wcIds)
+        : Promise.resolve({ data: [] }),
+      nodeIds.length
+        ? supabase.from('activity_flow_nodes').select('id, label, activity_type, sequence').in('id', nodeIds)
+        : Promise.resolve({ data: [] }),
+    ]);
 
   const labelById = Object.fromEntries((lookups || []).map((l) => [l.record_id, l.label]));
   const empById = Object.fromEntries((employees || []).map((e) => [e.id, e]));
   const schedById = Object.fromEntries((schedules || []).map((s) => [s.id, s]));
+  const wcById = Object.fromEntries((workCenters || []).map((w) => [w.id, w]));
+  const nodeById = Object.fromEntries((nodes || []).map((n) => [n.id, n]));
 
   // customer names via lines → blankets
   const lineIds = [...new Set((schedules || []).map((s) => s.blanket_po_line_id).filter(Boolean))];
@@ -153,11 +166,17 @@ async function enrichCards(rows) {
     const sched = schedById[c.delivery_schedule_id];
     const meta = sched ? customerByLine[sched.blanket_po_line_id] || {} : {};
     const emp = empById[c.assigned_employee_id];
+    const wc = wcById[c.work_center_id];
+    const node = nodeById[c.current_activity_flow_node_id];
     return {
       ...c,
       component_label: labelById[c.master_record_id] || null,
       assigned_employee_name: emp?.full_name || null,
       assigned_employee_code: emp?.employee_code || null,
+      work_center_name: wc?.name || null,
+      work_center_code: wc?.code || null,
+      current_node_label: node?.label || null,
+      current_node_type: node?.activity_type || null,
       schedule_number: sched?.schedule_number || null,
       schedule_due_date: sched?.due_date || null,
       schedule_quantity: sched ? toNumber(sched.quantity) : null,
@@ -174,6 +193,8 @@ async function enrichCards(rows) {
       activity_flow_version_id: sched?.activity_flow_version_id || null,
       customer_name: meta.customer_name || null,
       blanket_number: meta.blanket_number || null,
+      day_goal: dayGoal(c),
+      remaining_qty: Math.max(0, dayGoal(c) - toNumber(c.total_good_produced)),
     };
   });
 }
@@ -209,9 +230,7 @@ function previewDailySplit(quantity, dueDate, fromDate = todayDateString()) {
 
 async function releaseToProduction(payload, createdBy) {
   const scheduleId = payload.delivery_schedule_id;
-  const employeeId = payload.assigned_employee_id;
   if (!isValidUUID(scheduleId)) throw httpError('delivery_schedule_id is required');
-  await assertEmployee(employeeId);
 
   const { data: schedule, error } = await supabase
     .from('delivery_schedules')
@@ -221,6 +240,9 @@ async function releaseToProduction(payload, createdBy) {
   if (error) throw error;
   if (!schedule) throw httpError('Delivery schedule not found', 404);
   if (schedule.status === 'cancelled') throw httpError('Cannot release a cancelled schedule');
+  if (schedule.status === 'released') {
+    throw httpError('Already released to production', 409);
+  }
 
   const { data: existing } = await supabase
     .from('production_cards')
@@ -253,10 +275,6 @@ async function releaseToProduction(payload, createdBy) {
       .single();
     if (upErr) throw upErr;
     releasedSchedule = updated;
-  } else if (schedule.status === 'released') {
-    if (!bomVersionId || !afVersionId) {
-      throw httpError('Released schedule is missing frozen BOM or Activity Flow');
-    }
   } else {
     throw httpError('Schedule cannot be released to production');
   }
@@ -279,7 +297,7 @@ async function releaseToProduction(payload, createdBy) {
         card_number: cardNumber,
         delivery_schedule_id: scheduleId,
         master_record_id: line.master_record_id,
-        assigned_employee_id: employeeId,
+        assigned_employee_id: null,
         work_date: workingDays[i],
         target_quantity: targets[i],
         overdue_quantity: 0,
@@ -287,6 +305,7 @@ async function releaseToProduction(payload, createdBy) {
         total_scrap_produced: 0,
         backflushed_good_qty: 0,
         status: 'READY',
+        assignment_status: 'unassigned',
         created_by: createdBy || null,
       })
       .select('*')
@@ -295,9 +314,24 @@ async function releaseToProduction(payload, createdBy) {
     cards.push(card);
   }
 
+  // Auto-assign by earliest due date, equalizing backlog one card at a time
+  const { assignCardsInDueOrder } = require('./productionAssignEngine');
+  const assignments = await assignCardsInDueOrder(cards);
+  const assignedRows = assignments.map((a) => a.card);
+
   return {
     schedule: releasedSchedule,
-    cards: await enrichCards(cards),
+    cards: await enrichCards(assignedRows),
+    assignments: assignments.map((a) => ({
+      card_id: a.card?.id,
+      employee_id: a.assignee?.id || null,
+      employee_name: a.assignee?.full_name || null,
+      work_center_id: a.node?.work_center_id || a.card?.work_center_id || null,
+      node_id: a.node?.id || null,
+      node_label: a.node?.label || null,
+      assignment_status: a.card?.assignment_status,
+      reason: a.reason || null,
+    })),
     split_preview: workingDays.map((d, i) => ({ work_date: d, target_quantity: targets[i] })),
   };
 }
@@ -306,6 +340,8 @@ async function listCards(filters = {}) {
   let query = supabase.from('production_cards').select('*').order('work_date', { ascending: true });
 
   if (filters.employee_id) query = query.eq('assigned_employee_id', filters.employee_id);
+  if (filters.work_center_id) query = query.eq('work_center_id', filters.work_center_id);
+  if (filters.assignment_status) query = query.eq('assignment_status', filters.assignment_status);
   if (filters.status) query = query.eq('status', filters.status);
   if (filters.from) query = query.gte('work_date', filters.from);
   if (filters.to) query = query.lte('work_date', filters.to);
@@ -315,7 +351,14 @@ async function listCards(filters = {}) {
 
   const { data, error } = await query;
   if (error) throw error;
-  return enrichCards(data || []);
+  const enriched = await enrichCards(data || []);
+  return enriched.sort((a, b) => {
+    const da = a.schedule_due_date || '9999-12-31';
+    const db = b.schedule_due_date || '9999-12-31';
+    if (da !== db) return da < db ? -1 : 1;
+    if (a.work_date !== b.work_date) return a.work_date < b.work_date ? -1 : 1;
+    return String(a.card_number || '').localeCompare(String(b.card_number || ''));
+  });
 }
 
 async function listMyToday(employeeId) {
@@ -330,7 +373,72 @@ async function listMyToday(employeeId) {
     .order('work_date', { ascending: true });
 
   if (error) throw error;
-  return enrichCards(data || []);
+  const enriched = await enrichCards(data || []);
+  // Due date ascending, then status priority, then card number
+  const statusRank = { OVERDUE: 0, RUNNING: 1, READY: 2, COMPLETED: 3 };
+  const cards = enriched.sort((a, b) => {
+    const da = a.schedule_due_date || '9999-12-31';
+    const db = b.schedule_due_date || '9999-12-31';
+    if (da !== db) return da < db ? -1 : 1;
+    const sa = statusRank[a.status] ?? 9;
+    const sb = statusRank[b.status] ?? 9;
+    if (sa !== sb) return sa - sb;
+    return String(a.card_number || '').localeCompare(String(b.card_number || ''));
+  });
+
+  const completionStats = await sumOpCompletionsForEmployee(employeeId, today);
+  const opsCompletedToday = completionStats.count;
+  const completedGoodToday = completionStats.good_qty;
+  const cardsCompletedToday = cards.filter((c) => c.status === 'COMPLETED').length;
+
+  // Efficiency: current-op progress on open cards + ledgered good from finished ops today.
+  // Completed-op good also counts toward the goal so handoffs don't zero out the index.
+  const openCards = cards.filter((c) => c.status !== 'COMPLETED');
+  const openGood = openCards.reduce((s, c) => s + toNumber(c.total_good_produced), 0);
+  const openGoal = openCards.reduce((s, c) => s + dayGoal(c), 0);
+  const goodToday = openGood + completedGoodToday;
+  const goalToday = openGoal + completedGoodToday;
+  const efficiencyPct = goalToday > 0 ? Math.round((goodToday / goalToday) * 100) : 0;
+
+  return {
+    cards,
+    ops_completed_today: opsCompletedToday,
+    cards_completed_today: cardsCompletedToday,
+    // Credit = op handoffs finished by this employee today (primary), plus final cards if any
+    completed_credit: Math.max(opsCompletedToday, cardsCompletedToday),
+    good_today: goodToday,
+    goal_today: goalToday,
+    efficiency_pct: efficiencyPct,
+  };
+}
+
+async function sumOpCompletionsForEmployee(employeeId, date) {
+  if (!isValidUUID(employeeId) || !date) {
+    return { count: 0, good_qty: 0, scrap_qty: 0 };
+  }
+  const start = `${date}T00:00:00.000Z`;
+  const endDate = new Date(`${date}T00:00:00.000Z`);
+  endDate.setUTCDate(endDate.getUTCDate() + 1);
+  const end = endDate.toISOString();
+
+  const { data, error } = await supabase
+    .from('production_card_op_completions')
+    .select('id, good_qty, scrap_qty')
+    .eq('employee_id', employeeId)
+    .gte('completed_at', start)
+    .lt('completed_at', end);
+  if (error) throw error;
+  const rows = data || [];
+  return {
+    count: rows.length,
+    good_qty: rows.reduce((s, r) => s + toNumber(r.good_qty), 0),
+    scrap_qty: rows.reduce((s, r) => s + toNumber(r.scrap_qty), 0),
+  };
+}
+
+async function countOpCompletionsForEmployee(employeeId, date) {
+  const stats = await sumOpCompletionsForEmployee(employeeId, date);
+  return stats.count;
 }
 
 async function rolloverOverdue() {
@@ -429,7 +537,19 @@ async function reportProgress(cardId, payload, actorEmployeeId, { isManager = fa
   const goal = dayGoal(card);
   const doneForDay = !!payload.done_for_day || newGood >= goal;
 
-  if (goodDelta > 0) {
+  const {
+    resolveFirstSchedulableNode,
+    advanceCardAfterOp,
+  } = require('./productionAssignEngine');
+
+  // Backflush RM only on the first schedulable AF node (pieces already issued upstream)
+  const firstNode = await resolveFirstSchedulableNode(card.activity_flow_version_id);
+  const isFirstOp =
+    !card.current_activity_flow_node_id ||
+    (firstNode && card.current_activity_flow_node_id === firstNode.id);
+
+  let backflushedGood = toNumber(card.backflushed_good_qty);
+  if (goodDelta > 0 && isFirstOp) {
     const bomVersionId = card.bom_version_id;
     await backflushRawMaterials({
       bomVersionId,
@@ -438,26 +558,59 @@ async function reportProgress(cardId, payload, actorEmployeeId, { isManager = fa
       parentMasterRecordId: card.master_record_id,
       cardNumber: card.card_number,
     });
+    backflushedGood += goodDelta;
   }
 
+  // Persist qty first; decide COMPLETED vs handoff after advance attempt
   const updates = {
     total_good_produced: newGood,
     total_scrap_produced: newScrap,
-    backflushed_good_qty: toNumber(card.backflushed_good_qty) + goodDelta,
-    status: doneForDay && newGood >= goal ? 'COMPLETED' : 'RUNNING',
+    backflushed_good_qty: backflushedGood,
+    status: 'RUNNING',
+    completed_at: null,
   };
-  if (updates.status === 'COMPLETED') {
-    updates.completed_at = new Date().toISOString();
-  }
 
-  const { data, error } = await supabase
+  const { data: qtyUpdated, error } = await supabase
     .from('production_cards')
     .update(updates)
     .eq('id', cardId)
     .select('*')
     .single();
   if (error) throw error;
-  const [enriched] = await enrichCards([data]);
+
+  let advance = null;
+  if (doneForDay && newGood >= goal) {
+    advance = await advanceCardAfterOp(cardId, card.current_activity_flow_node_id, {
+      good_qty: newGood,
+      scrap_qty: newScrap,
+      employee_id: actorEmployeeId || card.assigned_employee_id,
+      work_center_id: card.work_center_id,
+    });
+
+    if (advance?.advanced) {
+      // Next AF work center — counters reset; stay open for next operator
+      const [enriched] = await enrichCards([advance.card || qtyUpdated]);
+      return { ...enriched, advance };
+    }
+
+    // No further schedulable op — complete the daily card (completion already ledgered)
+    const { data: completed, error: cErr } = await supabase
+      .from('production_cards')
+      .update({
+        status: 'COMPLETED',
+        completed_at: new Date().toISOString(),
+        total_good_produced: newGood,
+        total_scrap_produced: newScrap,
+      })
+      .eq('id', cardId)
+      .select('*')
+      .single();
+    if (cErr) throw cErr;
+    const [enriched] = await enrichCards([completed]);
+    return { ...enriched, advance };
+  }
+
+  const [enriched] = await enrichCards([qtyUpdated]);
   return enriched;
 }
 
@@ -482,7 +635,7 @@ async function completeMachiningOp(cardId, nodeId, payload, actorEmployeeId, opt
     .from('activity_flow_nodes')
     .select('*')
     .eq('id', nodeId)
-    .eq('activity_flow_version_id', card.activity_flow_version_id)
+    .eq('flow_version_id', card.activity_flow_version_id)
     .maybeSingle();
   if (nErr) throw nErr;
   if (!node) throw httpError('Activity flow node not found on this card’s routing', 404);
@@ -505,12 +658,24 @@ async function completeMachiningOp(cardId, nodeId, payload, actorEmployeeId, opt
     .single();
   if (error) throw error;
 
+  const goodForOp = Math.max(toNumber(card.total_good_produced), qty);
+  const scrapForOp = toNumber(card.total_scrap_produced);
+
+  const { advanceCardAfterOp } = require('./productionAssignEngine');
+  const advance = await advanceCardAfterOp(cardId, nodeId, {
+    good_qty: goodForOp,
+    scrap_qty: scrapForOp,
+    employee_id: actorEmployeeId || card.assigned_employee_id,
+    work_center_id: card.work_center_id,
+  });
+
   return {
     lot: {
       ...lot,
       quantity: toNumber(lot.quantity),
       node_label: node.label,
     },
+    advance,
   };
 }
 
@@ -530,11 +695,179 @@ async function listCardFlowNodes(cardId) {
   if (!card.activity_flow_version_id) return [];
   const { data, error } = await supabase
     .from('activity_flow_nodes')
-    .select('id, label, activity_type, sequence, supplier_id, lead_time_days, work_center_id')
-    .eq('activity_flow_version_id', card.activity_flow_version_id)
+    .select(
+      'id, label, activity_type, sequence, supplier_id, lead_time_days, work_center_id, position_x, position_y'
+    )
+    .eq('flow_version_id', card.activity_flow_version_id)
     .order('sequence', { ascending: true });
   if (error) throw error;
   return data || [];
+}
+
+async function listCardOpCompletions(cardId) {
+  if (!isValidUUID(cardId)) throw httpError('Invalid card id');
+  const { data, error } = await supabase
+    .from('production_card_op_completions')
+    .select('*')
+    .eq('production_card_id', cardId)
+    .order('completed_at', { ascending: true });
+  if (error) throw error;
+
+  const rows = data || [];
+  const empIds = [...new Set(rows.map((r) => r.employee_id).filter(Boolean))];
+  const wcIds = [...new Set(rows.map((r) => r.work_center_id).filter(Boolean))];
+
+  const [{ data: employees }, { data: workCenters }] = await Promise.all([
+    empIds.length
+      ? supabase.from('employees').select('id, full_name, employee_code').in('id', empIds)
+      : Promise.resolve({ data: [] }),
+    wcIds.length
+      ? supabase.from('work_centers').select('id, code, name').in('id', wcIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const empById = Object.fromEntries((employees || []).map((e) => [e.id, e]));
+  const wcById = Object.fromEntries((workCenters || []).map((w) => [w.id, w]));
+
+  return rows.map((r) => {
+    const emp = r.employee_id ? empById[r.employee_id] : null;
+    const wc = r.work_center_id ? wcById[r.work_center_id] : null;
+    return {
+      ...r,
+      good_qty: toNumber(r.good_qty),
+      scrap_qty: toNumber(r.scrap_qty),
+      operator_name: emp?.full_name || null,
+      operator_code: emp?.employee_code || null,
+      work_center_code: wc?.code || null,
+      work_center_name: wc?.name || null,
+    };
+  });
+}
+
+async function getCardTrackingDetail(cardId) {
+  const { SCHEDULABLE_TYPES } = require('../config/activityFlowTypes');
+  const { getVersionById } = require('./activityFlowEngine');
+
+  const card = await getCardById(cardId);
+  const [lots, nodes, shipments, completions] = await Promise.all([
+    listCardLots(cardId),
+    listCardFlowNodes(cardId),
+    listCardShipments(cardId),
+    listCardOpCompletions(cardId),
+  ]);
+
+  let flow = { nodes: [], edges: [] };
+  if (card.activity_flow_version_id && card.master_record_id) {
+    const version = await getVersionById(card.activity_flow_version_id, card.master_record_id);
+    if (version) {
+      flow = { nodes: version.nodes || [], edges: version.edges || [] };
+    }
+  }
+
+  const goal = dayGoal(card);
+  const completionByNode = {};
+  for (const c of completions) {
+    if (!c.activity_flow_node_id) continue;
+    // Keep latest completion if multiple (unlikely)
+    const prev = completionByNode[c.activity_flow_node_id];
+    if (!prev || String(c.completed_at) > String(prev.completed_at)) {
+      completionByNode[c.activity_flow_node_id] = c;
+    }
+  }
+
+  const flowNodes = flow.nodes.length ? flow.nodes : nodes;
+  const currentId = card.current_activity_flow_node_id || null;
+  const currentNode = flowNodes.find((n) => n.id === currentId) || null;
+  const currentSeq = currentNode != null ? Number(currentNode.sequence) || 0 : null;
+
+  const maxCompletedSeq = flowNodes.reduce((max, n) => {
+    if (!completionByNode[n.id]) return max;
+    const seq = Number(n.sequence) || 0;
+    return seq > max ? seq : max;
+  }, -1);
+
+  const cardDone = card.status === 'COMPLETED';
+
+  const tracking = flowNodes.map((n) => {
+    const schedulable = SCHEDULABLE_TYPES.has(n.activity_type);
+    const completion = completionByNode[n.id] || null;
+    const seq = Number(n.sequence) || 0;
+
+    let status = 'pending';
+    if (!schedulable) {
+      status = 'info';
+    } else if (completion) {
+      status = 'done';
+    } else if (!cardDone && currentId && n.id === currentId) {
+      status = 'running';
+    } else if (cardDone && (completion || seq <= maxCompletedSeq)) {
+      status = 'done';
+    } else if (currentSeq != null && seq < currentSeq) {
+      // Passed without ledger (legacy) — still show as done for route clarity
+      status = 'done';
+    } else {
+      status = 'pending';
+    }
+
+    // Info nodes: phase by position relative to current for UI tinting
+    let phase = null;
+    if (status === 'info') {
+      if (cardDone || (currentSeq != null && seq < currentSeq) || completion) {
+        phase = 'passed';
+      } else {
+        phase = 'ahead';
+      }
+    }
+
+    const goodQty = completion ? toNumber(completion.good_qty) : status === 'running' ? toNumber(card.total_good_produced) : 0;
+    const scrapQty = completion ? toNumber(completion.scrap_qty) : status === 'running' ? toNumber(card.total_scrap_produced) : 0;
+    const efficiencyPct = goal > 0 && goodQty > 0 ? Math.round((goodQty / goal) * 100) : status === 'done' && goal > 0 ? Math.round((goodQty / goal) * 100) : null;
+
+    const isRunning = status === 'running';
+    const operatorId = completion?.employee_id || (isRunning ? card.assigned_employee_id : null);
+    const operatorName =
+      completion?.operator_name || (isRunning ? card.assigned_employee_name : null);
+    const operatorCode =
+      completion?.operator_code || (isRunning ? card.assigned_employee_code : null);
+
+    return {
+      node_id: n.id,
+      status,
+      phase,
+      schedulable,
+      activity_type: n.activity_type,
+      label: n.label,
+      sequence: seq,
+      work_center_id: n.work_center_id || (isRunning ? card.work_center_id : null) || completion?.work_center_id || null,
+      work_center_code:
+        n.work_center_code ||
+        (isRunning ? card.work_center_code : null) ||
+        completion?.work_center_code ||
+        null,
+      work_center_name:
+        n.work_center_name ||
+        (isRunning ? card.work_center_name : null) ||
+        completion?.work_center_name ||
+        null,
+      operator_id: operatorId,
+      operator_name: operatorName,
+      operator_code: operatorCode,
+      good_qty: goodQty,
+      scrap_qty: scrapQty,
+      efficiency_pct: efficiencyPct,
+      completed_at: completion?.completed_at || null,
+    };
+  });
+
+  return {
+    card,
+    lots,
+    nodes,
+    shipments,
+    flow,
+    tracking,
+    completions,
+  };
 }
 
 async function sendOutsource(payload, actorEmployeeId, opts = {}) {
@@ -554,7 +887,7 @@ async function sendOutsource(payload, actorEmployeeId, opts = {}) {
     .from('activity_flow_nodes')
     .select('*')
     .eq('id', nodeId)
-    .eq('activity_flow_version_id', card.activity_flow_version_id)
+    .eq('flow_version_id', card.activity_flow_version_id)
     .maybeSingle();
   if (nErr) throw nErr;
   if (!node) throw httpError('Outsource node not found on this routing', 404);
@@ -699,15 +1032,18 @@ module.exports = {
   listCards,
   listMyToday,
   getCardById,
+  getCardTrackingDetail,
   rolloverOverdue,
   startCard,
   reportProgress,
   completeMachiningOp,
   listCardLots,
   listCardFlowNodes,
+  listCardOpCompletions,
   sendOutsource,
   receiveOutsource,
   listCardShipments,
   listWorkingDays,
   equalSplit,
+  enrichCards,
 };
