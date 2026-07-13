@@ -3,19 +3,13 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { ArrowLeft } from 'lucide-react';
 import { useSocket } from '../socket/socketContext';
+import { formatDisplayDateTime } from '../utils/dateFormat';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val)) ? '—' : Number(val).toLocaleString('en-IN');
 
 function formatDate(iso) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatDisplayDateTime(iso);
 }
 
 export default function StockDetailPage() {

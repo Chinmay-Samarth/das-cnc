@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 import api from '../api/client';
 import { useSocket } from '../socket/socketContext';
 import { getCategoryConfig, requiresInspection } from './girnCategoryConfig';
+import { formatDisplayDate } from '../utils/dateFormat';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val))
@@ -67,7 +68,7 @@ function OverviewTab({ girn, onAction, actionLoading }) {
       >
         <DetailItem label="GIRN Number" value={girn.girn_number} />
         <DetailItem label="Supplier" value={girn.supplier_name} />
-        <DetailItem label="Received Date" value={girn.received_date} />
+        <DetailItem label="Received Date" value={formatDisplayDate(girn.received_date)} />
         <DetailItem
           label="Received By"
           value={
@@ -669,7 +670,7 @@ export default function GIRNDetailPage() {
           <p className="eyebrow">Procurement</p>
           <h1>{girn ? girn.girn_number : 'GIRN Detail'}</h1>
           {girn ? (
-            <p className="muted">{girn.supplier_name} · {girn.received_date}</p>
+            <p className="muted">{girn.supplier_name} · {formatDisplayDate(girn.received_date)}</p>
           ) : null}
         </div>
         <div className="pill-tabs">

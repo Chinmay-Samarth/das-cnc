@@ -11,6 +11,7 @@ import {
   formatRuleWhen,
 } from './scheduleLabels';
 import { useSocket } from '../socket/socketContext';
+import { formatDisplayDate } from '../utils/dateFormat';
 
 function statusClass(status) {
   if (status === 'active' || status === 'released') return 'status-pill status-active';
@@ -327,7 +328,7 @@ export default function BlanketPoDetailsPage() {
                 label="Valid"
                 value={
                   blanket.valid_from
-                    ? `${blanket.valid_from} — ${blanket.valid_to || 'present'}`
+                    ? `${formatDisplayDate(blanket.valid_from)} — ${blanket.valid_to ? formatDisplayDate(blanket.valid_to) : 'present'}`
                     : blanket.status === 'draft'
                       ? 'Not activated yet'
                       : '—'
@@ -474,7 +475,7 @@ export default function BlanketPoDetailsPage() {
                             <td>{r.default_quantity}</td>
                             <td>
                               {r.valid_from
-                                ? `${r.valid_from} — ${r.valid_to || 'present'}`
+                                ? `${formatDisplayDate(r.valid_from)} — ${r.valid_to ? formatDisplayDate(r.valid_to) : 'present'}`
                                 : '—'}
                             </td>
                             <td>

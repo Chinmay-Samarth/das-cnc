@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import api from '../api/client';
-import useDailyAttendance, { toDisplayTime } from './useDailyAttendance';
+import useDailyAttendance, { toDisplayTime, toISODateString } from './useDailyAttendance';
+import { formatDisplayDate } from '../utils/dateFormat';
 import { useNavigate } from 'react-router-dom';
 import AttendanceGauge from '../components/shared/Attendancegauge';
 import StatTile from '../components/shared/StatTile';
@@ -97,10 +98,6 @@ export default function AttendancePage() {
   const recordsRangeEnd = Math.min(recordsPage * RECORDS_PAGE_SIZE, latestRecords.length);
   const visiblePages = getVisiblePages(recordsPage, recordsTotalPages);
 
-  function toISODateString(date) {
-    return new Date(date).toLocaleDateString('en-CA');
-  }
-
   function shiftDateStr(dateStr, delta) {
     const base = dateStr ? new Date(`${dateStr}T00:00:00`) : new Date();
     base.setDate(base.getDate() + delta);
@@ -150,7 +147,7 @@ export default function AttendancePage() {
         Role: record.role,
         Department: record.department,
         Shift: record.shift,
-        Date: record.shift_date,
+        Date: formatDisplayDate(record.shift_date, ''),
         Status: record.status,
         'Punched In': record.local_in,
         'Punched Out': record.local_out,
@@ -211,7 +208,7 @@ export default function AttendancePage() {
           <div className="header-title-block">
             <p className="eyebrow">DasCNC Workforce Console</p>
             <h1>Attendance Operations</h1>
-            <p className="muted">Shift-wise monitoring for {daily?.date || 'today'}</p>
+            <p className="muted">Shift-wise monitoring for {daily?.date ? formatDisplayDate(daily.date) : 'today'}</p>
           </div>
           <div className="btn-corner">
             <div className="date-controls w-50" style={{marginTop:8, display:'flex', gap:0, alignItems:'center'}}>

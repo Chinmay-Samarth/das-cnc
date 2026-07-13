@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import api from '../api/client';
 import { toDisplayTime, toISODateString } from '../attendance/useDailyAttendance';
+import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 import ImageLightbox from '../components/shared/ImageLightBox';
 import AttendanceGauge from '../components/shared/Attendancegauge';
 import StatTile from '../components/shared/StatTile'
@@ -13,12 +14,12 @@ const PLACEHOLDER_AVATAR =
 
 // ─── pure helpers (unchanged) ─────────────────────────────────────────────────
 
-function countWorkingDaysInMonth(monthDate, cutoffDate = null, startDate) {
+function getDaysInMonthRange(monthDate, cutoffDate = null, startDate) {
   const year = monthDate.getFullYear();
   const month = monthDate.getMonth();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-  let firstDayToCount = 0;
+  let firstDayToCount = 1;
   if (startDate && startDate.getFullYear() === year && startDate.getMonth() === month) {
     firstDayToCount = startDate.getDate() + 1;
   }
@@ -28,26 +29,54 @@ function countWorkingDaysInMonth(monthDate, cutoffDate = null, startDate) {
     lastDayToCount = Math.min(daysInMonth, cutoffDate.getDate());
   }
 
-  let count = 0;
+  const days = [];
   for (let day = firstDayToCount; day <= lastDayToCount; day += 1) {
-    if (new Date(year, month, day).getDay() !== 0) count += 1;
+    days.push(toISODateString(new Date(year, month, day)));
   }
-  return count;
+  return days;
 }
 
-function summarizeMonth(record, totalWorkingDays) {
+function summarizeMonth(records, daysInRange) {
   const summary = { present: 0, completed: 0, late: 0, half_day: 0 };
-  record.forEach((row) => {
+  const attendedDates = new Set();
+  const leaveDates = new Set();
+
+  records.forEach((row) => {
     const status = String(row.status || '').toUpperCase();
-    if (status === 'PRESENT') summary.present += 1;
-    else if (status === 'COMPLETED') summary.completed += 1;
-    else if (status === 'LATE') summary.late += 1;
-    else if (status === 'HALF_DAY') summary.half_day += 1;
+    const date = toISODateString(row.shift_date);
+    if (status === 'PRESENT') {
+      summary.present += 1;
+      attendedDates.add(date);
+    } else if (status === 'COMPLETED') {
+      summary.completed += 1;
+      attendedDates.add(date);
+    } else if (status === 'LATE') {
+      summary.late += 1;
+      attendedDates.add(date);
+    } else if (status === 'HALF_DAY') {
+      summary.half_day += 1;
+      attendedDates.add(date);
+    } else if (status === 'LEAVE') {
+      leaveDates.add(date);
+    }
   });
-  const attendedDays = summary.present + summary.completed + summary.late + summary.half_day;
-  const absent = Math.max(totalWorkingDays - attendedDays, 0);
-  const score = totalWorkingDays > 0 ? Math.min(100, Math.round((attendedDays / totalWorkingDays) * 100)) : 0;
-  return { ...summary, attendedDays, absent, totalWorkingDays, score };
+
+  // Late and half days count as present for attendance score / present total
+  const presentDays = summary.present + summary.completed + summary.late + summary.half_day;
+  const totalDays = daysInRange.length;
+  const absentDates = daysInRange.filter((date) => !attendedDates.has(date) && !leaveDates.has(date));
+  const absent = absentDates.length;
+  const score = totalDays > 0 ? Math.min(100, Math.round((presentDays / totalDays) * 100)) : 0;
+
+  return {
+    ...summary,
+    presentDays,
+    attendedDays: presentDays,
+    absent,
+    absentDates,
+    totalWorkingDays: totalDays,
+    score,
+  };
 }
 
 function startOfMonth(date) {
@@ -249,13 +278,13 @@ export default function EmployeeDetailsPage() {
   // ── derived values ────────────────────────────────────────────────────────
 
   const employeeJoinDate = employee?.created_at ? new Date(employee.created_at) : null;
-  const totalWorkingDays = useMemo(
-    () => countWorkingDaysInMonth(selectedMonth, new Date(), employeeJoinDate),
+  const daysInRange = useMemo(
+    () => getDaysInMonthRange(selectedMonth, new Date(), employeeJoinDate),
     [selectedMonth, employeeJoinDate]
   );
   const attendanceSummary = useMemo(
-    () => summarizeMonth(attendanceRecords, totalWorkingDays),
-    [attendanceRecords, totalWorkingDays]
+    () => summarizeMonth(attendanceRecords, daysInRange),
+    [attendanceRecords, daysInRange]
   );
   const employeeJoinMonth = employeeJoinDate ? startOfMonth(employeeJoinDate) : null;
   const isPrevMonthDisabled = employeeJoinMonth ? selectedMonth <= employeeJoinMonth : false;
@@ -466,7 +495,7 @@ export default function EmployeeDetailsPage() {
                     {employee.created_at && (
                       <div>
                         <p className="employee-detail-label">Created At</p>
-                        <p className="employee-detail-value">{new Date(employee.created_at).toLocaleString()}</p>
+                        <p className="employee-detail-value">{formatDisplayDateTime(employee.created_at)}</p>
                       </div>
                     )}
                   </div>
@@ -484,7 +513,7 @@ export default function EmployeeDetailsPage() {
                     <p className="text-sm" style={{ margin: '2px 0 0', color: '#6b7280' }}>
                       {attendanceLoading
                         ? 'Loading...'
-                        : `${attendanceSummary.totalWorkingDays} working days ${isNextMonthDisabled ? 'so far this month' : 'this month'} (Mon–Sat)`}
+                        : `${attendanceSummary.totalWorkingDays} days ${isNextMonthDisabled ? 'so far this month' : 'this month'} (including Sundays)`}
                     </p>
                   </div>
 
@@ -503,12 +532,14 @@ export default function EmployeeDetailsPage() {
                       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '28px', borderBottom: '1px solid #e5e7eb', paddingBottom: '24px', marginBottom: '24px' }}>
                         <AttendanceGauge score={attendanceSummary.score} size={220} />
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', flex: '1 1 320px' }}>
-                          <StatTile label="Present" value={attendanceSummary.present + attendanceSummary.completed} accent="#059669" />
+                          <StatTile label="Present" value={attendanceSummary.presentDays} accent="#059669" />
                           <StatTile label="Late" value={attendanceSummary.late} accent="#d97706" />
                           <StatTile label="Half Days" value={attendanceSummary.half_day} accent="#eab308" />
                           <StatTile label="Absent" value={attendanceSummary.absent} accent="#dc2626" />
                         </div>
                       </div>
+
+                      
 
                       {attendanceRecords.length === 0 ? (
                         <p className="muted">No attendance records found for {formatMonthLabel(selectedMonth)}.</p>
@@ -521,7 +552,7 @@ export default function EmployeeDetailsPage() {
                             <tbody>
                               {attendanceRecords.map((row) => (
                                 <tr key={`${row.shift_date}-${row.punched_in_at || ''}-${row.punched_out_at || ''}`}>
-                                  <td>{toISODateString(row.shift_date)}</td>
+                                  <td>{formatDisplayDate(row.shift_date)}</td>
                                   <td>{row.shift || '--'}</td>
                                   <td>{toDisplayTime(row.punched_in_at)}</td>
                                   <td>{toDisplayTime(row.punched_out_at)}</td>
@@ -534,6 +565,31 @@ export default function EmployeeDetailsPage() {
                           </table>
                         </div>
                       )}
+
+                      <div style={{ marginTop: '24px' }}>
+                        <h3 style={{ margin: '0 0 8px', fontSize: '1rem' }}>Absent days</h3>
+                        {attendanceSummary.absentDates.length === 0 ? (
+                          <p className="muted" style={{ margin: 0 }}>No absences this month.</p>
+                        ) : (
+                          <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                            {attendanceSummary.absentDates.map((date) => (
+                              <li
+                                key={date}
+                                style={{
+                                  padding: '6px 10px',
+                                  borderRadius: '8px',
+                                  background: '#fef2f2',
+                                  color: '#b91c1c',
+                                  fontSize: '0.875rem',
+                                  border: '1px solid #fecaca',
+                                }}
+                              >
+                                {new Date(`${date}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'long' })}, {formatDisplayDate(date)}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
                     </>
                   )}
                 </section> 

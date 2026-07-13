@@ -2,6 +2,7 @@ import useDailyAttendance, { toDisplayTime } from '../attendance/useDailyAttenda
 import { useNavigate } from 'react-router-dom';
 import AttendanceGauge from '../components/shared/Attendancegauge';
 import StatTile from '../components/shared/StatTile';
+import { formatDisplayDate } from '../utils/dateFormat';
 
 
 
@@ -32,7 +33,7 @@ export default function HomePage() {
       <section className="card summary-single-card">
         <div className="">
           <h2>Daily Attendance Summary</h2>
-          <span className="count-chip">{daily?.date || 'Today'}</span>
+          <span className="count-chip">{daily?.date ? formatDisplayDate(daily.date) : 'Today'}</span>
         </div>
         <div className="summary-metrics-grid">
           <div className="summary-metric">

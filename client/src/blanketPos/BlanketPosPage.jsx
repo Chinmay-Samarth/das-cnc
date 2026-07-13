@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { formatDisplayDate } from '../utils/dateFormat';
 
 const sortBy = (rows, key, asc) =>
   [...rows].sort((a, b) => {
@@ -136,7 +137,7 @@ export default function BlanketPosPage() {
                   </td>
                   <td className="hide-mobile">
                     {r.valid_from
-                      ? `${r.valid_from} — ${r.valid_to || 'present'}`
+                      ? `${formatDisplayDate(r.valid_from)} — ${r.valid_to ? formatDisplayDate(r.valid_to) : 'present'}`
                       : r.status === 'draft'
                         ? 'Not activated'
                         : '—'}

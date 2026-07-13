@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useSocket } from '../socket/socketContext';
+import { formatDisplayDate } from '../utils/dateFormat';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val)) ? '—' : Number(val).toLocaleString('en-IN');
@@ -198,7 +199,7 @@ export default function GIRNListPage() {
                       ) : null}
                     </td>
                     <td>{g.supplier_name || '—'}</td>
-                    <td className="hide-mobile">{g.received_date || '—'}</td>
+                    <td className="hide-mobile">{formatDisplayDate(g.received_date)}</td>
                     <td className="hide-mobile">
                       {g.received_by_name || '—'}
                       {g.received_by_code ? (

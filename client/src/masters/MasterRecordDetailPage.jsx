@@ -10,6 +10,7 @@ import { isStockableMasterSlug } from './stockableMasterSlugs'
 import { isBomsMasterSlug } from './bomsMasterSlugs'
 import { isRoutableMasterSlug } from './routableMasterSlugs'
 import { ArrowLeft, Pencil } from 'lucide-react'
+import { formatDisplayDate } from '../utils/dateFormat'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -34,9 +35,7 @@ function formatValue(field, cell) {
   }
 
   if (field.field_type === 'date' && cell.value) {
-    return new Date(cell.value).toLocaleDateString('en-IN', {
-      day: '2-digit', month: 'short', year: 'numeric',
-    })
+    return formatDisplayDate(cell.value)
   }
 
   return cell.value || '—'
@@ -204,10 +203,7 @@ function RepeatableSectionView({ section, repeatableValues }) {
 // ─── Stock tab (inline) ───────────────────────────────────────────────────────
 
 function formatStockDate(iso) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric',
-  })
+  return formatDisplayDate(iso)
 }
 
 function MasterRecordStockTab({ recordId }) {

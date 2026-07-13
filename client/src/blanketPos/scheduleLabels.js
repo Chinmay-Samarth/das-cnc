@@ -1,4 +1,6 @@
 /** ISO weekday: 1=Monday … 7=Sunday */
+import { formatDisplayDate } from '../utils/dateFormat';
+
 export const WEEKDAYS = [
   { value: 1, short: 'Mon', label: 'Monday' },
   { value: 2, short: 'Tue', label: 'Tuesday' },
@@ -60,22 +62,12 @@ export function formatRuleLabel({
   return parts.join(' · ') || 'Rule';
 }
 
-const MONTHS_SHORT = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-];
-
 export function formatDueLabel(dueDate, weekdayLabel = null) {
   if (!dueDate) return '—';
-  const raw = String(dueDate).slice(0, 10);
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
-  if (!m) return raw;
-  const dayName = weekdayLabel || weekdayName(isoWeekdayFromDate(raw));
-  const day = Number(m[3]);
-  const month = MONTHS_SHORT[Number(m[2]) - 1] || m[2];
-  const year = m[1];
-  if (dayName) return `${dayName}, ${day} ${month} ${year}`;
-  return `${day} ${month} ${year}`;
+  const formatted = formatDisplayDate(dueDate);
+  const dayName = weekdayLabel || weekdayName(isoWeekdayFromDate(String(dueDate).slice(0, 10)));
+  if (dayName && formatted !== '—') return `${dayName}, ${formatted}`;
+  return formatted;
 }
 
 export function formatScheduleLabel(schedule) {

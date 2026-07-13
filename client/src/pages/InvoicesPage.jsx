@@ -3,6 +3,7 @@ import AddInvoiceButton from '../components/Invoices/AddInvoiceButton';
 import InvoiceDetails from '../components/Invoices/InvoiceDetails';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { formatDisplayDate } from '../utils/dateFormat';
 
 const fmt = (val) => isNaN(Number(val)) || val == null
 ? '—'
@@ -149,9 +150,9 @@ export default function InvoicesPage() {
                   style={{ cursor: 'pointer' }}>
                     <td>{item.suppliers?.name || '—'}</td>
                     <td>{item.invoice_number || '—'}</td>
-                    <td>{item.invoice_date || item.created_at || '—'}</td>
+                    <td>{formatDisplayDate(item.invoice_date || item.created_at)}</td>
                     <td >₹{fmt(item.total_amount) || '—'}</td>
-                    <td>{item.due_date || '-'}</td>
+                    <td>{formatDisplayDate(item.due_date, '-')}</td>
                   </tr>
                 ))}
               </tbody>

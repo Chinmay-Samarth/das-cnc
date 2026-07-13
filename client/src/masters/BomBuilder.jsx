@@ -3,6 +3,7 @@ import api from '../api/client';
 import MasterItemSelect from '../girn/MasterItemSelect';
 import { useSocket } from '../socket/socketContext';
 import { Plus, ChevronRight, ChevronDown, Pencil, Trash2, X, Check } from 'lucide-react';
+import { formatDisplayDate } from '../utils/dateFormat';
 
 const CHILD_TYPE_OPTIONS = [
   { value: 'component', label: 'Component', masterSlug: 'component', category: 'component' },
@@ -39,8 +40,8 @@ function nodeKey(node) {
 }
 
 function formatDate(d) {
-  if (!d) return '—';
-  return d;
+  if (!d) return '';
+  return formatDisplayDate(d);
 }
 
 function AddChildForm({ parentId, onSave, onCancel, saving }) {

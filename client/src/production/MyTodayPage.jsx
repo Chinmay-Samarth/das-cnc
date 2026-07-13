@@ -380,7 +380,7 @@ export default function MyTodayPage() {
               ) : null}
 
               {card.status === 'COMPLETED' ? (
-                <p className="pc-done-note">Done for {card.work_date}. Good {good} / goal {goal}.</p>
+                <p className="pc-done-note">Done for {formatDueLabel(card.work_date)}. Good {good} / goal {goal}.</p>
               ) : null}
             </article>
           );

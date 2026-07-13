@@ -11,6 +11,7 @@
 
 import { useState, useEffect } from 'react'
 import api from '../api/client'
+import { formatDisplayDate } from '../utils/dateFormat'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -35,9 +36,7 @@ function formatValue(field, cell) {
   }
 
   if (field.field_type === 'date' && cell.value) {
-    return new Date(cell.value).toLocaleDateString('en-IN', {
-      day: '2-digit', month: 'short', year: 'numeric'
-    })
+    return formatDisplayDate(cell.value)
   }
 
   return cell.value || '—'

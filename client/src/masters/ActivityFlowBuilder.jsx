@@ -13,6 +13,7 @@ import '@xyflow/react/dist/style.css';
 import api from '../api/client';
 import ActivityFlowNode from './ActivityFlowNode';
 import { ACTIVITY_TYPES, SCHEDULABLE_TYPES, getActivityTypeMeta } from './activityFlowTypes';
+import { formatDisplayDate } from '../utils/dateFormat';
 
 const nodeTypes = { activity: ActivityFlowNode };
 
@@ -31,8 +32,8 @@ function StatusBadge({ status, revision }) {
 }
 
 function formatDate(d) {
-  if (!d) return '—';
-  return d;
+  if (!d) return '';
+  return formatDisplayDate(d);
 }
 
 function toFlowNodes(apiNodes, readOnly) {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Pencil } from 'lucide-react';
 import api from '../api/client';
+import { formatDisplayDateTime } from '../utils/dateFormat';
 
 const emptyFormData = {
   name: '',
@@ -178,10 +179,10 @@ export default function CustomerDetailsPage() {
                     <DetailItem label="IFSC" value={customer.ifsc} />
                     <DetailItem label="Payment Terms" value={customer.payment_terms} />
                     {customer.created_at ? (
-                      <DetailItem label="Created At" value={new Date(customer.created_at).toLocaleString()} />
+                      <DetailItem label="Created At" value={formatDisplayDateTime(customer.created_at)} />
                     ) : null}
                     {customer.updated_at ? (
-                      <DetailItem label="Updated At" value={new Date(customer.updated_at).toLocaleString()} />
+                      <DetailItem label="Updated At" value={formatDisplayDateTime(customer.updated_at)} />
                     ) : null}
                   </div>
                 </div>

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/client';
 import { useSocket } from '../socket/socketContext';
+import { toISODateString } from '../utils/dateFormat';
+
+export { toISODateString, formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 
 export function toDisplayTime(value) {
   if (!value) return '--';
@@ -10,10 +13,6 @@ export function toDisplayTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-export function toISODateString(date) {
-  return new Date(date).toLocaleDateString('en-CA');
 }
 
 export default function useDailyAttendance(initialDate = null) {

@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import ImageLightbox from '../components/shared/ImageLightBox';
 import { Pencil, ArrowLeft } from 'lucide-react';
+import { formatDisplayDate } from '../utils/dateFormat';
 
 const emptyFormData = {
   name: '',
@@ -391,8 +392,8 @@ export default function SupplierDetailsPage() {
                         style={{ cursor: 'pointer' }}
                       >
                         <td>{invoice.invoice_number || '--'}</td>
-                        <td>{invoice.invoice_date || invoice.created_at || '--'}</td>
-                        <td>{invoice.due_date || '--'}</td>
+                        <td>{formatDisplayDate(invoice.invoice_date || invoice.created_at, '--')}</td>
+                        <td>{formatDisplayDate(invoice.due_date, '--')}</td>
                         <td>
                           <span className="status-chip">{invoice.status || '--'}</span>
                         </td>

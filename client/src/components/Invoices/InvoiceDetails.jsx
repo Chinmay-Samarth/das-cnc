@@ -19,6 +19,7 @@ import api from "../../api/client";
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
+import { formatDisplayDate } from '../../utils/dateFormat';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -288,7 +289,7 @@ export default function InvoiceDetails() {
           </div>
           <p style={styles.issueDate}>
             <Calendar size={14} />
-            Issue Date: {invoice.invoice_date ?? '—'}
+            Issue Date: {formatDisplayDate(invoice.invoice_date)}
           </p>
         </div>
 
