@@ -93,6 +93,12 @@ function TrackingFlowNode({ data }) {
     status === 'info' ? `is-info is-${track.phase || 'ahead'}` : `is-${status}`;
 
   const subtitle = [];
+  if (status === 'done' || status === 'running') {
+    const first = track.operator_name
+      ? String(track.operator_name).trim().split(/\s+/)[0]
+      : '';
+    if (first) subtitle.push(first);
+  }
   if (track.work_center_code) subtitle.push(track.work_center_code);
   if (status === 'done' || status === 'running') {
     subtitle.push(`Good ${formatQty(track.good_qty)}`);

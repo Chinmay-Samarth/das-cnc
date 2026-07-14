@@ -10,7 +10,16 @@ const ACTIVITY_TYPES = [
   'note',
 ];
 
-const SCHEDULABLE_TYPES = new Set(['machining', 'assembly']);
+const SCHEDULABLE_TYPES = new Set([
+  'machining',
+  'assembly',
+  'inspection',
+  'packing',
+  'outsource',
+]);
+
+/** Terminal gate — Ready for Dispatch queue (not shop-floor EQL assign unless node has WC) */
+const TERMINAL_DISPATCH_TYPES = new Set(['dispatch']);
 const EDGE_KINDS = ['default', 'optional', 'rework'];
 const INSPECTION_KINDS = ['in_process', 'final'];
 
@@ -32,6 +41,7 @@ const DEFAULT_LABELS = {
 module.exports = {
   ACTIVITY_TYPES,
   SCHEDULABLE_TYPES,
+  TERMINAL_DISPATCH_TYPES,
   EDGE_KINDS,
   INSPECTION_KINDS,
   DEFAULT_LABELS,

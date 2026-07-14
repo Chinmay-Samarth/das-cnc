@@ -1,5 +1,10 @@
 const { createClient } = require('@supabase/supabase-js');
 const { SCHEDULABLE_TYPES } = require('../config/activityFlowTypes');
+const {
+  resolveFirstSchedulableNode,
+  resolveNextSchedulableNode,
+  loadFlowGraph,
+} = require('./activityFlowRoute');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -102,8 +107,51 @@ async function backlogStats(employeeId, date, workCenterId = null) {
   if (error) throw error;
 
   const cards = data || [];
-  const backlog = cards.reduce((sum, c) => sum + remainingQty(c), 0);
-  const openCards = cards.length;
+  let backlog = cards.reduce((sum, c) => sum + remainingQty(c), 0);
+  let openCards = cards.length;
+
+  // Traveler lots assigned to this operator at the WC
+  {
+    let lotQuery = supabase
+      .from('production_lots')
+      .select('quantity')
+      .eq('assigned_employee_id', employeeId)
+      .in('status', ['in_process', 'received']);
+    if (workCenterId) lotQuery = lotQuery.eq('work_center_id', workCenterId);
+    const { data: lots, error: lotErr } = await lotQuery;
+    if (lotErr) throw lotErr;
+    const lotRows = lots || [];
+    backlog += lotRows.reduce((sum, l) => sum + toNumber(l.quantity), 0);
+    openCards += lotRows.length;
+  }
+
+  // Operation cards (primary floor work tokens)
+  {
+    let opQuery = supabase
+      .from('production_op_cards')
+      .select('target_quantity, good_qty')
+      .eq('assigned_employee_id', employeeId)
+      .in('status', ['READY', 'RUNNING']);
+    if (workCenterId) opQuery = opQuery.eq('work_center_id', workCenterId);
+    const { data: ops, error: opErr } = await opQuery;
+    if (opErr) {
+      // Table may not exist yet during rollout
+      if (opErr.code !== '42P01' && !String(opErr.message || '').includes('production_op_cards')) {
+        throw opErr;
+      }
+    } else {
+      const opRows = ops || [];
+      // Prefer op-card remaining over double-counting schedule cards / lots when ops exist
+      const opBacklog = opRows.reduce(
+        (sum, o) => sum + Math.max(0, toNumber(o.target_quantity) - toNumber(o.good_qty)),
+        0
+      );
+      if (opRows.length) {
+        backlog = opBacklog;
+        openCards = opRows.length;
+      }
+    }
+  }
 
   let completedGood = 0;
   let completedOps = 0;
@@ -111,16 +159,28 @@ async function backlogStats(employeeId, date, workCenterId = null) {
   // Finished ops at this WC today — keeps load fair after handoff resets open backlog to 0
   if (workCenterId && date && isValidUUID(employeeId)) {
     const { start, end } = dayWindowUtc(date);
-    const { data: completions, error: cErr } = await supabase
-      .from('production_card_op_completions')
-      .select('good_qty')
-      .eq('employee_id', employeeId)
-      .eq('work_center_id', workCenterId)
-      .gte('completed_at', start)
-      .lt('completed_at', end);
+    const [{ data: completions, error: cErr }, { data: lotCompletions, error: lcErr }] =
+      await Promise.all([
+        supabase
+          .from('production_card_op_completions')
+          .select('good_qty')
+          .eq('employee_id', employeeId)
+          .eq('work_center_id', workCenterId)
+          .gte('completed_at', start)
+          .lt('completed_at', end),
+        supabase
+          .from('production_lot_op_completions')
+          .select('good_qty')
+          .eq('employee_id', employeeId)
+          .eq('work_center_id', workCenterId)
+          .gte('completed_at', start)
+          .lt('completed_at', end),
+      ]);
     if (cErr) throw cErr;
-    completedOps = (completions || []).length;
-    completedGood = (completions || []).reduce((sum, r) => sum + toNumber(r.good_qty), 0);
+    if (lcErr) throw lcErr;
+    const all = [...(completions || []), ...(lotCompletions || [])];
+    completedOps = all.length;
+    completedGood = all.reduce((sum, r) => sum + toNumber(r.good_qty), 0);
   }
 
   return {
@@ -162,30 +222,18 @@ async function pickAssignee(workCenterId, date) {
 
 async function listSchedulableNodes(activityFlowVersionId) {
   if (!activityFlowVersionId) return [];
-  const { data, error } = await supabase
-    .from('activity_flow_nodes')
-    .select('id, label, activity_type, sequence, work_center_id')
-    .eq('flow_version_id', activityFlowVersionId)
-    .order('sequence', { ascending: true });
-  if (error) throw error;
-
-  return (data || []).filter(
+  const { nodes, edges } = await loadFlowGraph(activityFlowVersionId);
+  const { walkPrimaryPath } = require('./activityFlowRoute');
+  const pathNodes = walkPrimaryPath(nodes, edges).filter(
+    (n) => SCHEDULABLE_TYPES.has(n.activity_type) && n.work_center_id
+  );
+  if (pathNodes.length) return pathNodes;
+  return (nodes || []).filter(
     (n) => SCHEDULABLE_TYPES.has(n.activity_type) && n.work_center_id
   );
 }
 
-async function resolveFirstSchedulableNode(activityFlowVersionId) {
-  const nodes = await listSchedulableNodes(activityFlowVersionId);
-  return nodes[0] || null;
-}
-
-async function resolveNextSchedulableNode(activityFlowVersionId, afterNodeId) {
-  const nodes = await listSchedulableNodes(activityFlowVersionId);
-  if (!afterNodeId) return nodes[0] || null;
-  const idx = nodes.findIndex((n) => n.id === afterNodeId);
-  if (idx < 0) return nodes[0] || null;
-  return nodes[idx + 1] || null;
-}
+// resolveFirstSchedulableNode / resolveNextSchedulableNode imported from activityFlowRoute
 
 async function assignCardToCurrentOp(cardId, { preferNodeId = null } = {}) {
   if (!isValidUUID(cardId)) throw httpError('Invalid card id');
@@ -255,6 +303,12 @@ async function assignCardToCurrentOp(cardId, { preferNodeId = null } = {}) {
       .select('*')
       .single();
     if (upErr) throw upErr;
+    try {
+      const { spawnOp1ForScheduleCard } = require('./productionOpCardEngine');
+      await spawnOp1ForScheduleCard(updated, node);
+    } catch (e) {
+      console.error('spawnOp1ForScheduleCard:', e.message);
+    }
     return {
       card: updated,
       assignee: null,
@@ -276,7 +330,14 @@ async function assignCardToCurrentOp(cardId, { preferNodeId = null } = {}) {
     .single();
   if (upErr) throw upErr;
 
-  return { card: updated, assignee, node, reason: null };
+  const result = { card: updated, assignee, node, reason: null };
+  try {
+    const { spawnOp1ForScheduleCard } = require('./productionOpCardEngine');
+    await spawnOp1ForScheduleCard(updated, node);
+  } catch (e) {
+    console.error('spawnOp1ForScheduleCard:', e.message);
+  }
+  return result;
 }
 
 async function recordOpCompletion(card, snapshot = {}) {
@@ -494,6 +555,13 @@ async function reassignCard(cardId, employeeId) {
     .select('*')
     .single();
   if (upErr) throw upErr;
+  try {
+    const { spawnOp1ForScheduleCard, syncOp1Progress } = require('./productionOpCardEngine');
+    await spawnOp1ForScheduleCard(updated);
+    await syncOp1Progress(updated);
+  } catch (e) {
+    console.error('Op1 sync after reassignCard:', e.message);
+  }
   return { card: updated, assignee: emp, previous_employee_id: previousEmployeeId };
 }
 
@@ -584,6 +652,12 @@ async function getWorkCenterBoard(workCenterId, date) {
     return String(a.card_number || '').localeCompare(String(b.card_number || ''));
   });
 
+  const { listLotsForWorkCenter } = require('./lotTravelerEngine');
+  const lots = await listLotsForWorkCenter(workCenterId, date);
+
+  const { listOpCardsForWorkCenter } = require('./productionOpCardEngine');
+  const op_cards = await listOpCardsForWorkCenter(workCenterId);
+
   const operators = await listOperatorsForWorkCenter(workCenterId);
   const loads = [];
   for (const op of operators) {
@@ -605,7 +679,7 @@ async function getWorkCenterBoard(workCenterId, date) {
       String(a.employee_code || '').localeCompare(String(b.employee_code || ''))
   );
 
-  return { cards: enriched, operator_loads: loads };
+  return { cards: enriched, lots, op_cards, operator_loads: loads };
 }
 
 module.exports = {

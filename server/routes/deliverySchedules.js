@@ -6,9 +6,12 @@ const {
   updateRule,
   activateRule,
   deactivateRule,
+  listRuleDates,
+  setRuleDates,
   listSchedules,
   createOneOffSchedule,
   generateFromRule,
+  previewMatchingDates,
   updateSchedule,
   releaseSchedule,
   cancelSchedule,
@@ -122,6 +125,38 @@ router.post(
       blanketPoId,
     });
     return res.json({ rule });
+  })
+);
+
+router.get(
+  '/rules/:id/dates',
+  wrap(async (req, res) => {
+    const dates = await listRuleDates(req.params.id);
+    return res.json({ dates });
+  })
+);
+
+router.put(
+  '/rules/:id/dates',
+  wrap(async (req, res) => {
+    const dates = await setRuleDates(req.params.id, req.body?.dates ?? req.body ?? []);
+    emitDeliveryScheduleUpdated({
+      action: 'rule_dates_updated',
+      ruleId: req.params.id,
+    });
+    return res.json({ dates });
+  })
+);
+
+router.post(
+  '/rules/:id/preview',
+  wrap(async (req, res) => {
+    const result = await previewMatchingDates({
+      rule_id: req.params.id,
+      horizon_start: req.body?.horizon_start,
+      horizon_end: req.body?.horizon_end,
+    });
+    return res.json(result);
   })
 );
 

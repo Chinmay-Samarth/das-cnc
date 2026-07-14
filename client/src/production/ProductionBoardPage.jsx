@@ -28,6 +28,63 @@ function initials(name) {
     .toUpperCase();
 }
 
+function RouteOperatorsCell({ card }) {
+  const crew = card.route_operators?.length
+    ? card.route_operators
+    : card.assigned_employee_name
+      ? [
+          {
+            id: card.assigned_employee_id,
+            name: card.assigned_employee_name,
+            code: card.assigned_employee_code,
+          },
+        ]
+      : [];
+  const shown = crew.slice(0, 3);
+  const extra = crew.length - shown.length;
+  const currentName = card.current_operator_name || card.assigned_employee_name || 'Unassigned';
+  const secondLine = [card.current_node_label, card.current_work_center_code || card.work_center_code]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+          {shown.map((o, i) => (
+            <span
+              key={o.id || o.name}
+              className="mes-avatar"
+              title={o.name || '—'}
+              style={{
+                width: 22,
+                height: 22,
+                fontSize: 9,
+                marginLeft: i ? -6 : 0,
+                border: '1.5px solid var(--surface, #fff)',
+                zIndex: shown.length - i,
+              }}
+            >
+              {initials(o.name)}
+            </span>
+          ))}
+          {extra > 0 ? (
+            <span className="muted" style={{ marginLeft: 4, fontSize: 11 }}>
+              +{extra}
+            </span>
+          ) : null}
+        </span>
+        <TruncatedText style={{ maxWidth: 110 }}>{currentName}</TruncatedText>
+      </span>
+      {secondLine ? (
+        <span className="muted" style={{ fontSize: 11 }}>
+          <TruncatedText style={{ maxWidth: 160 }}>{secondLine}</TruncatedText>
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 export default function ProductionBoardPage() {
   const navigate = useNavigate();
   const { subscribe } = useSocket();
@@ -89,7 +146,11 @@ export default function ProductionBoardPage() {
         c.card_number,
         c.component_label,
         c.assigned_employee_name,
+        c.current_operator_name,
+        ...(c.route_operators || []).flatMap((o) => [o.name, o.code]),
         c.work_center_code,
+        c.current_work_center_code,
+        c.current_node_label,
         c.customer_name,
         c.schedule_number,
         c.status,
@@ -246,7 +307,7 @@ export default function ProductionBoardPage() {
                   <th>Card</th>
                   <th>Due</th>
                   <th>WC</th>
-                  <th>Operator</th>
+                  <th title="People on this route">Operators</th>
                   <th>Component</th>
                   <th>Status</th>
                 </tr>
@@ -277,16 +338,9 @@ export default function ProductionBoardPage() {
                         </div>
                       </td>
                       <td>{formatDueLabel(c.schedule_due_date, c.schedule_due_weekday_label)}</td>
-                      <td>{c.work_center_code || '—'}</td>
+                      <td>{c.current_work_center_code || c.work_center_code || '—'}</td>
                       <td>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                          <span className="mes-avatar" title={c.assigned_employee_name || 'Unassigned'}>
-                            {initials(c.assigned_employee_name)}
-                          </span>
-                          <TruncatedText style={{ maxWidth: 120 }}>
-                            {c.assigned_employee_name || 'Unassigned'}
-                          </TruncatedText>
-                        </span>
+                        <RouteOperatorsCell card={c} />
                       </td>
                       <td>
                         <TruncatedText style={{ maxWidth: 180 }}>

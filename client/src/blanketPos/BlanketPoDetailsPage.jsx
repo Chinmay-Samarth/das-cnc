@@ -15,9 +15,10 @@ import {
   formatRuleLabel,
   formatDueLabel,
   formatRuleWhen,
+  formatScheduleCadence,
 } from './scheduleLabels';
 import { useSocket } from '../socket/socketContext';
-import { formatDisplayDate } from '../utils/dateFormat';
+import { formatDisplayDate, parseDateListToISO } from '../utils/dateFormat';
 import {
   PageHeader,
   StatusBadge,
@@ -68,9 +69,13 @@ export default function BlanketPoDetailsPage() {
     blanket_po_line_id: '',
     cadence: 'weekly',
     weekday: '1',
-    month_day: '1',
+    month_day: '15',
+    interval_weeks: '1',
+    anchor_date: '',
+    custom_dates_text: '',
     default_quantity: '1',
   });
+  const [previewCount, setPreviewCount] = useState(null);
 
   const [schedules, setSchedules] = useState([]);
   const [genForm, setGenForm] = useState({
@@ -195,6 +200,10 @@ export default function BlanketPoDetailsPage() {
     await runAction(() => api.delete(`/blanket-pos/${id}/lines/${lineId}`));
   }
 
+  function parseCustomDates(text) {
+    return parseDateListToISO(text);
+  }
+
   async function handleAddRule(e) {
     e.preventDefault();
     const body = {
@@ -202,16 +211,48 @@ export default function BlanketPoDetailsPage() {
       cadence: ruleForm.cadence,
       default_quantity: Number(ruleForm.default_quantity),
     };
-    if (ruleForm.cadence === 'weekly') body.weekday = Number(ruleForm.weekday);
-    else body.month_day = Number(ruleForm.month_day);
+    if (ruleForm.cadence === 'weekly') {
+      body.weekday = Number(ruleForm.weekday);
+      const iv = Number(ruleForm.interval_weeks);
+      body.interval_weeks = Number.isInteger(iv) && iv >= 1 ? iv : 1;
+      if (body.interval_weeks > 1 && ruleForm.anchor_date) {
+        body.anchor_date = ruleForm.anchor_date;
+      }
+    } else if (ruleForm.cadence === 'monthly') {
+      body.month_day = Number(ruleForm.month_day);
+    } else if (ruleForm.cadence === 'custom') {
+      const dates = parseCustomDates(ruleForm.custom_dates_text);
+      if (!dates.length) {
+        setError('Custom cadence needs at least one DD-MM-YYYY date.');
+        return;
+      }
+      body.custom_dates = dates;
+    }
 
     await runAction(async () => {
       await api.post('/delivery-schedules/rules', body);
       setRuleForm((f) => ({
         ...f,
         default_quantity: '1',
+        custom_dates_text: '',
+        anchor_date: '',
       }));
     });
+  }
+
+  async function handleEditCustomDates(rule) {
+    const current = (rule.custom_dates || [])
+      .map((d) => formatDisplayDate(d.due_date))
+      .join('\n');
+    const next = window.prompt(
+      'Custom dates (DD-MM-YYYY, one per line or comma-separated):',
+      current
+    );
+    if (next == null) return;
+    const dates = parseCustomDates(next);
+    await runAction(() =>
+      api.put(`/delivery-schedules/rules/${rule.id}/dates`, { dates })
+    );
   }
 
   async function handleActivateRule(ruleId) {
@@ -222,6 +263,22 @@ export default function BlanketPoDetailsPage() {
     await runAction(() => api.post(`/delivery-schedules/rules/${ruleId}/deactivate`));
   }
 
+  async function handlePreviewGenerate() {
+    if (!genForm.rule_id || !genForm.horizon_start || !genForm.horizon_end) {
+      setPreviewCount(null);
+      return;
+    }
+    try {
+      const { data } = await api.post(`/delivery-schedules/rules/${genForm.rule_id}/preview`, {
+        horizon_start: genForm.horizon_start,
+        horizon_end: genForm.horizon_end,
+      });
+      setPreviewCount(data.count ?? data.dates?.length ?? 0);
+    } catch {
+      setPreviewCount(null);
+    }
+  }
+
   async function handleGenerate(e) {
     e.preventDefault();
     await runAction(async () => {
@@ -230,6 +287,7 @@ export default function BlanketPoDetailsPage() {
         horizon_start: genForm.horizon_start,
         horizon_end: genForm.horizon_end,
       });
+      setPreviewCount(null);
       alert(
         `Created ${data.created_count} schedule(s)` +
           (data.skipped_count ? `, skipped ${data.skipped_count} existing date(s)` : '')
@@ -577,15 +635,15 @@ export default function BlanketPoDetailsPage() {
             <section className="mes-card">
               <h2 style={{ margin: '0 0 4px', fontSize: 16 }}>Recurring schedule rules</h2>
               <p className="muted" style={{ marginTop: 0, marginBottom: 16 }}>
-                Draft a rule, then activate it. Activating starts validity today; a new rule for the
-                same line + day retires the previous one.
+                Draft a rule, then activate it. Activating starts validity today; a new weekly/monthly
+                rule for the same line + slot retires the previous one.
               </p>
 
               {!rules.length ? (
                 <EmptyState
                   icon={CalendarRange}
                   title="No schedule rules"
-                  description="Add a weekly or monthly rule after the blanket is active and has lines."
+                  description="Add a weekly, monthly, or custom rule after the blanket is active and has lines."
                 />
               ) : (
                 <div className="employees-table-wrap" style={{ marginBottom: 20 }}>
@@ -616,7 +674,12 @@ export default function BlanketPoDetailsPage() {
                                 {line?.component_label || r.blanket_po_line_id.slice(0, 8)}
                               </TruncatedText>
                             </td>
-                            <td>{r.cadence}</td>
+                            <td>
+                              {r.cadence}
+                              {r.cadence === 'weekly' && Number(r.interval_weeks) > 1
+                                ? ` ×${r.interval_weeks}`
+                                : ''}
+                            </td>
                             <td>{formatRuleWhen(r)}</td>
                             <td>{r.default_quantity}</td>
                             <td>
@@ -648,6 +711,16 @@ export default function BlanketPoDetailsPage() {
                                   onClick={() => handleDeactivateRule(r.id)}
                                 >
                                   Deactivate
+                                </button>
+                              ) : null}
+                              {r.cadence === 'custom' ? (
+                                <button
+                                  type="button"
+                                  className="mes-btn mes-btn-secondary"
+                                  disabled={busy}
+                                  onClick={() => handleEditCustomDates(r)}
+                                >
+                                  Edit dates
                                 </button>
                               ) : null}
                             </td>
@@ -692,39 +765,89 @@ export default function BlanketPoDetailsPage() {
                         onChange={(e) => setRuleForm((f) => ({ ...f, cadence: e.target.value }))}
                         disabled={busy}
                       >
-                        <option value="weekly">Weekly</option>
+                        <option value="weekly">Weekly / every N weeks</option>
                         <option value="monthly">Monthly</option>
+                        <option value="custom">Custom dates</option>
                       </select>
                     </label>
                     {ruleForm.cadence === 'weekly' ? (
+                      <>
+                        <label>
+                          Weekday
+                          <select
+                            value={ruleForm.weekday}
+                            onChange={(e) =>
+                              setRuleForm((f) => ({ ...f, weekday: e.target.value }))
+                            }
+                            disabled={busy}
+                          >
+                            {WEEKDAYS.map((w) => (
+                              <option key={w.value} value={w.value}>
+                                {w.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Interval (weeks)
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={ruleForm.interval_weeks}
+                            onChange={(e) =>
+                              setRuleForm((f) => ({ ...f, interval_weeks: e.target.value }))
+                            }
+                            disabled={busy}
+                          />
+                        </label>
+                        {Number(ruleForm.interval_weeks) > 1 ? (
+                          <label>
+                            Anchor / first date (optional)
+                            <input
+                              type="date"
+                              value={ruleForm.anchor_date}
+                              onChange={(e) =>
+                                setRuleForm((f) => ({ ...f, anchor_date: e.target.value }))
+                              }
+                              disabled={busy}
+                            />
+                          </label>
+                        ) : null}
+                      </>
+                    ) : null}
+                    {ruleForm.cadence === 'monthly' ? (
                       <label>
-                        Weekday
-                        <select
-                          value={ruleForm.weekday}
-                          onChange={(e) => setRuleForm((f) => ({ ...f, weekday: e.target.value }))}
-                          disabled={busy}
-                        >
-                          {WEEKDAYS.map((w) => (
-                            <option key={w.value} value={w.value}>
-                              {w.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : (
-                      <label>
-                        Day of month (1–28)
+                        Day of month (1–31)
                         <input
                           type="number"
                           min="1"
-                          max="28"
+                          max="31"
                           value={ruleForm.month_day}
-                          onChange={(e) => setRuleForm((f) => ({ ...f, month_day: e.target.value }))}
+                          onChange={(e) =>
+                            setRuleForm((f) => ({ ...f, month_day: e.target.value }))
+                          }
                           disabled={busy}
                           required
                         />
                       </label>
-                    )}
+                    ) : null}
+                    {ruleForm.cadence === 'custom' ? (
+                      <label style={{ gridColumn: '1 / -1' }}>
+                        Preferred dates (DD-MM-YYYY)
+                        <textarea
+                          rows={4}
+                          value={ruleForm.custom_dates_text}
+                          onChange={(e) =>
+                            setRuleForm((f) => ({ ...f, custom_dates_text: e.target.value }))
+                          }
+                          placeholder={'20-07-2026\n03-08-2026'}
+                          disabled={busy}
+                          required
+                          style={{ width: '100%', fontFamily: 'inherit' }}
+                        />
+                      </label>
+                    ) : null}
                     <label>
                       Default quantity
                       <input
@@ -812,8 +935,18 @@ export default function BlanketPoDetailsPage() {
                       />
                     </label>
                   </div>
+                  <button
+                    type="button"
+                    className="mes-btn mes-btn-secondary"
+                    style={{ marginTop: 12, marginRight: 8 }}
+                    disabled={busy || !genForm.rule_id || !genForm.horizon_start || !genForm.horizon_end}
+                    onClick={handlePreviewGenerate}
+                  >
+                    Preview
+                  </button>
                   <button type="submit" className="mes-btn mes-btn-primary" style={{ marginTop: 12 }} disabled={busy}>
                     Generate occurrences
+                    {previewCount != null ? ` (${previewCount})` : ''}
                   </button>
                 </form>
               ) : null}
@@ -898,11 +1031,9 @@ export default function BlanketPoDetailsPage() {
                         </p>
                         <p style={{ marginTop: 6 }}>
                           Qty <strong>{s.quantity}</strong>
-                          {s.rule_weekday_label
-                            ? ` · weekly ${s.rule_weekday_label}`
-                            : s.rule_month_day != null
-                              ? ` · monthly day ${s.rule_month_day}`
-                              : ''}
+                          {formatScheduleCadence(s)
+                            ? ` · ${formatScheduleCadence(s)}`
+                            : ''}
                         </p>
                       </div>
                       <div

@@ -690,6 +690,34 @@ async function activateVersion(versionId, masterRecordId) {
     }
   }
 
+  const { computeActivateSequencePlan } = require('./activityFlowRoute');
+  const plan = computeActivateSequencePlan(version.nodes || [], version.edges || []);
+
+  if (plan.unreachableSchedulable.length) {
+    const labels = plan.unreachableSchedulable.map((n) => n.label || n.activity_type).join(', ');
+    throw httpError(
+      `Cannot activate: schedulable node(s) not on primary path (default edges): ${labels}`
+    );
+  }
+  if (!plan.dispatchOnPath.length) {
+    throw httpError('Cannot activate: primary path must include a Dispatch node');
+  }
+  if (!plan.dispatchIsTerminal) {
+    throw httpError(
+      'Cannot activate: Dispatch must be the last traveler node on the primary path'
+    );
+  }
+
+  // Sync sequence from primary-path order so display matches routing
+  for (const upd of plan.sequenceUpdates) {
+    const { error: seqErr } = await supabase
+      .from('activity_flow_nodes')
+      .update({ sequence: upd.sequence })
+      .eq('id', upd.id)
+      .eq('flow_version_id', versionId);
+    if (seqErr) throw seqErr;
+  }
+
   const today = todayDateString();
   const active = await getActiveVersionRow(masterRecordId);
   if (active) {

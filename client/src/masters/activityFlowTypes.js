@@ -27,4 +27,12 @@ export function getActivityTypeMeta(type) {
   );
 }
 
-export const SCHEDULABLE_TYPES = new Set(['machining', 'assembly']);
+export const SCHEDULABLE_TYPES = new Set([
+  'machining',
+  'assembly',
+  'inspection',
+  'packing',
+  'outsource',
+]);
+
+export const TERMINAL_DISPATCH_TYPES = new Set(['dispatch']);

@@ -3,13 +3,22 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Check, CalendarRange } from 'lucide-react';
 import api from '../api/client';
 import ComponentSelect from './ComponentSelect';
-import { WEEKDAYS } from './scheduleLabels';
+import { WEEKDAYS, weekdayName } from './scheduleLabels';
+import { formatDisplayDate, parseDateListToISO } from '../utils/dateFormat';
 import { EmptyState, PageHeader } from '../components/mes';
 
 const STEPS = [
   { id: 1, title: 'Customer', hint: 'Who is this contract for?' },
   { id: 2, title: 'Part & price', hint: 'Component and locked unit price' },
-  { id: 3, title: 'Weekly schedule', hint: 'Days, quantities, and horizon' },
+  { id: 3, title: 'Delivery cadence', hint: 'How often and how much' },
+];
+
+const CADENCE_MODES = [
+  { id: 'weekly', label: 'Weekly', hint: 'Same weekday every week' },
+  { id: 'biweekly', label: 'Every 2 weeks', hint: 'Alternate weeks from an anchor' },
+  { id: 'n_weeks', label: 'Every N weeks', hint: 'Custom week interval' },
+  { id: 'monthly', label: 'Monthly', hint: 'Day of month (1–31)' },
+  { id: 'custom', label: 'Custom dates', hint: 'Explicit preferred dates' },
 ];
 
 function emptyWeek() {
@@ -29,6 +38,19 @@ function plusWeeks(iso, weeks) {
   return d.toISOString().slice(0, 10);
 }
 
+function plusMonths(iso, months) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCMonth(d.getUTCMonth() + months);
+  return d.toISOString().slice(0, 10);
+}
+
+function defaultHorizonEnd(mode, start) {
+  if (mode === 'monthly') return plusMonths(start, 3);
+  if (mode === 'biweekly' || mode === 'n_weeks') return plusWeeks(start, 12);
+  if (mode === 'custom') return plusMonths(start, 6);
+  return plusWeeks(start, 8);
+}
+
 export default function AddBlanketPoPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
@@ -40,10 +62,17 @@ export default function AddBlanketPoPage() {
   const [compLabel, setCompLabel] = useState('');
   const [unitPrice, setUnitPrice] = useState('');
   const [uom, setUom] = useState('pcs');
+  const [cadenceMode, setCadenceMode] = useState('weekly');
   const [week, setWeek] = useState(emptyWeek);
+  const [intervalWeeks, setIntervalWeeks] = useState('3');
+  const [anchorDate, setAnchorDate] = useState('');
+  const [monthDay, setMonthDay] = useState('15');
+  const [monthQty, setMonthQty] = useState('');
+  const [customDatesText, setCustomDatesText] = useState('');
+  const [customQty, setCustomQty] = useState('');
   const [activateNow, setActivateNow] = useState(true);
   const [horizonStart, setHorizonStart] = useState(todayStr);
-  const [horizonEnd, setHorizonEnd] = useState(() => plusWeeks(todayStr(), 4));
+  const [horizonEnd, setHorizonEnd] = useState(() => plusWeeks(todayStr(), 8));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -63,6 +92,24 @@ export default function AddBlanketPoPage() {
     () => WEEKDAYS.filter((d) => week[d.value]?.enabled && Number(week[d.value].qty) > 0),
     [week]
   );
+
+  const customDates = useMemo(() => parseDateListToISO(customDatesText), [customDatesText]);
+
+  const isWeeklyFamily = cadenceMode === 'weekly' || cadenceMode === 'biweekly' || cadenceMode === 'n_weeks';
+
+  function resolvedInterval() {
+    if (cadenceMode === 'biweekly') return 2;
+    if (cadenceMode === 'n_weeks') {
+      const n = Number(intervalWeeks);
+      return Number.isInteger(n) && n >= 1 ? n : 1;
+    }
+    return 1;
+  }
+
+  function selectCadenceMode(mode) {
+    setCadenceMode(mode);
+    setHorizonEnd(defaultHorizonEnd(mode, horizonStart));
+  }
 
   function toggleDay(day) {
     setWeek((w) => ({
@@ -90,9 +137,43 @@ export default function AddBlanketPoPage() {
     return true;
   }
 
+  function cadenceValid() {
+    if (isWeeklyFamily) return enabledDays.length > 0;
+    if (cadenceMode === 'monthly') {
+      const day = Number(monthDay);
+      const qty = Number(monthQty);
+      return Number.isInteger(day) && day >= 1 && day <= 31 && Number.isFinite(qty) && qty > 0;
+    }
+    if (cadenceMode === 'custom') {
+      const qty = Number(customQty);
+      return customDates.length > 0 && Number.isFinite(qty) && qty > 0;
+    }
+    return false;
+  }
+
+  function cadenceSummary() {
+    if (isWeeklyFamily) {
+      const iv = resolvedInterval();
+      const days = enabledDays.map((d) => `${d.short} ${week[d.value].qty}`).join(' · ');
+      if (!days) return 'None selected';
+      if (iv <= 1) return days;
+      return `Every ${iv} weeks · ${days}${anchorDate ? ` · from ${formatDisplayDate(anchorDate)}` : ''}`;
+    }
+    if (cadenceMode === 'monthly') {
+      return `Day ${monthDay || '—'} · qty ${monthQty || '—'}`;
+    }
+    return `${customDates.length} date(s) · qty ${customQty || '—'}`;
+  }
+
   async function handleSubmit() {
-    if (!enabledDays.length) {
-      setError('Turn on at least one delivery day and enter a quantity.');
+    if (!cadenceValid()) {
+      setError(
+        isWeeklyFamily
+          ? 'Turn on at least one delivery day and enter a quantity.'
+          : cadenceMode === 'monthly'
+            ? 'Set a day of month (1–31) and quantity.'
+            : 'Paste at least one DD-MM-YYYY date and a default quantity.'
+      );
       return;
     }
     if (activateNow && (!horizonStart || !horizonEnd || horizonEnd < horizonStart)) {
@@ -119,12 +200,35 @@ export default function AddBlanketPoPage() {
       const lineId = lineRes.line.id;
 
       const ruleIds = [];
-      for (const day of enabledDays) {
+      const interval = resolvedInterval();
+
+      if (isWeeklyFamily) {
+        for (const day of enabledDays) {
+          const body = {
+            blanket_po_line_id: lineId,
+            cadence: 'weekly',
+            weekday: day.value,
+            default_quantity: Number(week[day.value].qty),
+            interval_weeks: interval,
+          };
+          if (interval > 1 && anchorDate) body.anchor_date = anchorDate;
+          const { data: ruleRes } = await api.post('/delivery-schedules/rules', body);
+          ruleIds.push(ruleRes.rule.id);
+        }
+      } else if (cadenceMode === 'monthly') {
         const { data: ruleRes } = await api.post('/delivery-schedules/rules', {
           blanket_po_line_id: lineId,
-          cadence: 'weekly',
-          weekday: day.value,
-          default_quantity: Number(week[day.value].qty),
+          cadence: 'monthly',
+          month_day: Number(monthDay),
+          default_quantity: Number(monthQty),
+        });
+        ruleIds.push(ruleRes.rule.id);
+      } else {
+        const { data: ruleRes } = await api.post('/delivery-schedules/rules', {
+          blanket_po_line_id: lineId,
+          cadence: 'custom',
+          default_quantity: Number(customQty),
+          custom_dates: customDates,
         });
         ruleIds.push(ruleRes.rule.id);
       }
@@ -154,7 +258,7 @@ export default function AddBlanketPoPage() {
       <PageHeader
         eyebrow="Sourcing"
         title="New customer contract"
-        subtitle="Pick the customer, lock the part price, set weekly delivery days, and generate dated schedules."
+        subtitle="Pick the customer, lock the part price, choose a delivery cadence, and generate dated schedules."
         actions={
           <button type="button" className="mes-btn mes-btn-secondary" onClick={() => navigate('/blanket-pos')}>
             <ArrowLeft size={16} />
@@ -292,51 +396,168 @@ export default function AddBlanketPoPage() {
 
         {step === 3 ? (
           <div className="bpo-panel">
-            <h2>Weekly delivery schedule</h2>
+            <h2>Delivery cadence</h2>
             <p className="muted bpo-lead">
-              Tap delivery days and enter quantities. When you activate, dated delivery schedules are
-              generated for the horizon below — no spreadsheet upload required.
+              Choose how often deliveries repeat. When you activate, dated schedules are generated for
+              the horizon below.
             </p>
 
-            {!enabledDays.length ? (
-              <EmptyState
-                icon={CalendarRange}
-                title="No delivery days yet"
-                description="Enable at least one weekday and set a quantity to build the recurring plan."
-              />
-            ) : null}
+            <div className="bpo-week-grid" style={{ marginTop: 12, marginBottom: 16 }}>
+              {CADENCE_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`bpo-day-card${cadenceMode === m.id ? ' is-on' : ''}`}
+                  style={{ textAlign: 'left', cursor: 'pointer', padding: 12 }}
+                  disabled={submitting}
+                  onClick={() => selectCadenceMode(m.id)}
+                  aria-pressed={cadenceMode === m.id}
+                >
+                  <strong style={{ display: 'block', fontSize: 13 }}>{m.label}</strong>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    {m.hint}
+                  </span>
+                </button>
+              ))}
+            </div>
 
-            <div className="bpo-week-grid" style={{ marginTop: 16 }}>
-              {WEEKDAYS.map((d) => {
-                const cell = week[d.value];
-                return (
-                  <div key={d.value} className={`bpo-day-card${cell.enabled ? ' is-on' : ''}`}>
-                    <button
-                      type="button"
-                      className="bpo-day-toggle"
-                      disabled={submitting}
-                      onClick={() => toggleDay(d.value)}
-                      aria-pressed={cell.enabled}
-                    >
-                      <span className="bpo-day-short">{d.short}</span>
-                      <span className="bpo-day-full">{d.label}</span>
-                    </button>
-                    <label className="bpo-day-qty">
-                      <span>Qty</span>
+            {isWeeklyFamily ? (
+              <>
+                {!enabledDays.length ? (
+                  <EmptyState
+                    icon={CalendarRange}
+                    title="No delivery days yet"
+                    description="Enable at least one weekday and set a quantity."
+                  />
+                ) : null}
+
+                <div className="bpo-week-grid" style={{ marginTop: 16 }}>
+                  {WEEKDAYS.map((d) => {
+                    const cell = week[d.value];
+                    return (
+                      <div key={d.value} className={`bpo-day-card${cell.enabled ? ' is-on' : ''}`}>
+                        <button
+                          type="button"
+                          className="bpo-day-toggle"
+                          disabled={submitting}
+                          onClick={() => toggleDay(d.value)}
+                          aria-pressed={cell.enabled}
+                        >
+                          <span className="bpo-day-short">{d.short}</span>
+                          <span className="bpo-day-full">{d.label}</span>
+                        </button>
+                        <label className="bpo-day-qty">
+                          <span>Qty</span>
+                          <input
+                            type="number"
+                            min="0.0001"
+                            step="any"
+                            value={cell.qty}
+                            disabled={submitting || !cell.enabled}
+                            placeholder="—"
+                            onChange={(e) => setDayQty(d.value, e.target.value)}
+                          />
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {(cadenceMode === 'biweekly' || cadenceMode === 'n_weeks') && (
+                  <div className="bpo-grid-2" style={{ marginTop: 16 }}>
+                    {cadenceMode === 'n_weeks' ? (
+                      <label>
+                        Interval (weeks)
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={intervalWeeks}
+                          onChange={(e) => setIntervalWeeks(e.target.value)}
+                          disabled={submitting}
+                        />
+                      </label>
+                    ) : (
+                      <label>
+                        Interval
+                        <input value="Every 2 weeks" disabled readOnly />
+                      </label>
+                    )}
+                    <label>
+                      First delivery / anchor (optional)
                       <input
-                        type="number"
-                        min="0.0001"
-                        step="any"
-                        value={cell.qty}
-                        disabled={submitting || !cell.enabled}
-                        placeholder="—"
-                        onChange={(e) => setDayQty(d.value, e.target.value)}
+                        type="date"
+                        value={anchorDate}
+                        onChange={(e) => setAnchorDate(e.target.value)}
+                        disabled={submitting}
                       />
                     </label>
                   </div>
-                );
-              })}
-            </div>
+                )}
+              </>
+            ) : null}
+
+            {cadenceMode === 'monthly' ? (
+              <div className="bpo-grid-2" style={{ marginTop: 8 }}>
+                <label>
+                  Day of month (1–31)
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={monthDay}
+                    onChange={(e) => setMonthDay(e.target.value)}
+                    disabled={submitting}
+                    required
+                  />
+                </label>
+                <label>
+                  Default quantity
+                  <input
+                    type="number"
+                    min="0.0001"
+                    step="any"
+                    value={monthQty}
+                    onChange={(e) => setMonthQty(e.target.value)}
+                    disabled={submitting}
+                    required
+                  />
+                </label>
+              </div>
+            ) : null}
+
+            {cadenceMode === 'custom' ? (
+              <div style={{ marginTop: 8 }}>
+                <label>
+                  Preferred dates (DD-MM-YYYY, one per line or comma-separated)
+                  <textarea
+                    rows={5}
+                    value={customDatesText}
+                    onChange={(e) => setCustomDatesText(e.target.value)}
+                    placeholder={'20-07-2026\n03-08-2026\n17-08-2026'}
+                    disabled={submitting}
+                    style={{ width: '100%', fontFamily: 'inherit' }}
+                  />
+                </label>
+                <p className="muted" style={{ marginTop: 4 }}>
+                  {customDates.length
+                    ? `${customDates.length} valid date${customDates.length === 1 ? '' : 's'} parsed`
+                    : 'No valid dates yet'}
+                </p>
+                <label style={{ marginTop: 8, display: 'block' }}>
+                  Default quantity
+                  <input
+                    type="number"
+                    min="0.0001"
+                    step="any"
+                    value={customQty}
+                    onChange={(e) => setCustomQty(e.target.value)}
+                    disabled={submitting}
+                    required
+                  />
+                </label>
+              </div>
+            ) : null}
 
             <div className="bpo-grid-2" style={{ marginTop: 20 }}>
               <label>
@@ -344,7 +565,11 @@ export default function AddBlanketPoPage() {
                 <input
                   type="date"
                   value={horizonStart}
-                  onChange={(e) => setHorizonStart(e.target.value)}
+                  onChange={(e) => {
+                    setHorizonStart(e.target.value);
+                    if (!e.target.value) return;
+                    setHorizonEnd(defaultHorizonEnd(cadenceMode, e.target.value));
+                  }}
                   disabled={submitting || !activateNow}
                 />
               </label>
@@ -359,7 +584,8 @@ export default function AddBlanketPoPage() {
               </label>
             </div>
             <p className="muted" style={{ marginTop: 8 }}>
-              Defaults to today through four weeks. Schedules are created only when you activate.
+              Horizon defaults adjust by cadence (weekly ~8 weeks, biweekly ~12, monthly ~3 months).
+              Schedules are created only when you activate.
             </p>
 
             <label className="bpo-check">
@@ -371,7 +597,7 @@ export default function AddBlanketPoPage() {
               />
               <span>
                 Activate & generate schedules
-                <small>Starts validity today, activates weekly rules, and creates dated deliveries</small>
+                <small>Starts validity today, activates rules, and creates dated deliveries</small>
               </span>
             </label>
 
@@ -393,17 +619,24 @@ export default function AddBlanketPoPage() {
                   </strong>
                 </li>
                 <li>
-                  <span>Weekly days</span>
+                  <span>Cadence</span>
                   <strong>
-                    {enabledDays.length
-                      ? enabledDays.map((d) => `${d.short} ${week[d.value].qty}`).join(' · ')
-                      : 'None selected'}
+                    {CADENCE_MODES.find((m) => m.id === cadenceMode)?.label}
+                    {isWeeklyFamily && enabledDays.length === 1
+                      ? ` · ${weekdayName(enabledDays[0].value)}`
+                      : ''}
                   </strong>
+                </li>
+                <li>
+                  <span>Plan</span>
+                  <strong>{cadenceSummary()}</strong>
                 </li>
                 <li>
                   <span>Horizon</span>
                   <strong>
-                    {activateNow ? `${horizonStart} → ${horizonEnd}` : 'Draft — no dates yet'}
+                    {activateNow
+                      ? `${formatDisplayDate(horizonStart)} → ${formatDisplayDate(horizonEnd)}`
+                      : 'Draft — no dates yet'}
                   </strong>
                 </li>
               </ul>
@@ -445,7 +678,7 @@ export default function AddBlanketPoPage() {
             <button
               type="button"
               className="mes-btn mes-btn-primary"
-              disabled={submitting || !enabledDays.length}
+              disabled={submitting || !cadenceValid()}
               onClick={handleSubmit}
             >
               {submitting

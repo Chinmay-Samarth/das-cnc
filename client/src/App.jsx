@@ -39,6 +39,7 @@ import MyTodayPage from './production/MyTodayPage';
 import ProductionBoardPage from './production/ProductionBoardPage';
 import WorkCenterBoardPage from './production/WorkCenterBoardPage';
 import ProductionCardTrackingPage from './production/ProductionCardTrackingPage';
+import ReadyForDispatchPage from './production/ReadyForDispatchPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 function RequireAuth() {
@@ -125,6 +126,7 @@ export default function App() {
             <Route path="/delivery-schedules" element={<DeliverySchedulesPage />} />
             <Route path="/production/today" element={<MyTodayPage />} />
             <Route path="/production/work-centers" element={<WorkCenterBoardPage />} />
+            <Route path="/production/dispatch" element={<ReadyForDispatchPage />} />
             <Route path="/production/cards/:id" element={<ProductionCardTrackingPage />} />
             <Route path="/production" element={<ProductionBoardPage />} />
             <Route path="*" element={<NotFoundPage />} />

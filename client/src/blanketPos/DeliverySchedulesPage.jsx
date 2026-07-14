@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import api from '../api/client';
 import ReleaseToFloorModal from '../production/ReleaseToFloorModal';
-import { formatDueLabel, formatScheduleLabel, WEEKDAYS } from './scheduleLabels';
+import { formatDueLabel, formatScheduleLabel, formatScheduleCadence, WEEKDAYS } from './scheduleLabels';
 import { useSocket } from '../socket/socketContext';
 import {
   PageHeader,
@@ -91,7 +91,7 @@ function ScheduleRow({ s, onRelease, onContract }) {
         </p>
         <p style={{ marginTop: 6 }}>
           Qty <strong>{s.quantity}</strong>
-          {s.rule_weekday_label ? ` · weekly ${s.rule_weekday_label}` : ''}
+          {formatScheduleCadence(s) ? ` · ${formatScheduleCadence(s)}` : ''}
         </p>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
@@ -424,7 +424,7 @@ export default function DeliverySchedulesPage() {
         <EmptyState
           icon={Truck}
           title="No deliveries in this range"
-          description="Generate schedules from a blanket PO weekly plan, or widen the date filter."
+          description="Generate schedules from a blanket PO delivery rule, or widen the date filter."
           actionLabel="Open Blanket POs"
           onAction={() => navigate('/blanket-pos')}
         />

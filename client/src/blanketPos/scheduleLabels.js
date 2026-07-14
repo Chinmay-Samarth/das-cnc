@@ -31,31 +31,73 @@ export function isoWeekdayFromDate(dateStr) {
   return js === 0 ? 7 : js;
 }
 
+/** Human-readable “when” for a rule (weekday / interval / month day / custom count). */
 export function formatRuleWhen(rule) {
   if (!rule) return '';
-  if (rule.cadence === 'weekly') {
-    return weekdayName(rule.weekday) || `Weekday ${rule.weekday}`;
+  const cadence = rule.cadence;
+  const interval = Number(rule.interval_weeks) || 1;
+
+  if (cadence === 'weekly') {
+    const day = weekdayName(rule.weekday) || `Weekday ${rule.weekday}`;
+    if (interval <= 1) return `Every ${day}`;
+    const from = rule.anchor_date ? ` (from ${formatDisplayDate(rule.anchor_date)})` : '';
+    return `Every ${interval} weeks on ${day}${from}`;
   }
-  if (rule.cadence === 'monthly') {
-    return `Day ${rule.month_day}`;
+  if (cadence === 'monthly') {
+    return `Monthly day ${rule.month_day}`;
   }
-  return rule.cadence || '';
+  if (cadence === 'custom') {
+    const n = Array.isArray(rule.custom_dates)
+      ? rule.custom_dates.length
+      : Number(rule.custom_date_count) || 0;
+    return n ? `Custom (${n} date${n === 1 ? '' : 's'})` : 'Custom';
+  }
+  return cadence || '';
+}
+
+/** Short cadence chip for schedule list rows. */
+export function formatScheduleCadence(schedule) {
+  if (!schedule) return '';
+  const cadence = schedule.rule_cadence;
+  if (!cadence) return '';
+  const interval = Number(schedule.rule_interval_weeks) || 1;
+
+  if (cadence === 'weekly') {
+    const day =
+      schedule.rule_weekday_label || weekdayName(schedule.rule_weekday) || null;
+    if (interval <= 1) return day ? `weekly ${day}` : 'weekly';
+    return day ? `every ${interval} weeks · ${day}` : `every ${interval} weeks`;
+  }
+  if (cadence === 'monthly') {
+    return schedule.rule_month_day != null
+      ? `monthly day ${schedule.rule_month_day}`
+      : 'monthly';
+  }
+  if (cadence === 'custom') return 'custom';
+  return cadence;
 }
 
 export function formatRuleLabel({
   cadence,
   weekday,
   month_day,
+  interval_weeks,
+  anchor_date,
+  custom_dates,
   default_quantity,
   component_label,
 } = {}) {
-  const when = formatRuleWhen({ cadence, weekday, month_day });
-  const cadenceLabel = cadence === 'weekly' ? 'Weekly' : cadence === 'monthly' ? 'Monthly' : cadence || '';
+  const when = formatRuleWhen({
+    cadence,
+    weekday,
+    month_day,
+    interval_weeks,
+    anchor_date,
+    custom_dates,
+  });
   const parts = [];
   if (component_label) parts.push(component_label);
-  if (cadenceLabel && when) parts.push(`${cadenceLabel} ${when}`);
-  else if (when) parts.push(when);
-  else if (cadenceLabel) parts.push(cadenceLabel);
+  if (when) parts.push(when);
   if (default_quantity != null && default_quantity !== '') {
     parts.push(`qty ${default_quantity}`);
   }

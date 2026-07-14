@@ -20,6 +20,23 @@ const {
   getWorkCenterBoard,
   previewAssigneeForSchedule,
 } = require('../services/productionAssignEngine');
+const {
+  getLotById,
+  completeLotOp,
+  dispatchLot,
+  reassignLot,
+  listReadyForDispatch,
+  listLotOpCompletions,
+} = require('../services/lotTravelerEngine');
+const {
+  getOpCardById,
+  listMyTodayOpCards,
+  startOpCard,
+  reportOpCardProgress,
+  completeOpCard,
+  reassignOpCard,
+  healAndSpawnMissingOpCards,
+} = require('../services/productionOpCardEngine');
 const { emitProductionUpdated } = require('../socket/emitter');
 const { broadcastProductionRealtime } = require('../socket/productionRealtime');
 const { createClient } = require('@supabase/supabase-js');
@@ -67,9 +84,11 @@ function isManager(user) {
 function notifyProduction(action, cardOrMeta = {}, extras = {}) {
   const card = cardOrMeta.card || cardOrMeta;
   const advance = cardOrMeta.advance || extras.advance || card.advance || null;
+  const lot = extras.lot || cardOrMeta.lot || advance?.lot || null;
   broadcastProductionRealtime({
     action,
     card,
+    lot,
     operatorId: extras.operatorId || null,
     quantityGood: extras.quantityGood ?? null,
     quantityScrap: extras.quantityScrap ?? null,
@@ -235,6 +254,9 @@ router.get(
     const result = await listMyToday(req.user?.sub);
     return res.json({
       cards: result.cards || [],
+      lots: result.lots || [],
+      op_cards: result.op_cards || [],
+      completed_ops_today: result.completed_ops_today || [],
       ops_completed_today: result.ops_completed_today || 0,
       cards_completed_today: result.cards_completed_today || 0,
       completed_credit: result.completed_credit || 0,
@@ -287,13 +309,15 @@ router.post(
     const card = await reportProgress(req.params.id, body, req.user?.sub, {
       isManager: isManager(req.user),
     });
-    notifyProduction('progress', card, {
+    const action = card.lot || card.advance?.lot_minted ? 'lot_created' : 'progress';
+    notifyProduction(action, card, {
       operatorId: req.user?.sub,
       quantityGood: body.good_qty != null ? Number(body.good_qty) : null,
       quantityScrap: body.scrap_qty != null ? Number(body.scrap_qty) : null,
       previousEmployeeId: card.advance?.from_employee_id || req.user?.sub,
       previousWorkCenterId: card.advance?.from_work_center_id || card.work_center_id,
       advance: card.advance,
+      lot: card.lot || card.advance?.lot || null,
     });
     return res.json({ card });
   })
@@ -316,11 +340,14 @@ router.post(
       body.operator_id || req.user?.sub,
       { isManager: isManager(req.user) }
     );
-    const action = card.advance?.advanced
-      ? 'advanced'
-      : body.done_for_day
-        ? 'completed'
-        : 'progress';
+    const action =
+      card.lot || card.advance?.lot_minted
+        ? 'lot_created'
+        : card.advance?.advanced
+          ? 'advanced'
+          : body.done_for_day
+            ? 'completed'
+            : 'progress';
     notifyProduction(action, card, {
       operatorId: body.operator_id || req.user?.sub,
       quantityGood: Number(body.quantity_good ?? body.good_qty ?? 0),
@@ -328,6 +355,7 @@ router.post(
       previousEmployeeId: card.advance?.from_employee_id || body.operator_id || req.user?.sub,
       previousWorkCenterId: card.advance?.from_work_center_id || card.work_center_id,
       advance: card.advance,
+      lot: card.lot || card.advance?.lot || null,
     });
     return res.json({ card });
   })
@@ -343,13 +371,21 @@ router.post(
       req.user?.sub,
       { isManager: isManager(req.user) }
     );
-    notifyProduction(card.advance?.advanced ? 'advanced' : 'completed', card, {
+    notifyProduction(
+      card.lot || card.advance?.lot_minted
+        ? 'lot_created'
+        : card.advance?.advanced
+          ? 'advanced'
+          : 'completed',
+      card,
+      {
       operatorId: req.user?.sub,
       quantityGood: body.good_qty != null ? Number(body.good_qty) : null,
       quantityScrap: body.scrap_qty != null ? Number(body.scrap_qty) : null,
       previousEmployeeId: card.advance?.from_employee_id || req.user?.sub,
       previousWorkCenterId: card.advance?.from_work_center_id || card.work_center_id,
       advance: card.advance,
+      lot: card.lot || card.advance?.lot || null,
     });
     return res.json({ card });
   })
@@ -372,8 +408,111 @@ router.post(
       previousEmployeeId: result.advance?.from_employee_id || req.user?.sub,
       previousWorkCenterId: result.advance?.from_work_center_id || card.work_center_id,
       advance: result.advance,
+      lot: result.lot,
     });
     return res.status(201).json(result);
+  })
+);
+
+router.get(
+  '/ready-for-dispatch',
+  wrap(async (req, res) => {
+    const lots = await listReadyForDispatch();
+    return res.json({ lots });
+  })
+);
+
+router.get(
+  '/lots/:id',
+  wrap(async (req, res) => {
+    const lot = await getLotById(req.params.id);
+    const completions = await listLotOpCompletions(req.params.id);
+    return res.json({ lot, completions });
+  })
+);
+
+router.post(
+  '/lots/:id/complete',
+  wrap(async (req, res) => {
+    const body = req.body || {};
+    const result = await completeLotOp(req.params.id, body, req.user?.sub, {
+      isManager: isManager(req.user),
+    });
+    const lot = result.lot || (await getLotById(req.params.id));
+    let card = {};
+    if (lot.production_card_id) {
+      try {
+        card = await getCardById(lot.production_card_id);
+      } catch {
+        card = { id: lot.production_card_id };
+      }
+    }
+    notifyProduction(
+      result.ready_for_dispatch ? 'lot_ready_for_dispatch' : 'lot_advanced',
+      card,
+      {
+        operatorId: req.user?.sub,
+        quantityGood: body.good_qty != null ? Number(body.good_qty) : Number(lot.quantity || 0),
+        quantityScrap: body.scrap_qty != null ? Number(body.scrap_qty) : null,
+        previousEmployeeId: result.from_employee_id || req.user?.sub,
+        previousWorkCenterId: result.from_work_center_id || null,
+        advance: {
+          advanced: !!result.advanced,
+          from_employee_id: result.from_employee_id,
+          from_work_center_id: result.from_work_center_id,
+        },
+        lot,
+      }
+    );
+    return res.json(result);
+  })
+);
+
+router.post(
+  '/lots/:id/dispatch',
+  wrap(async (req, res) => {
+    const lot = await dispatchLot(req.params.id, req.user?.sub);
+    let card = {};
+    if (lot.production_card_id) {
+      try {
+        card = await getCardById(lot.production_card_id);
+      } catch {
+        card = { id: lot.production_card_id };
+      }
+    }
+    notifyProduction('lot_dispatched', card, {
+      operatorId: req.user?.sub,
+      quantityGood: Number(lot.quantity || 0),
+      lot,
+    });
+    return res.json({ lot });
+  })
+);
+
+router.post(
+  '/lots/:id/reassign',
+  wrap(async (req, res) => {
+    if (!isManager(req.user)) {
+      return res.status(403).json({ error: 'Manager access required' });
+    }
+    const result = await reassignLot(req.params.id, req.body?.employee_id);
+    const [lot] = result.lot
+      ? [await getLotById(result.lot.id)]
+      : [null];
+    let card = {};
+    if (lot?.production_card_id) {
+      try {
+        card = await getCardById(lot.production_card_id);
+      } catch {
+        card = { id: lot.production_card_id };
+      }
+    }
+    notifyProduction('lot_reassigned', card, {
+      previousEmployeeId: result.previous_employee_id || null,
+      previousWorkCenterId: lot?.work_center_id || null,
+      lot,
+    });
+    return res.json({ lot, assignee: result.assignee });
   })
 );
 
@@ -397,6 +536,171 @@ router.post(
     });
     const card = await getCardById(result.shipment?.production_card_id);
     notifyProduction('outsource_received', card);
+    for (const adv of result.lots || []) {
+      if (adv?.lot) {
+        notifyProduction(
+          adv.ready_for_dispatch ? 'lot_ready_for_dispatch' : 'lot_advanced',
+          card,
+          {
+            operatorId: req.user?.sub,
+            previousEmployeeId: adv.from_employee_id || null,
+            previousWorkCenterId: adv.from_work_center_id || null,
+            advance: {
+              advanced: !!adv.advanced,
+              from_employee_id: adv.from_employee_id,
+              from_work_center_id: adv.from_work_center_id,
+            },
+            lot: adv.lot,
+          }
+        );
+      }
+    }
+    return res.json(result);
+  })
+);
+
+// ─── Operation Cards ──────────────────────────────────────────────────────────
+
+router.get(
+  '/op-cards/my-today',
+  wrap(async (req, res) => {
+    const op_cards = await listMyTodayOpCards(req.user?.sub);
+    return res.json({ op_cards });
+  })
+);
+
+router.get(
+  '/op-cards/:id',
+  wrap(async (req, res) => {
+    const op_card = await getOpCardById(req.params.id);
+    return res.json({ op_card });
+  })
+);
+
+router.post(
+  '/op-cards/:id/start',
+  wrap(async (req, res) => {
+    const op_card = await startOpCard(req.params.id, req.user?.sub, {
+      isManager: isManager(req.user),
+    });
+    notifyProduction('op_started', { id: op_card.production_card_id }, {
+      operatorId: req.user?.sub,
+      lot: op_card.production_lot_id ? { id: op_card.production_lot_id } : null,
+    });
+    return res.json({ op_card });
+  })
+);
+
+router.post(
+  '/op-cards/:id/progress',
+  wrap(async (req, res) => {
+    const body = req.body || {};
+    const result = await reportOpCardProgress(req.params.id, body, req.user?.sub, {
+      isManager: isManager(req.user),
+    });
+    const parentId =
+      result.op_card?.production_card_id ||
+      result.parent?.id ||
+      result.op_card?.parent_production_card_id;
+    let card = result.parent || {};
+    if (parentId && !card.id) {
+      try {
+        card = await getCardById(parentId);
+      } catch {
+        card = { id: parentId };
+      }
+    }
+    const advance = result.advance || result.parent?.advance || null;
+    notifyProduction(
+      advance?.ready_for_dispatch
+        ? 'lot_ready_for_dispatch'
+        : advance?.advanced
+          ? 'lot_advanced'
+          : body.done_for_day
+            ? 'completed'
+            : 'progress',
+      card,
+      {
+        operatorId: req.user?.sub,
+        quantityGood: body.good_qty != null ? Number(body.good_qty) : null,
+        quantityScrap: body.scrap_qty != null ? Number(body.scrap_qty) : null,
+        previousEmployeeId: advance?.from_employee_id || req.user?.sub,
+        previousWorkCenterId: advance?.from_work_center_id || null,
+        advance,
+        lot: result.lot || advance?.lot || null,
+      }
+    );
+    return res.json(result);
+  })
+);
+
+router.post(
+  '/op-cards/:id/complete',
+  wrap(async (req, res) => {
+    const body = req.body || {};
+    const result = await completeOpCard(req.params.id, body, req.user?.sub, {
+      isManager: isManager(req.user),
+    });
+    const parentId =
+      result.op_card?.production_card_id || result.op_card?.parent_production_card_id;
+    let card = result.parent || {};
+    if (parentId && !card.id) {
+      try {
+        card = await getCardById(parentId);
+      } catch {
+        card = { id: parentId };
+      }
+    }
+    const advance = result.advance || null;
+    notifyProduction(
+      advance?.ready_for_dispatch
+        ? 'lot_ready_for_dispatch'
+        : advance?.advanced
+          ? 'lot_advanced'
+          : 'completed',
+      card,
+      {
+        operatorId: req.user?.sub,
+        quantityGood: body.good_qty != null ? Number(body.good_qty) : null,
+        quantityScrap: body.scrap_qty != null ? Number(body.scrap_qty) : null,
+        previousEmployeeId: advance?.from_employee_id || req.user?.sub,
+        previousWorkCenterId: advance?.from_work_center_id || null,
+        advance,
+        lot: result.lot || null,
+      }
+    );
+    return res.json(result);
+  })
+);
+
+router.post(
+  '/op-cards/:id/reassign',
+  wrap(async (req, res) => {
+    if (!isManager(req.user)) {
+      return res.status(403).json({ error: 'Manager access required' });
+    }
+    const result = await reassignOpCard(req.params.id, req.body?.employee_id);
+    notifyProduction('op_reassigned', { id: result.op_card?.production_card_id }, {
+      previousEmployeeId: result.previous_employee_id || null,
+      previousWorkCenterId: result.op_card?.work_center_id || null,
+      lot: result.op_card?.production_lot_id
+        ? { id: result.op_card.production_lot_id }
+        : null,
+    });
+    return res.json(result);
+  })
+);
+
+router.post(
+  '/heal-op-cards',
+  wrap(async (req, res) => {
+    if (!isManager(req.user)) {
+      return res.status(403).json({ error: 'Manager access required' });
+    }
+    const result = await healAndSpawnMissingOpCards(
+      req.body?.limit != null ? Number(req.body.limit) : 200
+    );
+    broadcastProductionRealtime({ action: 'heal_op_cards', card: {} });
     return res.json(result);
   })
 );

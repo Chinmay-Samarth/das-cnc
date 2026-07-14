@@ -96,3 +96,42 @@ export function toISODateString(value = new Date()) {
   if (!parts) return '';
   return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}`;
 }
+
+/**
+ * Parse a single date token (dd-mm-yyyy or YYYY-MM-DD) to API ISO date.
+ * Returns '' if invalid.
+ */
+export function parseToISODate(value) {
+  const parts = parseDateParts(value);
+  if (!parts) return '';
+  // Reject clearly impossible calendar dates after parse
+  const probe = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  if (
+    probe.getUTCFullYear() !== parts.year ||
+    probe.getUTCMonth() + 1 !== parts.month ||
+    probe.getUTCDate() !== parts.day
+  ) {
+    return '';
+  }
+  return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}`;
+}
+
+/**
+ * Parse a multi-date paste blob (newlines / commas / spaces) into unique ISO dates.
+ * Accepts dd-mm-yyyy and YYYY-MM-DD.
+ */
+export function parseDateListToISO(text) {
+  const tokens = String(text || '')
+    .split(/[\s,;]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const dates = [];
+  const seen = new Set();
+  for (const t of tokens) {
+    const iso = parseToISODate(t);
+    if (!iso || seen.has(iso)) continue;
+    seen.add(iso);
+    dates.push(iso);
+  }
+  return dates.sort();
+}

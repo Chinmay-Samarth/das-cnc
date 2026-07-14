@@ -563,21 +563,79 @@ function parseDateOnly(str) {
   return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
 }
 
-function matchingDates(rule, horizonStart, horizonEnd, blanket) {
+function daysBetweenUtc(a, b) {
+  const ms = b.getTime() - a.getTime();
+  return Math.floor(ms / (24 * 60 * 60 * 1000));
+}
+
+function daysInUtcMonth(year, monthIndex0) {
+  return new Date(Date.UTC(year, monthIndex0 + 1, 0)).getUTCDate();
+}
+
+/** Snap calendar date forward to the next (or same) matching ISO weekday. */
+function snapToWeekday(dateStr, weekday) {
+  const d = parseDateOnly(dateStr);
+  const target = Number(weekday);
+  for (let i = 0; i < 7; i++) {
+    if (isoWeekday(d) === target) return toDateString(d);
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return toDateString(d);
+}
+
+/**
+ * Resolve due dates for a rule within a horizon.
+ * ruleDates: [{ due_date, quantity? }] for custom cadence.
+ */
+function matchingDates(rule, horizonStart, horizonEnd, blanket, ruleDates = []) {
   const start = parseDateOnly(horizonStart);
   const end = parseDateOnly(horizonEnd);
   if (end < start) throw httpError('horizon_end must be >= horizon_start');
 
+  const interval = Math.max(1, Number(rule.interval_weeks) || 1);
+  const cadence = rule.cadence;
   const dates = [];
+
+  if (cadence === 'custom') {
+    for (const row of ruleDates || []) {
+      const ds = String(row.due_date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(ds)) continue;
+      if (ds < horizonStart || ds > horizonEnd) continue;
+      if (!dateInRange(ds, rule.valid_from, rule.valid_to)) continue;
+      if (!dateInRange(ds, blanket.valid_from, blanket.valid_to)) continue;
+      dates.push(ds);
+    }
+    dates.sort();
+    return [...new Set(dates)];
+  }
+
+  let anchor = null;
+  if (cadence === 'weekly' && interval > 1) {
+    const anchorRaw = rule.anchor_date || rule.valid_from || horizonStart;
+    anchor = parseDateOnly(snapToWeekday(anchorRaw, rule.weekday));
+  }
+
   const cursor = new Date(start);
   while (cursor <= end) {
     const ds = toDateString(cursor);
     let match = false;
-    if (rule.cadence === 'weekly') {
-      match = isoWeekday(cursor) === Number(rule.weekday);
-    } else if (rule.cadence === 'monthly') {
-      match = cursor.getUTCDate() === Number(rule.month_day);
+
+    if (cadence === 'weekly') {
+      if (isoWeekday(cursor) === Number(rule.weekday)) {
+        if (interval <= 1) {
+          match = true;
+        } else if (anchor) {
+          const weeks = Math.floor(daysBetweenUtc(anchor, cursor) / 7);
+          match = weeks >= 0 && weeks % interval === 0;
+        }
+      }
+    } else if (cadence === 'monthly') {
+      const md = Number(rule.month_day);
+      const dim = daysInUtcMonth(cursor.getUTCFullYear(), cursor.getUTCMonth());
+      const targetDay = Math.min(md, dim);
+      match = cursor.getUTCDate() === targetDay;
     }
+
     if (
       match &&
       dateInRange(ds, rule.valid_from, rule.valid_to) &&
@@ -590,6 +648,95 @@ function matchingDates(rule, horizonStart, horizonEnd, blanket) {
   return dates;
 }
 
+async function listRuleDates(ruleId) {
+  if (!isValidUUID(ruleId)) throw httpError('Invalid rule id');
+  const { data, error } = await supabase
+    .from('delivery_schedule_rule_dates')
+    .select('*')
+    .eq('rule_id', ruleId)
+    .order('due_date', { ascending: true });
+  if (error) throw error;
+  return (data || []).map((r) => ({
+    ...r,
+    quantity: r.quantity != null ? Number(r.quantity) : null,
+  }));
+}
+
+/**
+ * Replace the full custom date set for a rule.
+ * dates: string[] | { due_date, quantity? }[]
+ */
+async function setRuleDates(ruleId, datesPayload) {
+  if (!isValidUUID(ruleId)) throw httpError('Invalid rule id');
+
+  const { data: rule, error } = await supabase
+    .from('delivery_schedule_rules')
+    .select('*')
+    .eq('id', ruleId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!rule) throw httpError('Schedule rule not found', 404);
+  if (rule.cadence !== 'custom') {
+    throw httpError('Only custom cadence rules have a date list');
+  }
+
+  const { blanket } = await getLineWithBlanket(rule.blanket_po_line_id);
+  if (['closed', 'cancelled'].includes(blanket.status)) {
+    throw httpError('Cannot edit rules on a closed or cancelled blanket');
+  }
+
+  const raw = Array.isArray(datesPayload) ? datesPayload : [];
+  const normalized = [];
+  const seen = new Set();
+  for (const item of raw) {
+    const due =
+      typeof item === 'string'
+        ? String(item).slice(0, 10)
+        : String(item?.due_date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) {
+      throw httpError(`Invalid custom date: ${due || '(empty)'}`);
+    }
+    if (seen.has(due)) continue;
+    seen.add(due);
+    let qty = null;
+    if (item && typeof item === 'object' && item.quantity != null && item.quantity !== '') {
+      qty = Number(item.quantity);
+      if (!Number.isFinite(qty) || qty <= 0) throw httpError('custom date quantity must be > 0');
+    }
+    normalized.push({ rule_id: ruleId, due_date: due, quantity: qty });
+  }
+
+  const { error: delErr } = await supabase
+    .from('delivery_schedule_rule_dates')
+    .delete()
+    .eq('rule_id', ruleId);
+  if (delErr) throw delErr;
+
+  if (normalized.length) {
+    const { error: insErr } = await supabase
+      .from('delivery_schedule_rule_dates')
+      .insert(normalized);
+    if (insErr) throw insErr;
+  }
+
+  return listRuleDates(ruleId);
+}
+
+async function enrichRule(rule) {
+  if (!rule) return null;
+  const base = {
+    ...rule,
+    default_quantity: Number(rule.default_quantity),
+    interval_weeks: Number(rule.interval_weeks) || 1,
+  };
+  if (rule.cadence === 'custom') {
+    base.custom_dates = await listRuleDates(rule.id);
+  } else {
+    base.custom_dates = [];
+  }
+  return base;
+}
+
 async function listRules(lineId) {
   let query = supabase
     .from('delivery_schedule_rules')
@@ -600,28 +747,40 @@ async function listRules(lineId) {
 
   const { data, error } = await query;
   if (error) throw error;
-  return (data || []).map((r) => ({
-    ...r,
-    default_quantity: Number(r.default_quantity),
-  }));
+  const rules = [];
+  for (const r of data || []) {
+    rules.push(await enrichRule(r));
+  }
+  return rules;
 }
 
 async function createRule(payload) {
   const { line, blanket } = await getLineWithBlanket(payload.blanket_po_line_id);
   assertBlanketAcceptsRuleDrafts(blanket);
 
-  const cadence = payload.cadence;
-  if (!['weekly', 'monthly'].includes(cadence)) throw httpError('cadence must be weekly or monthly');
+  let cadence = payload.cadence;
+  // UI convenience: biweekly → weekly + interval 2
+  let intervalWeeks = Number(payload.interval_weeks);
+  if (cadence === 'biweekly') {
+    cadence = 'weekly';
+    if (!Number.isFinite(intervalWeeks) || intervalWeeks < 1) intervalWeeks = 2;
+  }
+  if (!['weekly', 'monthly', 'custom'].includes(cadence)) {
+    throw httpError('cadence must be weekly, monthly, or custom');
+  }
+  if (!Number.isInteger(intervalWeeks) || intervalWeeks < 1) intervalWeeks = 1;
+  if (cadence !== 'weekly') intervalWeeks = 1;
 
   const defaultQty = Number(payload.default_quantity);
   if (!Number.isFinite(defaultQty) || defaultQty <= 0) throw httpError('default_quantity must be > 0');
 
-  // Draft: validity set on activate (BOM / blanket-style)
   const row = {
     blanket_po_line_id: line.id,
     cadence,
     weekday: null,
     month_day: null,
+    interval_weeks: intervalWeeks,
+    anchor_date: null,
     default_quantity: defaultQty,
     valid_from: null,
     valid_to: null,
@@ -635,10 +794,13 @@ async function createRule(payload) {
       throw httpError('weekday must be 1 (Mon) through 7 (Sun)');
     }
     row.weekday = weekday;
-  } else {
+    if (payload.anchor_date) {
+      row.anchor_date = snapToWeekday(payload.anchor_date, weekday);
+    }
+  } else if (cadence === 'monthly') {
     const monthDay = Number(payload.month_day);
-    if (!Number.isInteger(monthDay) || monthDay < 1 || monthDay > 28) {
-      throw httpError('month_day must be 1 through 28');
+    if (!Number.isInteger(monthDay) || monthDay < 1 || monthDay > 31) {
+      throw httpError('month_day must be 1 through 31');
     }
     row.month_day = monthDay;
   }
@@ -650,7 +812,12 @@ async function createRule(payload) {
     .single();
 
   if (error) throw error;
-  return { ...data, default_quantity: Number(data.default_quantity) };
+
+  if (cadence === 'custom' && Array.isArray(payload.custom_dates) && payload.custom_dates.length) {
+    await setRuleDates(data.id, payload.custom_dates);
+  }
+
+  return enrichRule(data);
 }
 
 async function updateRule(ruleId, payload) {
@@ -676,43 +843,72 @@ async function updateRule(ruleId, payload) {
     if (!Number.isFinite(q) || q <= 0) throw httpError('default_quantity must be > 0');
     updates.default_quantity = q;
   }
-  // valid_from / valid_to are system-managed on activate/deactivate
   if (payload.notes !== undefined) updates.notes = cleanText(payload.notes);
 
-  if (rule.cadence === 'weekly' && payload.weekday !== undefined) {
-    if (rule.is_active) throw httpError('Cannot change weekday on an active rule; create a new rule instead');
-    const weekday = Number(payload.weekday);
-    if (!Number.isInteger(weekday) || weekday < 1 || weekday > 7) {
-      throw httpError('weekday must be 1–7');
+  if (rule.cadence === 'weekly') {
+    if (payload.weekday !== undefined) {
+      if (rule.is_active) throw httpError('Cannot change weekday on an active rule; create a new rule instead');
+      const weekday = Number(payload.weekday);
+      if (!Number.isInteger(weekday) || weekday < 1 || weekday > 7) {
+        throw httpError('weekday must be 1–7');
+      }
+      updates.weekday = weekday;
     }
-    updates.weekday = weekday;
+    if (payload.interval_weeks !== undefined) {
+      if (rule.is_active) {
+        throw httpError('Cannot change interval on an active rule; create a new rule instead');
+      }
+      const iv = Number(payload.interval_weeks);
+      if (!Number.isInteger(iv) || iv < 1) throw httpError('interval_weeks must be >= 1');
+      updates.interval_weeks = iv;
+    }
+    if (payload.anchor_date !== undefined) {
+      if (rule.is_active) {
+        throw httpError('Cannot change anchor_date on an active rule; create a new rule instead');
+      }
+      const wd = updates.weekday != null ? updates.weekday : rule.weekday;
+      updates.anchor_date = payload.anchor_date
+        ? snapToWeekday(payload.anchor_date, wd)
+        : null;
+    }
   }
+
   if (rule.cadence === 'monthly' && payload.month_day !== undefined) {
     if (rule.is_active) throw httpError('Cannot change month day on an active rule; create a new rule instead');
     const monthDay = Number(payload.month_day);
-    if (!Number.isInteger(monthDay) || monthDay < 1 || monthDay > 28) {
-      throw httpError('month_day must be 1–28');
+    if (!Number.isInteger(monthDay) || monthDay < 1 || monthDay > 31) {
+      throw httpError('month_day must be 1–31');
     }
     updates.month_day = monthDay;
   }
 
-  if (!Object.keys(updates).length) throw httpError('No fields to update');
+  let updated = rule;
+  if (Object.keys(updates).length) {
+    const { data, error: upErr } = await supabase
+      .from('delivery_schedule_rules')
+      .update(updates)
+      .eq('id', ruleId)
+      .select('*')
+      .single();
+    if (upErr) throw upErr;
+    updated = data;
+  }
 
-  const { data, error: upErr } = await supabase
-    .from('delivery_schedule_rules')
-    .update(updates)
-    .eq('id', ruleId)
-    .select('*')
-    .single();
+  if (rule.cadence === 'custom' && payload.custom_dates !== undefined) {
+    await setRuleDates(ruleId, payload.custom_dates);
+  }
 
-  if (upErr) throw upErr;
-  return { ...data, default_quantity: Number(data.default_quantity) };
+  if (!Object.keys(updates).length && payload.custom_dates === undefined) {
+    throw httpError('No fields to update');
+  }
+
+  return enrichRule(updated);
 }
 
 /**
  * Activate a draft rule: valid_from = today, valid_to = null.
  * Retires the previous active rule on the same line with the same cadence slot
- * (same weekday for weekly, same month_day for monthly).
+ * (weekly: same weekday + interval; monthly: same month_day; custom: none).
  */
 async function activateRule(ruleId) {
   if (!isValidUUID(ruleId)) throw httpError('Invalid rule id');
@@ -733,46 +929,66 @@ async function activateRule(ruleId) {
   const { blanket } = await getLineWithBlanket(rule.blanket_po_line_id);
   assertBlanketAcceptsSchedules(blanket);
 
-  const today = todayDateString();
-
-  let priorQuery = supabase
-    .from('delivery_schedule_rules')
-    .select('id')
-    .eq('blanket_po_line_id', rule.blanket_po_line_id)
-    .eq('is_active', true)
-    .eq('cadence', rule.cadence)
-    .neq('id', ruleId);
-
-  if (rule.cadence === 'weekly') {
-    priorQuery = priorQuery.eq('weekday', rule.weekday);
-  } else {
-    priorQuery = priorQuery.eq('month_day', rule.month_day);
+  if (rule.cadence === 'custom') {
+    const dates = await listRuleDates(ruleId);
+    if (!dates.length) throw httpError('Custom rule needs at least one date before activate');
   }
 
-  const { data: priorActive, error: priorErr } = await priorQuery;
-  if (priorErr) throw priorErr;
+  const today = todayDateString();
+  const activateUpdates = {
+    is_active: true,
+    valid_from: today,
+    valid_to: null,
+  };
 
-  for (const row of priorActive || []) {
-    const { error: retireErr } = await supabase
+  if (rule.cadence === 'weekly') {
+    const interval = Number(rule.interval_weeks) || 1;
+    if (interval > 1 && !rule.anchor_date) {
+      activateUpdates.anchor_date = snapToWeekday(today, rule.weekday);
+    } else if (rule.anchor_date) {
+      activateUpdates.anchor_date = snapToWeekday(rule.anchor_date, rule.weekday);
+    }
+  }
+
+  // Retire prior active sibling in the same "slot" (not for custom)
+  if (rule.cadence === 'weekly' || rule.cadence === 'monthly') {
+    let priorQuery = supabase
       .from('delivery_schedule_rules')
-      .update({ is_active: false, valid_to: today })
-      .eq('id', row.id);
-    if (retireErr) throw retireErr;
+      .select('id')
+      .eq('blanket_po_line_id', rule.blanket_po_line_id)
+      .eq('is_active', true)
+      .eq('cadence', rule.cadence)
+      .neq('id', ruleId);
+
+    if (rule.cadence === 'weekly') {
+      priorQuery = priorQuery
+        .eq('weekday', rule.weekday)
+        .eq('interval_weeks', Number(rule.interval_weeks) || 1);
+    } else {
+      priorQuery = priorQuery.eq('month_day', rule.month_day);
+    }
+
+    const { data: priorActive, error: priorErr } = await priorQuery;
+    if (priorErr) throw priorErr;
+
+    for (const row of priorActive || []) {
+      const { error: retireErr } = await supabase
+        .from('delivery_schedule_rules')
+        .update({ is_active: false, valid_to: today })
+        .eq('id', row.id);
+      if (retireErr) throw retireErr;
+    }
   }
 
   const { data, error: actErr } = await supabase
     .from('delivery_schedule_rules')
-    .update({
-      is_active: true,
-      valid_from: today,
-      valid_to: null,
-    })
+    .update(activateUpdates)
     .eq('id', ruleId)
     .select('*')
     .single();
 
   if (actErr) throw actErr;
-  return { ...data, default_quantity: Number(data.default_quantity) };
+  return enrichRule(data);
 }
 
 async function deactivateRule(ruleId) {
@@ -800,7 +1016,7 @@ async function deactivateRule(ruleId) {
     .single();
 
   if (upErr) throw upErr;
-  return { ...data, default_quantity: Number(data.default_quantity) };
+  return enrichRule(data);
 }
 
 function isoWeekdayFromDateString(dateStr) {
@@ -838,7 +1054,7 @@ async function enrichSchedules(rows) {
   if (ruleIds.length) {
     const { data: rules, error: ruleErr } = await supabase
       .from('delivery_schedule_rules')
-      .select('id, cadence, weekday, month_day, default_quantity')
+      .select('id, cadence, weekday, month_day, default_quantity, interval_weeks, anchor_date')
       .in('id', ruleIds);
     if (ruleErr) throw ruleErr;
     ruleMap = new Map((rules || []).map((r) => [r.id, r]));
@@ -887,6 +1103,8 @@ async function enrichSchedules(rows) {
           ? WEEKDAY_LABELS[Number(rule.weekday)] || null
           : null,
       rule_month_day: rule?.month_day != null ? Number(rule.month_day) : null,
+      rule_interval_weeks: rule?.interval_weeks != null ? Number(rule.interval_weeks) : null,
+      rule_anchor_date: rule?.anchor_date || null,
     };
   });
 }
@@ -985,12 +1203,20 @@ async function generateFromRule(payload, createdBy) {
   const horizonEnd = payload.horizon_end;
   if (!horizonStart || !horizonEnd) throw httpError('horizon_start and horizon_end are required');
 
-  const dates = matchingDates(rule, horizonStart, horizonEnd, blanket);
+  const ruleDates = rule.cadence === 'custom' ? await listRuleDates(ruleId) : [];
+  const qtyByDate = Object.fromEntries(
+    (ruleDates || []).map((r) => [r.due_date, r.quantity != null ? Number(r.quantity) : null])
+  );
+  const dates = matchingDates(rule, horizonStart, horizonEnd, blanket, ruleDates);
   const created = [];
   const skipped = [];
 
   for (const dueDate of dates) {
     const scheduleNumber = await nextDocumentNumber('delivery_schedule', 'DS');
+    const qty =
+      qtyByDate[dueDate] != null && qtyByDate[dueDate] > 0
+        ? qtyByDate[dueDate]
+        : Number(rule.default_quantity);
     const { data, error: insErr } = await supabase
       .from('delivery_schedules')
       .insert({
@@ -998,7 +1224,7 @@ async function generateFromRule(payload, createdBy) {
         rule_id: rule.id,
         schedule_number: scheduleNumber,
         due_date: dueDate,
-        quantity: rule.default_quantity,
+        quantity: qty,
         status: 'planned',
         created_by: createdBy || null,
       })
@@ -1021,6 +1247,40 @@ async function generateFromRule(payload, createdBy) {
     skipped_count: skipped.length,
     skipped_dates: skipped,
     schedules: await enrichSchedules(created),
+  };
+}
+
+async function previewMatchingDates(payload) {
+  const ruleId = payload.rule_id;
+  if (!isValidUUID(ruleId)) throw httpError('rule_id is required');
+
+  const { data: rule, error } = await supabase
+    .from('delivery_schedule_rules')
+    .select('*')
+    .eq('id', ruleId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!rule) throw httpError('Schedule rule not found', 404);
+
+  const { blanket } = await getLineWithBlanket(rule.blanket_po_line_id);
+  const horizonStart = payload.horizon_start;
+  const horizonEnd = payload.horizon_end;
+  if (!horizonStart || !horizonEnd) throw httpError('horizon_start and horizon_end are required');
+
+  // Preview may use draft valid_from=null → treat as open from horizon for match window of rule
+  const ruleForMatch = {
+    ...rule,
+    valid_from: rule.valid_from || horizonStart,
+  };
+
+  const ruleDates = rule.cadence === 'custom' ? await listRuleDates(ruleId) : [];
+  const dates = matchingDates(ruleForMatch, horizonStart, horizonEnd, blanket, ruleDates);
+  return {
+    rule_id: ruleId,
+    cadence: rule.cadence,
+    interval_weeks: Number(rule.interval_weeks) || 1,
+    dates,
+    count: dates.length,
   };
 }
 
@@ -1159,9 +1419,12 @@ module.exports = {
   updateRule,
   activateRule,
   deactivateRule,
+  listRuleDates,
+  setRuleDates,
   listSchedules,
   createOneOffSchedule,
   generateFromRule,
+  previewMatchingDates,
   updateSchedule,
   releaseSchedule,
   cancelSchedule,
@@ -1170,4 +1433,5 @@ module.exports = {
   getActiveBomVersionId,
   getActiveActivityFlowVersionId,
   todayDateString,
+  matchingDates,
 };

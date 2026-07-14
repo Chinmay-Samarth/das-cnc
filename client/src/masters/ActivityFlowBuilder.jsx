@@ -231,7 +231,7 @@ function NodeInspector({ node, readOnly, saving, onSave, onDelete }) {
   }
 
   const meta = getActivityTypeMeta(node.activity_type);
-  const needsWc = SCHEDULABLE_TYPES.has(node.activity_type) || node.activity_type === 'packing';
+  const needsWc = SCHEDULABLE_TYPES.has(node.activity_type);
   const isOutsource = node.activity_type === 'outsource';
   const isInspection = node.activity_type === 'inspection';
 
@@ -430,6 +430,34 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
 
   const layoutTimer = useRef(null);
   const applyingRemote = useRef(false);
+  /** True while keyboard/API node delete is in flight — skip cascade edge DELETE calls */
+  const deletingNodesRef = useRef(false);
+  const [flowDeleteKeys, setFlowDeleteKeys] = useState(['Backspace', 'Delete']);
+
+  // Don't let Delete/Backspace remove canvas nodes while typing in the inspector
+  useEffect(() => {
+    function isEditableTarget(el) {
+      if (!el || !(el instanceof Element)) return false;
+      const tag = el.tagName;
+      return (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        el.isContentEditable ||
+        !!el.closest('.af-inspector-panel')
+      );
+    }
+    function syncDeleteKeys() {
+      setFlowDeleteKeys(isEditableTarget(document.activeElement) ? null : ['Backspace', 'Delete']);
+    }
+    document.addEventListener('focusin', syncDeleteKeys);
+    document.addEventListener('focusout', syncDeleteKeys);
+    syncDeleteKeys();
+    return () => {
+      document.removeEventListener('focusin', syncDeleteKeys);
+      document.removeEventListener('focusout', syncDeleteKeys);
+    };
+  }, []);
 
   const applyPayload = useCallback((data) => {
     applyingRemote.current = true;
@@ -609,6 +637,7 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
     if (!window.confirm('Delete this activity node? Connected edges will also be removed.')) return;
     setSaving(true);
     setError(null);
+    deletingNodesRef.current = true;
     try {
       if (readOnly) {
         const ok = await ensureEditable();
@@ -619,13 +648,60 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
       setSelectedNodeId(null);
     } catch (err) {
       setError(err.response?.data?.error || 'Unable to delete node');
+      await loadFlow();
     } finally {
+      deletingNodesRef.current = false;
+      setSaving(false);
+    }
+  }
+
+  /** Keyboard / canvas delete — must persist via API (local-only remove was restoring the node). */
+  async function handleNodesDelete(deleted) {
+    if (readOnly || applyingRemote.current || !deleted?.length) {
+      if (deleted?.length) await loadFlow();
+      return;
+    }
+
+    // Set early so concurrent onEdgesDelete (RF also removes connected edges) skips API calls
+    deletingNodesRef.current = true;
+
+    if (
+      !window.confirm(
+        deleted.length === 1
+          ? 'Delete this activity node? Connected edges will also be removed.'
+          : `Delete ${deleted.length} activity nodes? Connected edges will also be removed.`
+      )
+    ) {
+      deletingNodesRef.current = false;
+      await loadFlow();
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      let lastPayload = null;
+      for (const node of deleted) {
+        const { data } = await api.delete(`${base}/nodes/${node.id}`);
+        lastPayload = data;
+      }
+      if (lastPayload) applyPayload(lastPayload);
+      setSelectedNodeId(null);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Unable to delete node');
+      await loadFlow();
+    } finally {
+      deletingNodesRef.current = false;
       setSaving(false);
     }
   }
 
   async function handleEdgesDelete(deleted) {
-    if (readOnly) return;
+    if (readOnly || applyingRemote.current || !deleted?.length) return;
+    // Let onNodesDelete set deletingNodesRef first when node+edges are removed together
+    await Promise.resolve();
+    if (deletingNodesRef.current) return;
+
     for (const edge of deleted) {
       try {
         const { data } = await api.delete(`${base}/edges/${edge.id}`);
@@ -775,6 +851,7 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
             onNodesChange={handleNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onNodesDelete={handleNodesDelete}
             onEdgesDelete={handleEdgesDelete}
             onSelectionChange={({ nodes: sel }) => {
               setSelectedNodeId(sel?.[0]?.id || null);
@@ -784,7 +861,7 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
             nodesDraggable={!readOnly}
             nodesConnectable={!readOnly}
             elementsSelectable
-            deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
+            deleteKeyCode={readOnly ? null : flowDeleteKeys}
             proOptions={{ hideAttribution: true }}
           >
             <Background gap={16} size={1} />
