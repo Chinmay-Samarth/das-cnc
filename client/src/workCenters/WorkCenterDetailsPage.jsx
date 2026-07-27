@@ -12,6 +12,7 @@ import {
   Save,
 } from 'lucide-react';
 import api from '../api/client';
+import { appConfirm } from '../components/dialog';
 import AvailableMachineSelect from './AvailableMachineSelect';
 import {
   StatusBadge,
@@ -210,7 +211,15 @@ export default function WorkCenterDetailsPage() {
   };
 
   const handleDeactivate = async () => {
-    if (!window.confirm('Deactivate this work center? It will be marked inactive.')) return;
+    if (
+      !(await appConfirm({
+        title: 'Deactivate work center',
+        message: 'Deactivate this work center? It will be marked inactive.',
+        confirmLabel: 'Deactivate',
+        tone: 'danger',
+      }))
+    )
+      return;
     try {
       await api.delete(`/work-centers/${id}`);
       setReloadKey((k) => k + 1);
@@ -241,7 +250,15 @@ export default function WorkCenterDetailsPage() {
   };
 
   const handleRemoveMachine = async (machineRecordId) => {
-    if (!window.confirm('Remove this machine from the work center?')) return;
+    if (
+      !(await appConfirm({
+        title: 'Remove machine',
+        message: 'Remove this machine from the work center?',
+        confirmLabel: 'Remove',
+        tone: 'danger',
+      }))
+    )
+      return;
     setRemovingId(machineRecordId);
     setMachineError(null);
     try {

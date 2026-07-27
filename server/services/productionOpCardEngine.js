@@ -383,7 +383,7 @@ async function listMyTodayOpCards(employeeId) {
   return enrichOpCards(data || []);
 }
 
-async function listOpCardsForWorkCenter(workCenterId) {
+async function listOpCardsForWorkCenter(workCenterId, boardDate = null) {
   if (!isValidUUID(workCenterId)) throw httpError('Invalid work center id');
   const { data, error } = await supabase
     .from('production_op_cards')
@@ -392,7 +392,10 @@ async function listOpCardsForWorkCenter(workCenterId) {
     .in('status', OPEN_STATUSES)
     .order('created_at', { ascending: true });
   if (error) throw error;
-  return enrichOpCards(data || []);
+  const enriched = await enrichOpCards(data || []);
+  if (!boardDate) return enriched;
+  const { itemVisibleOnBoard } = require('./productionAssignEngine');
+  return enriched.filter((op) => itemVisibleOnBoard({ work_date: op.work_date, status: op.status }, boardDate));
 }
 
 async function listOpCardsForParent(parentCardId) {

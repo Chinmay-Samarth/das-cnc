@@ -625,6 +625,25 @@ async function setOperatorsForWorkCenter(workCenterId, employeeIds = []) {
   return listOperatorsForWorkCenter(workCenterId);
 }
 
+/** Board visibility: today READY, or RUNNING with work_date on/before board date; never future. */
+function itemVisibleOnBoard(item, boardDate) {
+  const wd = item?.work_date;
+  if (!wd) return false;
+  if (wd > boardDate) return false;
+  const st = String(item.status || '').toUpperCase();
+  if (st === 'RUNNING') return true;
+  if (st === 'READY') return wd === boardDate;
+  return false;
+}
+
+function filterLotsForBoard(lots, boardDate) {
+  return (lots || []).filter((lot) => {
+    const wd = lot.work_date;
+    if (!wd) return true;
+    return wd <= boardDate;
+  });
+}
+
 async function getWorkCenterBoard(workCenterId, date) {
   if (!isValidUUID(workCenterId)) throw httpError('Invalid work center id');
 
@@ -632,11 +651,13 @@ async function getWorkCenterBoard(workCenterId, date) {
     .from('production_cards')
     .select('*')
     .eq('work_center_id', workCenterId)
-    .eq('work_date', date)
+    .in('status', ['READY', 'RUNNING'])
+    .lte('work_date', date)
     .order('created_at', { ascending: true });
   if (error) throw error;
 
-  const ordered = await sortCardsByDueDate(cards || []);
+  const visibleCards = (cards || []).filter((c) => itemVisibleOnBoard(c, date));
+  const ordered = await sortCardsByDueDate(visibleCards);
   const { enrichCards } = require('./productionCardEngine');
   const enriched = await enrichCards(ordered);
 
@@ -653,10 +674,10 @@ async function getWorkCenterBoard(workCenterId, date) {
   });
 
   const { listLotsForWorkCenter } = require('./lotTravelerEngine');
-  const lots = await listLotsForWorkCenter(workCenterId, date);
+  const lots = filterLotsForBoard(await listLotsForWorkCenter(workCenterId, date), date);
 
   const { listOpCardsForWorkCenter } = require('./productionOpCardEngine');
-  const op_cards = await listOpCardsForWorkCenter(workCenterId);
+  const op_cards = await listOpCardsForWorkCenter(workCenterId, date);
 
   const operators = await listOperatorsForWorkCenter(workCenterId);
   const loads = [];
@@ -700,5 +721,6 @@ module.exports = {
   listOperatorsForWorkCenter,
   setOperatorsForWorkCenter,
   getWorkCenterBoard,
+  itemVisibleOnBoard,
   remainingQty,
 };

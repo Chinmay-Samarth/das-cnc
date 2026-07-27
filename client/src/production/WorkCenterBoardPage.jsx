@@ -1,21 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import {
-  DndContext,
-  DragOverlay,
-  PointerSensor,
-  closestCenter,
-  pointerWithin,
-  rectIntersection,
-  useSensor,
-  useSensors,
-  useDroppable,
-  useDraggable,
-} from '@dnd-kit/core';
 import { Factory } from 'lucide-react';
 import api from '../api/client';
 import { formatDueLabel } from '../blanketPos/scheduleLabels';
 import { useSocket, useProductionRealtime } from '../socket/socketContext';
+import { appAlert } from '../components/dialog';
 import {
   PageHeader,
   StatusBadge,
@@ -23,47 +13,21 @@ import {
   TruncatedText,
 } from '../components/mes';
 
+const BULK_RELOAD_ACTIONS = new Set([
+  'assign_unassigned',
+  'heal_op_cards',
+  'released',
+  'rollover',
+]);
+const STRUCTURAL_WC_RELOAD = new Set([
+  'advanced',
+  'lot_created',
+  'lot_advanced',
+  'lot_ready_for_dispatch',
+]);
+
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
-}
-
-/** Prefer operator chips when nested/overlapping with WC column droppables. */
-function preferOperatorCollisions(collisions) {
-  if (!collisions?.length) return collisions;
-  const ops = collisions.filter((c) => String(c.id).startsWith('op:'));
-  return ops.length ? ops : collisions;
-}
-
-function boardCollisionDetection(args) {
-  const pointerHits = preferOperatorCollisions(pointerWithin(args));
-  if (pointerHits.length) return pointerHits;
-  const rectHits = preferOperatorCollisions(rectIntersection(args));
-  if (rectHits.length) return rectHits;
-  return preferOperatorCollisions(closestCenter(args));
-}
-
-function resolveDropTarget(over) {
-  if (!over) return null;
-  const data = over.data?.current;
-  if (data?.type === 'operator' || data?.type === 'wc-column') return data;
-
-  const id = String(over.id || '');
-  if (id.startsWith('op:')) {
-    // id format: op:<workCenterUuid>:<employeeUuid>
-    const rest = id.slice(3);
-    const splitAt = rest.indexOf(':');
-    if (splitAt > 0) {
-      return {
-        type: 'operator',
-        wcId: rest.slice(0, splitAt),
-        employeeId: rest.slice(splitAt + 1),
-      };
-    }
-  }
-  if (id.startsWith('wc:')) {
-    return { type: 'wc-column', wcId: id.slice(3) };
-  }
-  return data || null;
 }
 
 function initials(name) {
@@ -76,300 +40,359 @@ function initials(name) {
     .toUpperCase();
 }
 
-function KanbanCard({ card, dragging, onOpen }) {
-  const remaining = Number(
-    card.remaining_qty ??
+function itemVisibleOnBoard(item, boardDate) {
+  const wd = item?.work_date;
+  if (!wd) {
+    if (item?.kind === 'lot') return true;
+    return false;
+  }
+  if (wd > boardDate) return false;
+  const st = String(item.status || '').toUpperCase();
+  if (st === 'RUNNING') return true;
+  if (st === 'READY') return wd === boardDate;
+  if (['IN_PROCESS', 'RECEIVED'].includes(st)) return wd <= boardDate;
+  return false;
+}
+
+function isRunningItem(item) {
+  const st = String(item.data?.status || '').toUpperCase();
+  if (st === 'RUNNING') return true;
+  if (item.kind === 'lot' && ['IN_PROCESS', 'RECEIVED'].includes(st)) return true;
+  return false;
+}
+
+function isOpenBoardStatus(status) {
+  const st = String(status || '').toUpperCase();
+  return ['READY', 'RUNNING', 'IN_PROCESS', 'RECEIVED'].includes(st);
+}
+
+function normalizePayload(raw) {
+  return {
+    action: raw?.action,
+    workCenterId: raw?.work_center_id || raw?.workCenterId || null,
+    previousWorkCenterId: raw?.previous_work_center_id || raw?.previousWorkCenterId || null,
+    cardId: raw?.card_id || raw?.cardId || null,
+    lotId: raw?.lot_id || raw?.lotId || null,
+    opCardId: raw?.op_card_id || raw?.opCardId || null,
+    status: raw?.status || null,
+    workDate: raw?.work_date || raw?.workDate || null,
+    assignedEmployeeId: raw?.assigned_employee_id || raw?.employeeId || null,
+    assignedEmployee: raw?.assigned_employee || raw?.assignedEmployee || null,
+    previousEmployeeId: raw?.previous_employee_id || raw?.previousEmployeeId || null,
+  };
+}
+
+function buildJobItems(board) {
+  const opCards = board?.op_cards || [];
+  const useOps = opCards.length > 0;
+  const items = [];
+  if (useOps) {
+    for (const op of opCards) {
+      items.push({ kind: 'op_card', data: op, id: op.id });
+    }
+  } else {
+    for (const lot of board?.lots || []) {
+      items.push({ kind: 'lot', data: lot, id: lot.id });
+    }
+    for (const card of board?.cards || []) {
+      items.push({ kind: 'card', data: card, id: card.id });
+    }
+  }
+  return items;
+}
+
+function splitQueue(items, boardDate) {
+  const running = [];
+  const today = [];
+  for (const item of items) {
+    if (!itemVisibleOnBoard(item.data, boardDate)) continue;
+    if (isRunningItem(item)) {
+      running.push(item);
+    } else if (String(item.data.status || '').toUpperCase() === 'READY') {
+      today.push(item);
+    }
+  }
+  return { running, today };
+}
+
+function remainingForItem(item) {
+  const d = item.data;
+  if (item.kind === 'op_card') {
+    return Math.max(0, Number(d.target_quantity || 0) - Number(d.good_qty || 0));
+  }
+  if (item.kind === 'lot') return Number(d.quantity || 0);
+  return Number(
+    d.remaining_qty ??
       Math.max(
         0,
-        Number(card.day_goal ?? Number(card.target_quantity) + Number(card.overdue_quantity)) -
-          Number(card.total_good_produced || 0)
+        Number(d.day_goal ?? Number(d.target_quantity) + Number(d.overdue_quantity)) -
+          Number(d.total_good_produced || 0)
       )
   );
-  const title = [
-    card.component_label,
-    card.customer_name,
-    `Due ${card.schedule_due_date || '—'}`,
-    card.assigned_employee_name || 'Unassigned',
-  ]
-    .filter(Boolean)
-    .join(' · ');
+}
 
+function patchList(list, payload, boardDate, matchFn) {
+  if (!list?.length) return { list: list || [], found: false };
+  let found = false;
+  const next = [];
+  for (const row of list) {
+    if (!matchFn(row)) {
+      next.push(row);
+      continue;
+    }
+    found = true;
+    const updated = { ...row };
+    if (payload.status) updated.status = payload.status;
+    if (payload.assignedEmployeeId != null) {
+      updated.assigned_employee_id = payload.assignedEmployeeId;
+      updated.assigned_employee_name =
+        payload.assignedEmployee?.full_name || updated.assigned_employee_name || null;
+    }
+    if (payload.workDate) updated.work_date = payload.workDate;
+    if (!isOpenBoardStatus(updated.status) || !itemVisibleOnBoard(updated, boardDate)) {
+      continue;
+    }
+    next.push(updated);
+  }
+  return { list: next, found };
+}
+
+function patchBoard(board, payload, boardDate) {
+  if (!board) return board;
+  const p = payload;
+  const matchOp = (row) => p.opCardId && row.id === p.opCardId;
+  const matchLot = (row) => p.lotId && row.id === p.lotId;
+  const matchCard = (row) => p.cardId && row.id === p.cardId;
+
+  const opResult = patchList(board.op_cards, p, boardDate, matchOp);
+  const lotResult = patchList(board.lots, p, boardDate, matchLot);
+  const cardResult = patchList(board.cards, p, boardDate, matchCard);
+  const found = opResult.found || lotResult.found || cardResult.found;
+
+  return {
+    ...board,
+    op_cards: opResult.list,
+    lots: lotResult.list,
+    cards: cardResult.list,
+    _patchFound: found,
+  };
+}
+
+function OperatorAvatarStack({ operators }) {
+  if (!operators?.length) {
+    return <p className="wc-station-muted">No operators</p>;
+  }
   return (
-    <div className={`mes-kanban-card${dragging ? ' is-dragging' : ''}`} title={title}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-        <button
-          type="button"
-          className="pc-card-link"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpen?.(card.id);
-          }}
-        >
-          {card.card_number}
-        </button>
-        <StatusBadge status={card.status} />
-      </div>
-      <p style={{ margin: '0 0 8px', fontSize: 12, color: 'var(--text-secondary)' }}>
-        Remaining: <strong style={{ color: 'var(--text-primary)' }}>{remaining}</strong>
-      </p>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span className="mes-avatar">{initials(card.assigned_employee_name)}</span>
-        <TruncatedText style={{ fontSize: 12 }}>
-          {card.assigned_employee_name || 'Unassigned'}
-        </TruncatedText>
-      </div>
+    <div className="wc-avatar-stack" aria-label="Operators on station">
+      {operators.map((op) => {
+        const openBacklog = Number(op.backlog ?? 0);
+        const completedOps = Number(op.completed_ops ?? 0);
+        const totalQty = Number(op.total_qty ?? openBacklog);
+        const title = [
+          op.full_name,
+          `Open backlog: ${openBacklog}`,
+          completedOps ? `Completed today: ${completedOps}` : null,
+          `Day load: ${totalQty}`,
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        return (
+          <span key={op.employee_id} className="mes-avatar wc-avatar-stack-item" title={title}>
+            {initials(op.full_name)}
+          </span>
+        );
+      })}
     </div>
   );
 }
 
-function KanbanLotCard({ lot, dragging, onOpen }) {
-  const title = [
-    lot.component_label,
-    lot.current_node_label,
-    lot.assigned_employee_name || 'Unassigned',
-  ]
-    .filter(Boolean)
-    .join(' · ');
+function BoardJobCard({ item, onOpen, onContextMenu }) {
+  const d = item.data;
+  const running = isRunningItem(item);
+  const remaining = remainingForItem(item);
 
-  return (
-    <div className={`mes-kanban-card${dragging ? ' is-dragging' : ''}`} title={title}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-        <button
-          type="button"
-          className="pc-card-link"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (lot.production_card_id) onOpen?.(lot.production_card_id);
-          }}
-        >
-          {lot.lot_number}
-        </button>
-        <StatusBadge status={lot.status || 'in_process'} />
-      </div>
-      <p style={{ margin: '0 0 4px', fontSize: 12, color: 'var(--text-secondary)' }}>
-        Lot · Qty <strong style={{ color: 'var(--text-primary)' }}>{Number(lot.quantity || 0)}</strong>
-      </p>
-      {lot.current_node_label ? (
-        <p style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--text-secondary)' }}>
-          {lot.current_node_label}
-          {lot.current_node_type ? ` · ${lot.current_node_type}` : ''}
-        </p>
-      ) : null}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span className="mes-avatar">{initials(lot.assigned_employee_name)}</span>
-        <TruncatedText style={{ fontSize: 12 }}>
-          {lot.assigned_employee_name || 'Unassigned'}
-        </TruncatedText>
-      </div>
-    </div>
-  );
-}
-
-function DraggableCard({ card, wcId, onOpen }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: `card:${card.id}`,
-    data: { type: 'card', card, wcId },
-  });
-
-  return (
-    <div ref={setNodeRef} {...listeners} {...attributes} style={{ opacity: isDragging ? 0.4 : 1 }}>
-      <KanbanCard card={card} onOpen={onOpen} />
-    </div>
-  );
-}
-
-function DraggableLot({ lot, wcId, onOpen }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: `lot:${lot.id}`,
-    data: { type: 'lot', lot, wcId },
-  });
-
-  return (
-    <div ref={setNodeRef} {...listeners} {...attributes} style={{ opacity: isDragging ? 0.4 : 1 }}>
-      <KanbanLotCard lot={lot} onOpen={onOpen} />
-    </div>
-  );
-}
-
-function KanbanOpCard({ op, dragging, onOpen }) {
-  const remaining = Math.max(0, Number(op.target_quantity || 0) - Number(op.good_qty || 0));
-  const title = [
-    op.component_label,
-    op.current_node_label,
-    op.assigned_employee_name || 'Unassigned',
-  ]
-    .filter(Boolean)
-    .join(' · ');
-
-  return (
-    <div className={`mes-kanban-card${dragging ? ' is-dragging' : ''}`} title={title}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-        <button
-          type="button"
-          className="pc-card-link"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (op.production_card_id) onOpen?.(op.production_card_id);
-          }}
-        >
-          {op.op_card_number}
-        </button>
-        <StatusBadge status={op.status || 'READY'} />
-      </div>
-      <p style={{ margin: '0 0 4px', fontSize: 12, color: 'var(--text-secondary)' }}>
-        Op card · Remaining{' '}
-        <strong style={{ color: 'var(--text-primary)' }}>{remaining}</strong>
-      </p>
-      {op.current_node_label ? (
-        <p style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--text-secondary)' }}>
-          {op.current_node_label}
-          {op.lot_number ? ` · ${op.lot_number}` : ''}
-        </p>
-      ) : null}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span className="mes-avatar">{initials(op.assigned_employee_name)}</span>
-        <TruncatedText style={{ fontSize: 12 }}>
-          {op.assigned_employee_name || 'Unassigned'}
-        </TruncatedText>
-      </div>
-    </div>
-  );
-}
-
-function DraggableOpCard({ op, wcId, onOpen }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: `opcard:${op.id}`,
-    data: { type: 'op_card', op, wcId },
-  });
-
-  return (
-    <div ref={setNodeRef} {...listeners} {...attributes} style={{ opacity: isDragging ? 0.4 : 1 }}>
-      <KanbanOpCard op={op} onOpen={onOpen} />
-    </div>
-  );
-}
-
-function OperatorDropChip({ operator, wcId }) {
-  const { setNodeRef, isOver } = useDroppable({
-    id: `op:${wcId}:${operator.employee_id}`,
-    data: { type: 'operator', wcId, employeeId: operator.employee_id },
-  });
-
-  const openBacklog = Number(operator.backlog ?? 0);
-  const completedOps = Number(operator.completed_ops ?? 0);
-  const totalQty = Number(operator.total_qty ?? openBacklog);
-  const title = [
-    `Open backlog: ${openBacklog}`,
-    completedOps ? `Completed ops today: ${completedOps}` : null,
-    `Day load: ${totalQty}`,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  let label = '';
+  let trackingId = null;
+  let subtitle = '';
+  if (item.kind === 'op_card') {
+    label = d.op_card_number;
+    trackingId = d.production_card_id;
+    subtitle = [d.current_node_label, d.lot_number].filter(Boolean).join(' · ');
+  } else if (item.kind === 'lot') {
+    label = d.lot_number;
+    trackingId = d.production_card_id;
+    subtitle = d.current_node_label || '';
+  } else {
+    label = d.card_number;
+    trackingId = d.id;
+    subtitle = [d.component_label, d.customer_name].filter(Boolean).join(' · ');
+  }
 
   return (
     <div
-      ref={setNodeRef}
-      className={`mes-op-chip${isOver ? ' is-over' : ''}`}
-      title={title}
+      className={`wc-job-card${running ? ' is-running' : ''}`}
+      onContextMenu={(e) => onContextMenu(e, item)}
     >
-      <span className="mes-avatar" style={{ width: 22, height: 22, fontSize: 9 }}>
-        {initials(operator.full_name)}
-      </span>
-      {operator.full_name?.split(' ')[0] || 'Op'}
-      <span style={{ opacity: 0.7 }}>
-        ·{totalQty}
-        {completedOps > 0 ? ` (${completedOps}✓)` : ''}
-      </span>
+      <div className="wc-job-card-head">
+        <button
+          type="button"
+          className="pc-card-link"
+          onClick={() => trackingId && onOpen(trackingId)}
+        >
+          {label}
+        </button>
+        <StatusBadge status={d.status || 'READY'} />
+      </div>
+      <p className="wc-job-card-meta">
+        Remaining <strong>{remaining}</strong>
+        {d.assigned_employee_name ? ` · ${d.assigned_employee_name}` : ' · Unassigned'}
+      </p>
+      {subtitle ? (
+        <TruncatedText className="wc-job-card-sub">{subtitle}</TruncatedText>
+      ) : null}
     </div>
   );
 }
 
-function WcColumn({ wc, board, onOpenCard }) {
-  const opCards = board?.op_cards || [];
-  const useOps = opCards.length > 0;
-  const cards = useOps ? [] : board?.cards || [];
-  const lots = useOps ? [] : board?.lots || [];
-  const loads = board?.operator_loads || [];
-  const remaining = useOps
-    ? opCards.reduce(
-        (s, o) => s + Math.max(0, Number(o.target_quantity || 0) - Number(o.good_qty || 0)),
-        0
-      )
-    : cards.reduce(
-        (s, c) =>
-          s +
-          Number(
-            c.remaining_qty ??
-              Math.max(
-                0,
-                Number(c.day_goal ?? Number(c.target_quantity) + Number(c.overdue_quantity)) -
-                  Number(c.total_good_produced || 0)
-              )
-          ),
-        0
-      ) + lots.reduce((s, l) => s + Number(l.quantity || 0), 0);
+function BoardContextMenu({
+  menu,
+  operators,
+  onReassign,
+  onOpenTracking,
+  onClose,
+}) {
+  const menuRef = useRef(null);
+  const [submenuOpen, setSubmenuOpen] = useState(false);
 
-  // Column droppable is cards-only so operator chips are not nested underneath it
-  const { setNodeRef } = useDroppable({
-    id: `wc:${wc.id}`,
-    data: { type: 'wc-column', wcId: wc.id },
-  });
+  useEffect(() => {
+    if (!menu) return undefined;
+    function onKey(e) {
+      if (e.key === 'Escape') onClose();
+    }
+    function onClick(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) onClose();
+    }
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onClick);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onClick);
+    };
+  }, [menu, onClose]);
 
-  return (
-    <div className="mes-kanban-col">
-      <div className="mes-kanban-col-header">
-        <h3>
-          {wc.code} — {wc.name}
-        </h3>
-        <p>
-          Remaining backlog <strong>{remaining}</strong>
-          {useOps
-            ? ` · ${opCards.length} op card${opCards.length === 1 ? '' : 's'}`
-            : ` · ${cards.length} card${cards.length === 1 ? '' : 's'}${
-                lots.length ? ` · ${lots.length} lot${lots.length === 1 ? '' : 's'}` : ''
-              }`}
-        </p>
-        {(() => {
-          const completedToday = loads.reduce(
-            (s, op) => s + Number(op.completed_ops ?? 0),
-            0
-          );
-          return completedToday > 0 ? (
-            <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
-              Completed today: {completedToday} op{completedToday === 1 ? '' : 's'}
-            </p>
-          ) : null;
-        })()}
-        {loads.length ? (
-          <div className="mes-op-drop">
-            {loads.map((op) => (
-              <OperatorDropChip key={op.employee_id} operator={op} wcId={wc.id} />
-            ))}
+  if (!menu) return null;
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className="wc-context-menu"
+      style={{ top: menu.y, left: menu.x }}
+      role="menu"
+    >
+      <div
+        className="wc-context-has-submenu-wrap"
+        onMouseEnter={() => setSubmenuOpen(true)}
+        onMouseLeave={() => setSubmenuOpen(false)}
+      >
+        <button type="button" className="wc-context-menu-item wc-context-has-submenu">
+          Reassign
+          <span aria-hidden>›</span>
+        </button>
+        {submenuOpen ? (
+          <div className="wc-context-submenu" role="menu">
+            {!operators?.length ? (
+              <p className="wc-station-muted" style={{ padding: '8px 12px', margin: 0 }}>
+                No operators
+              </p>
+            ) : (
+              operators.map((op) => (
+                <button
+                  key={op.employee_id}
+                  type="button"
+                  className="wc-context-menu-item"
+                  onClick={() => onReassign(menu.item, op.employee_id)}
+                >
+                  <span className="mes-avatar" style={{ width: 22, height: 22, fontSize: 9 }}>
+                    {initials(op.full_name)}
+                  </span>
+                  <span>
+                    {op.full_name}
+                    <span className="wc-context-load"> · {Number(op.total_qty ?? 0)}</span>
+                  </span>
+                </button>
+              ))
+            )}
           </div>
-        ) : (
-          <p style={{ marginTop: 6 }}>No operators linked</p>
-        )}
-      </div>
-      <div className="mes-kanban-cards" ref={setNodeRef}>
-        {opCards.map((op) => (
-          <DraggableOpCard key={op.id} op={op} wcId={wc.id} onOpen={onOpenCard} />
-        ))}
-        {lots.map((lot) => (
-          <DraggableLot key={lot.id} lot={lot} wcId={wc.id} onOpen={onOpenCard} />
-        ))}
-        {cards.map((card) => (
-          <DraggableCard key={card.id} card={card} wcId={wc.id} onOpen={onOpenCard} />
-        ))}
-        {!opCards.length && !cards.length && !lots.length ? (
-          <p className="muted" style={{ fontSize: 12, padding: 8, margin: 0 }}>
-            Empty queue
-          </p>
         ) : null}
       </div>
-    </div>
+      <button
+        type="button"
+        className="wc-context-menu-item"
+        onClick={() => onOpenTracking(menu.item)}
+      >
+        Open tracking
+      </button>
+    </div>,
+    document.body
+  );
+}
+
+function WorkCenterStation({ wc, board, boardDate, onOpenCard, onContextMenu }) {
+  const items = useMemo(() => buildJobItems(board), [board]);
+  const { running, today } = useMemo(() => splitQueue(items, boardDate), [items, boardDate]);
+  const loads = board?.operator_loads || [];
+
+  const remaining = items.reduce((s, item) => s + remainingForItem(item), 0);
+  const openCount = running.length + today.length;
+  const completedToday = loads.reduce((s, op) => s + Number(op.completed_ops ?? 0), 0);
+
+  return (
+    <section className="wc-station">
+      <header className="wc-station-header">
+        <div>
+          <h3 className="wc-station-title">
+            {wc.code} — {wc.name}
+          </h3>
+          <p className="wc-station-kpis">
+            Remaining <strong>{remaining}</strong> · {openCount} open
+            {completedToday > 0 ? ` · ${completedToday} done today` : ''}
+          </p>
+        </div>
+        <OperatorAvatarStack operators={loads} />
+      </header>
+
+      <div className="wc-job-queue">
+        {running.length > 0 ? (
+          <div className="wc-queue-section">
+            <p className="wc-section-label">Running now</p>
+            {running.map((item) => (
+              <BoardJobCard
+                key={`${item.kind}-${item.id}`}
+                item={item}
+                onOpen={onOpenCard}
+                onContextMenu={onContextMenu}
+              />
+            ))}
+          </div>
+        ) : null}
+        {today.length > 0 ? (
+          <div className="wc-queue-section">
+            <p className="wc-section-label">Today&apos;s queue</p>
+            {today.map((item) => (
+              <BoardJobCard
+                key={`${item.kind}-${item.id}`}
+                item={item}
+                onOpen={onOpenCard}
+                onContextMenu={onContextMenu}
+              />
+            ))}
+          </div>
+        ) : null}
+        {!running.length && !today.length ? (
+          <p className="wc-station-muted">No work for this date</p>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -382,15 +405,20 @@ export default function WorkCenterBoardPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [assignBusy, setAssignBusy] = useState(false);
-  const [activeCard, setActiveCard] = useState(null);
-  const [activeLot, setActiveLot] = useState(null);
-  const [activeOpCard, setActiveOpCard] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
+  const dateRef = useRef(date);
+  const boardsRef = useRef(boards);
+  const workCentersRef = useRef(workCenters);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 6 },
-    })
-  );
+  useEffect(() => {
+    dateRef.current = date;
+  }, [date]);
+  useEffect(() => {
+    boardsRef.current = boards;
+  }, [boards]);
+  useEffect(() => {
+    workCentersRef.current = workCenters;
+  }, [workCenters]);
 
   useEffect(() => {
     api
@@ -402,7 +430,6 @@ export default function WorkCenterBoardPage() {
       .catch(() => setWorkCenters([]));
   }, []);
 
-  // Join every active WC room for live kanban sync
   useEffect(() => {
     const ids = workCenters.map((w) => w.id).filter(Boolean);
     ids.forEach((id) => joinWorkCenterRoom(id));
@@ -438,28 +465,77 @@ export default function WorkCenterBoardPage() {
     [workCenters, date]
   );
 
+  const refreshBoard = useCallback(async (wcId) => {
+    if (!wcId) return;
+    try {
+      const { data } = await api.get(`/production/work-centers/${wcId}/board`, {
+        params: { date: dateRef.current },
+      });
+      setBoards((prev) => ({ ...prev, [wcId]: data }));
+    } catch {
+      /* silent */
+    }
+  }, []);
+
   useEffect(() => {
     loadBoards();
   }, [loadBoards]);
 
-  const onRealtime = useCallback(() => {
-    loadBoards({ silent: true });
-  }, [loadBoards]);
+  const applyBoardPatch = useCallback(
+    (rawPayload) => {
+      const payload = normalizePayload(rawPayload);
+      const boardDate = dateRef.current;
+
+      if (BULK_RELOAD_ACTIONS.has(payload.action)) {
+        loadBoards({ silent: true });
+        return;
+      }
+
+      const wcIds = new Set(
+        [payload.workCenterId, payload.previousWorkCenterId].filter(Boolean)
+      );
+      if (!wcIds.size) return;
+
+      let needsWcReload = false;
+      const next = { ...boardsRef.current };
+
+      for (const wcId of wcIds) {
+        const patched = patchBoard(next[wcId], payload, boardDate);
+        const found = patched._patchFound;
+        const { _patchFound, ...clean } = patched;
+        next[wcId] = clean;
+        if (STRUCTURAL_WC_RELOAD.has(payload.action) || !found) {
+          needsWcReload = true;
+        }
+      }
+
+      setBoards(next);
+
+      if (needsWcReload) {
+        for (const wcId of wcIds) {
+          refreshBoard(wcId);
+        }
+      }
+    },
+    [loadBoards, refreshBoard]
+  );
+
+  const onRealtime = useCallback(
+    (payload) => {
+      applyBoardPatch(payload);
+    },
+    [applyBoardPatch]
+  );
 
   useProductionRealtime(onRealtime, [onRealtime]);
 
-  const totalCards = useMemo(
+  const totalOpen = useMemo(
     () =>
-      Object.values(boards).reduce(
-        (s, b) =>
-          s +
-          (b?.op_cards?.length || 0) +
-          (b?.op_cards?.length
-            ? 0
-            : (b?.cards?.length || 0) + (b?.lots?.length || 0)),
-        0
-      ),
-    [boards]
+      Object.values(boards).reduce((s, b) => {
+        const items = buildJobItems(b).filter((item) => itemVisibleOnBoard(item.data, date));
+        return s + items.length;
+      }, 0),
+    [boards, date]
   );
 
   async function handleAssignUnassigned() {
@@ -467,7 +543,7 @@ export default function WorkCenterBoardPage() {
     setError(null);
     try {
       await api.post('/production/assign-unassigned', { date });
-      await loadBoards();
+      await loadBoards({ silent: true });
     } catch (err) {
       setError(err.response?.data?.error || 'Unable to assign unassigned cards.');
     } finally {
@@ -475,97 +551,58 @@ export default function WorkCenterBoardPage() {
     }
   }
 
-  async function handleDragEnd(event) {
-    setActiveCard(null);
-    setActiveLot(null);
-    setActiveOpCard(null);
-    const { active, over } = event;
-    if (!over) return;
+  function handleContextMenu(e, item, wcId) {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, item, wcId });
+  }
 
-    const itemType = active.data.current?.type;
-    const card = active.data.current?.card;
-    const lot = active.data.current?.lot;
-    const opCard = active.data.current?.op;
-    const fromWc = active.data.current?.wcId;
-    const overData = resolveDropTarget(over);
+  function closeContextMenu() {
+    setContextMenu(null);
+  }
 
-    if (!card && !lot && !opCard) return;
-    if (!overData) return;
+  function handleOpenTracking(item) {
+    const d = item.data;
+    const cardId =
+      item.kind === 'card' ? d.id : d.production_card_id || d.parent_production_card_id;
+    closeContextMenu();
+    if (cardId) navigate(`/production/cards/${cardId}`);
+  }
 
-    // Block cross-WC moves
-    if (overData.type === 'wc-column' && overData.wcId !== fromWc) {
-      setError('Items stay on their Activity Flow work center — reassign operators within the same lane.');
-      return;
-    }
-
-    if (overData.type !== 'operator') return;
-
-    if (overData.wcId !== fromWc) {
-      setError('Cannot move work to an operator on a different work center.');
-      return;
-    }
-
-    const employeeId = overData.employeeId;
+  async function handleReassign(item, employeeId, wcId) {
+    closeContextMenu();
     if (!employeeId) return;
+    const d = item.data;
+    if (employeeId === d.assigned_employee_id) return;
 
-    if (itemType === 'op_card') {
-      if (!opCard?.id) return;
-      if (employeeId === opCard.assigned_employee_id) return;
-      setAssignBusy(true);
-      setError(null);
-      try {
-        await api.post(`/production/op-cards/${opCard.id}/reassign`, {
-          employee_id: employeeId,
-        });
-        await loadBoards({ silent: true });
-      } catch (err) {
-        setError(err.response?.data?.error || 'Op card reassign failed.');
-      } finally {
-        setAssignBusy(false);
-      }
-      return;
-    }
-
-    if (itemType === 'lot') {
-      if (!lot?.id) return;
-      if (employeeId === lot.assigned_employee_id) return;
-      setAssignBusy(true);
-      setError(null);
-      try {
-        await api.post(`/production/lots/${lot.id}/reassign`, {
-          employee_id: employeeId,
-        });
-        await loadBoards({ silent: true });
-      } catch (err) {
-        setError(err.response?.data?.error || 'Lot reassign failed.');
-      } finally {
-        setAssignBusy(false);
-      }
-      return;
-    }
-
-    if (!card?.id) return;
-    if (employeeId === card.assigned_employee_id) return;
     setAssignBusy(true);
     setError(null);
     try {
-      await api.post(`/production/cards/${card.id}/reassign`, {
-        employee_id: employeeId,
-      });
-      await loadBoards({ silent: true });
+      if (item.kind === 'op_card') {
+        await api.post(`/production/op-cards/${d.id}/reassign`, { employee_id: employeeId });
+      } else if (item.kind === 'lot') {
+        await api.post(`/production/lots/${d.id}/reassign`, { employee_id: employeeId });
+      } else {
+        await api.post(`/production/cards/${d.id}/reassign`, { employee_id: employeeId });
+      }
     } catch (err) {
-      setError(err.response?.data?.error || 'Reassign failed.');
+      const msg = err.response?.data?.error || 'Reassign failed.';
+      setError(msg);
+      await appAlert(msg);
     } finally {
       setAssignBusy(false);
     }
   }
+
+  const contextOperators = contextMenu?.wcId
+    ? boards[contextMenu.wcId]?.operator_loads || []
+    : [];
 
   return (
     <main className="mes-shell">
       <PageHeader
         eyebrow="Shop floor"
         title="WC Board"
-        subtitle={`Multi-lane queue for ${formatDueLabel(date)}. Operation cards — drag onto an operator chip in the same lane to reassign.`}
+        subtitle={`Station view for ${formatDueLabel(date)}. Right-click a job to reassign.`}
         actions={
           <>
             <button type="button" className="mes-btn mes-btn-secondary" onClick={() => navigate('/production')}>
@@ -598,7 +635,7 @@ export default function WorkCenterBoardPage() {
       </div>
 
       {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading lanes…</p> : null}
+      {loading ? <p className="muted">Loading stations…</p> : null}
 
       {!loading && !workCenters.length ? (
         <EmptyState
@@ -608,49 +645,36 @@ export default function WorkCenterBoardPage() {
           actionLabel="Work Centers"
           onAction={() => navigate('/work-centers')}
         />
-      ) : !loading && totalCards === 0 ? (
+      ) : !loading && totalOpen === 0 ? (
         <EmptyState
           icon={Factory}
           title="No cards on this date"
-          description="Release schedules to the floor, or pick another date. Empty lanes still show operator load."
+          description="Release schedules to the floor, or pick another date. Stations still show operator load."
         />
       ) : null}
 
-      <DndContext
-        sensors={sensors}
-        collisionDetection={boardCollisionDetection}
-        onDragStart={(e) => {
-          setActiveCard(e.active.data.current?.card || null);
-          setActiveLot(e.active.data.current?.lot || null);
-          setActiveOpCard(e.active.data.current?.op || null);
-        }}
-        onDragEnd={handleDragEnd}
-        onDragCancel={() => {
-          setActiveCard(null);
-          setActiveLot(null);
-          setActiveOpCard(null);
-        }}
-      >
-        <div className="mes-kanban">
-          {workCenters.map((wc) => (
-            <WcColumn
-              key={wc.id}
-              wc={wc}
-              board={boards[wc.id]}
-              onOpenCard={(cardId) => navigate(`/production/cards/${cardId}`)}
-            />
-          ))}
-        </div>
-        <DragOverlay>
-          {activeOpCard ? (
-            <KanbanOpCard op={activeOpCard} dragging />
-          ) : activeLot ? (
-            <KanbanLotCard lot={activeLot} dragging />
-          ) : activeCard ? (
-            <KanbanCard card={activeCard} dragging />
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+      <div className="wc-station-grid">
+        {workCenters.map((wc) => (
+          <WorkCenterStation
+            key={wc.id}
+            wc={wc}
+            board={boards[wc.id]}
+            boardDate={date}
+            onOpenCard={(cardId) => navigate(`/production/cards/${cardId}`)}
+            onContextMenu={(e, item) => handleContextMenu(e, item, wc.id)}
+          />
+        ))}
+      </div>
+
+      <BoardContextMenu
+        menu={contextMenu}
+        operators={contextOperators}
+        onReassign={(item, employeeId) =>
+          handleReassign(item, employeeId, contextMenu?.wcId)
+        }
+        onOpenTracking={handleOpenTracking}
+        onClose={closeContextMenu}
+      />
     </main>
   );
 }

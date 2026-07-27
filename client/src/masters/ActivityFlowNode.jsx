@@ -6,11 +6,14 @@ function ActivityFlowNode({ data, selected }) {
   const meta = getActivityTypeMeta(data.activity_type);
   const subtitle = [];
 
-  if (data.work_center_code) {
+  if (data.work_center_code && data.activity_type !== 'outsource') {
     subtitle.push(data.work_center_code);
   }
   if (data.activity_type === 'outsource' && data.lead_time_days != null) {
     subtitle.push(`LT: ${data.lead_time_days}d`);
+  }
+  if (data.activity_type === 'outsource' && data.min_ship_qty != null) {
+    subtitle.push(`Min ship: ${Number(data.min_ship_qty)}`);
   }
   if (data.activity_type === 'inspection' && data.inspection_kind) {
     subtitle.push(data.inspection_kind === 'final' ? 'Final' : 'In-process');

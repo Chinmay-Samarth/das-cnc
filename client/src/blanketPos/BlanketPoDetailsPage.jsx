@@ -8,6 +8,7 @@ import {
   Plus,
 } from 'lucide-react';
 import api from '../api/client';
+import { appAlert, appConfirm, appPrompt } from '../components/dialog';
 import ComponentSelect from './ComponentSelect';
 import ReleaseToFloorModal from '../production/ReleaseToFloorModal';
 import {
@@ -196,7 +197,15 @@ export default function BlanketPoDetailsPage() {
   }
 
   async function handleDeleteLine(lineId) {
-    if (!window.confirm('Delete this line?')) return;
+    if (
+      !(await appConfirm({
+        title: 'Delete line',
+        message: 'Delete this blanket PO line?',
+        confirmLabel: 'Delete',
+        tone: 'danger',
+      }))
+    )
+      return;
     await runAction(() => api.delete(`/blanket-pos/${id}/lines/${lineId}`));
   }
 
@@ -244,10 +253,14 @@ export default function BlanketPoDetailsPage() {
     const current = (rule.custom_dates || [])
       .map((d) => formatDisplayDate(d.due_date))
       .join('\n');
-    const next = window.prompt(
-      'Custom dates (DD-MM-YYYY, one per line or comma-separated):',
-      current
-    );
+    const next = await appPrompt({
+      title: 'Custom dates',
+      message: 'DD-MM-YYYY, one per line or comma-separated',
+      defaultValue: current,
+      multiline: true,
+      rows: 6,
+      confirmLabel: 'Save',
+    });
     if (next == null) return;
     const dates = parseCustomDates(next);
     await runAction(() =>
@@ -288,10 +301,13 @@ export default function BlanketPoDetailsPage() {
         horizon_end: genForm.horizon_end,
       });
       setPreviewCount(null);
-      alert(
-        `Created ${data.created_count} schedule(s)` +
-          (data.skipped_count ? `, skipped ${data.skipped_count} existing date(s)` : '')
-      );
+      await appAlert({
+        title: 'Schedules generated',
+        message:
+          `Created ${data.created_count} schedule(s)` +
+          (data.skipped_count ? `, skipped ${data.skipped_count} existing date(s)` : ''),
+        tone: 'success',
+      });
     });
   }
 
@@ -308,12 +324,26 @@ export default function BlanketPoDetailsPage() {
   }
 
   async function handleCancelSchedule(scheduleId) {
-    if (!window.confirm('Cancel this delivery schedule?')) return;
+    if (
+      !(await appConfirm({
+        title: 'Cancel schedule',
+        message: 'Cancel this delivery schedule?',
+        confirmLabel: 'Cancel schedule',
+        tone: 'danger',
+      }))
+    )
+      return;
     await runAction(() => api.post(`/delivery-schedules/${scheduleId}/cancel`));
   }
 
   async function handleEditQty(schedule) {
-    const next = window.prompt('New quantity', String(schedule.quantity));
+    const next = await appPrompt({
+      title: 'Edit quantity',
+      message: 'Enter the new schedule quantity.',
+      defaultValue: String(schedule.quantity),
+      inputType: 'number',
+      confirmLabel: 'Update',
+    });
     if (next == null) return;
     const qty = Number(next);
     if (!Number.isFinite(qty) || qty <= 0) {

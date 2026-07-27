@@ -17,6 +17,7 @@ import { Navigate, useParams } from 'react-router-dom'
 import MasterForm   from './MasterForm'
 import MasterDetail from './MasterDetaisPage'
 import api from '../api/client'
+import { appConfirm } from '../components/dialog'
 import { useNavigate } from 'react-router-dom'
 import {Plus, Settings, } from 'lucide-react'
 
@@ -102,7 +103,15 @@ export default function MasterPage() {
   // ── Delete ─────────────────────────────────────────────────────────────────
   async function handleDelete(id, e) {
     e.stopPropagation()
-    if (!window.confirm('Delete this record? This cannot be undone.')) return
+    if (
+      !(await appConfirm({
+        title: 'Delete record',
+        message: 'Delete this record? This cannot be undone.',
+        confirmLabel: 'Delete',
+        tone: 'danger',
+      }))
+    )
+      return
     setDeleting(id)
     try {
       await api.delete(`/masters/${slug}/records/${id}`)

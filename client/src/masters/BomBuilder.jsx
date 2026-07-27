@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import api from '../api/client';
+import { appConfirm } from '../components/dialog';
 import MasterItemSelect from '../girn/MasterItemSelect';
 import { useSocket } from '../socket/socketContext';
 import { Plus, ChevronRight, ChevronDown, Pencil, Trash2, X, Check } from 'lucide-react';
@@ -455,7 +456,15 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
   }
 
   async function handleDeleteEdge(edgeId, label) {
-    if (!window.confirm(`Remove "${label}" and any nested lines from this BOM?`)) return;
+    if (
+      !(await appConfirm({
+        title: 'Remove BOM line',
+        message: `Remove "${label}" and any nested lines from this BOM?`,
+        confirmLabel: 'Remove',
+        tone: 'danger',
+      }))
+    )
+      return;
     setSaving(true);
     setError(null);
     setMessage(null);

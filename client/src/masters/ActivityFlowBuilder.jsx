@@ -11,6 +11,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import api from '../api/client';
+import { appConfirm } from '../components/dialog';
 import ActivityFlowNode from './ActivityFlowNode';
 import { ACTIVITY_TYPES, SCHEDULABLE_TYPES, getActivityTypeMeta } from './activityFlowTypes';
 import { formatDisplayDate } from '../utils/dateFormat';
@@ -217,6 +218,7 @@ function NodeInspector({ node, readOnly, saving, onSave, onDelete }) {
       supplier_id: node.supplier_id || '',
       supplier_label: node.supplier_name || '',
       lead_time_days: node.lead_time_days ?? '',
+      min_ship_qty: node.min_ship_qty ?? '',
       notes: node.notes || '',
       edge_kind_note: '',
     });
@@ -264,6 +266,8 @@ function NodeInspector({ node, readOnly, saving, onSave, onDelete }) {
       payload.supplier_id = form.supplier_id || null;
       payload.lead_time_days =
         form.lead_time_days === '' ? null : Number(form.lead_time_days);
+      payload.min_ship_qty =
+        form.min_ship_qty === '' ? null : Number(form.min_ship_qty);
     }
 
     await onSave(node.id, payload);
@@ -374,6 +378,20 @@ function NodeInspector({ node, readOnly, saving, onSave, onDelete }) {
               step="any"
               value={form.lead_time_days}
               onChange={(e) => setField('lead_time_days', e.target.value)}
+              disabled={readOnly || saving}
+              required
+            />
+          </label>
+          <label>
+            <span className="employee-detail-label">
+              Minimum components to send <span style={{ color: '#b91c1c' }}>*</span>
+            </span>
+            <input
+              type="number"
+              min="0.0001"
+              step="any"
+              value={form.min_ship_qty}
+              onChange={(e) => setField('min_ship_qty', e.target.value)}
               disabled={readOnly || saving}
               required
             />
@@ -538,6 +556,7 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
       };
       if (activityType === 'outsource') {
         payload.lead_time_days = 1;
+        payload.min_ship_qty = 1;
       }
       if (activityType === 'inspection') {
         payload.inspection_kind = 'in_process';
@@ -634,7 +653,15 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
   }
 
   async function handleDeleteNode(nodeId) {
-    if (!window.confirm('Delete this activity node? Connected edges will also be removed.')) return;
+    if (
+      !(await appConfirm({
+        title: 'Delete activity node',
+        message: 'Delete this activity node? Connected edges will also be removed.',
+        confirmLabel: 'Delete',
+        tone: 'danger',
+      }))
+    )
+      return;
     setSaving(true);
     setError(null);
     deletingNodesRef.current = true;
@@ -666,11 +693,15 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
     deletingNodesRef.current = true;
 
     if (
-      !window.confirm(
-        deleted.length === 1
-          ? 'Delete this activity node? Connected edges will also be removed.'
-          : `Delete ${deleted.length} activity nodes? Connected edges will also be removed.`
-      )
+      !(await appConfirm({
+        title: 'Delete activity nodes',
+        message:
+          deleted.length === 1
+            ? 'Delete this activity node? Connected edges will also be removed.'
+            : `Delete ${deleted.length} activity nodes? Connected edges will also be removed.`,
+        confirmLabel: 'Delete',
+        tone: 'danger',
+      }))
     ) {
       deletingNodesRef.current = false;
       await loadFlow();
@@ -714,7 +745,15 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
   }
 
   async function handleActivate() {
-    if (!window.confirm('Activate this draft activity flow? The current active version (if any) will be retired.')) {
+    if (
+      !(await appConfirm({
+        title: 'Activate activity flow',
+        message:
+          'Activate this draft activity flow? The current active version (if any) will be retired.',
+        confirmLabel: 'Activate',
+        tone: 'warning',
+      }))
+    ) {
       return;
     }
     setSaving(true);

@@ -1,5 +1,6 @@
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/authContext';
+import { DialogProvider } from './components/dialog';
 import { SocketProvider } from './socket/socketContext';
 import LoginPage from './auth/LoginPage';
 import AttendancePage from './attendance/attendance';
@@ -40,6 +41,7 @@ import ProductionBoardPage from './production/ProductionBoardPage';
 import WorkCenterBoardPage from './production/WorkCenterBoardPage';
 import ProductionCardTrackingPage from './production/ProductionCardTrackingPage';
 import ReadyForDispatchPage from './production/ReadyForDispatchPage';
+import OutsourcingPage from './production/OutsourcingPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 function RequireAuth() {
@@ -72,6 +74,7 @@ function PublicOnly() {
 
 export default function App() {
   return (
+    <DialogProvider>
     <AuthProvider>
       <SocketProvider>
       <Routes>
@@ -127,6 +130,7 @@ export default function App() {
             <Route path="/production/today" element={<MyTodayPage />} />
             <Route path="/production/work-centers" element={<WorkCenterBoardPage />} />
             <Route path="/production/dispatch" element={<ReadyForDispatchPage />} />
+            <Route path="/production/outsource" element={<OutsourcingPage />} />
             <Route path="/production/cards/:id" element={<ProductionCardTrackingPage />} />
             <Route path="/production" element={<ProductionBoardPage />} />
             <Route path="*" element={<NotFoundPage />} />
@@ -137,5 +141,6 @@ export default function App() {
       </Routes>
       </SocketProvider>
     </AuthProvider>
+    </DialogProvider>
   );
 }

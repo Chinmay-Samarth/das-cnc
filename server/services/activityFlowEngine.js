@@ -85,6 +85,7 @@ async function enrichGraph(nodes, edges) {
         n.run_time_per_unit_minutes != null ? Number(n.run_time_per_unit_minutes) : null,
       queue_time_minutes: n.queue_time_minutes != null ? Number(n.queue_time_minutes) : null,
       lead_time_days: n.lead_time_days != null ? Number(n.lead_time_days) : null,
+      min_ship_qty: n.min_ship_qty != null ? Number(n.min_ship_qty) : null,
       position_x: Number(n.position_x) || 0,
       position_y: Number(n.position_y) || 0,
       work_center_code: wc?.code || null,
@@ -377,6 +378,12 @@ function validateNodeFields(payload, { partial = false, existing = null } = {}) 
     fields.lead_time_days = parseOptionalNumber(payload.lead_time_days, 'lead_time_days');
   }
 
+  if (payload.min_ship_qty !== undefined) {
+    fields.min_ship_qty = parseOptionalNumber(payload.min_ship_qty, 'min_ship_qty', {
+      min: 0.0001,
+    });
+  }
+
   if (payload.position_x !== undefined) {
     fields.position_x = Number(payload.position_x) || 0;
   }
@@ -397,17 +404,25 @@ function validateNodeFields(payload, { partial = false, existing = null } = {}) 
   const effectiveType = fields.activity_type || existing?.activity_type;
   const effectiveLead =
     fields.lead_time_days !== undefined ? fields.lead_time_days : existing?.lead_time_days;
+  const effectiveMinShip =
+    fields.min_ship_qty !== undefined ? fields.min_ship_qty : existing?.min_ship_qty;
 
-  // Outsource requires lead_time on create; schedulable WC is enforced on activate
+  // Outsource requires lead_time + min_ship_qty on create; schedulable WC on activate
   if (effectiveType === 'outsource' && !partial) {
     if (effectiveLead == null) {
       throw httpError('outsource requires lead_time_days');
+    }
+    if (effectiveMinShip == null || !(Number(effectiveMinShip) > 0)) {
+      throw httpError('outsource requires min_ship_qty');
     }
   }
 
   if (partial && effectiveType === 'outsource') {
     if (fields.lead_time_days !== undefined && fields.lead_time_days == null) {
       throw httpError('outsource requires lead_time_days');
+    }
+    if (fields.min_ship_qty !== undefined && (fields.min_ship_qty == null || !(Number(fields.min_ship_qty) > 0))) {
+      throw httpError('outsource requires min_ship_qty');
     }
     if (
       fields.activity_type === 'outsource' &&
@@ -416,6 +431,21 @@ function validateNodeFields(payload, { partial = false, existing = null } = {}) 
     ) {
       throw httpError('outsource requires lead_time_days');
     }
+    if (
+      fields.activity_type === 'outsource' &&
+      (effectiveMinShip == null || !(Number(effectiveMinShip) > 0)) &&
+      fields.min_ship_qty === undefined
+    ) {
+      throw httpError('outsource requires min_ship_qty');
+    }
+  }
+
+  // Outsource never uses a work center — cleared on every save
+  if (effectiveType === 'outsource') {
+    fields.work_center_id = null;
+    fields.setup_time_minutes = null;
+    fields.run_time_per_unit_minutes = null;
+    fields.queue_time_minutes = null;
   }
 
   return fields;
@@ -495,6 +525,11 @@ async function updateNode(masterRecordId, nodeId, payload, createdBy) {
     const lead =
       fields.lead_time_days !== undefined ? fields.lead_time_days : existing.lead_time_days;
     if (lead == null) throw httpError('outsource requires lead_time_days');
+    const minShip =
+      fields.min_ship_qty !== undefined ? fields.min_ship_qty : existing.min_ship_qty;
+    if (minShip == null || !(Number(minShip) > 0)) {
+      throw httpError('outsource requires min_ship_qty');
+    }
   }
 
   const { error } = await supabase
@@ -676,16 +711,29 @@ async function activateVersion(versionId, masterRecordId) {
     throw httpError('Only draft versions can be activated', 400);
   }
 
-  // Validate schedulable nodes have work centers; outsource has lead time
+  // Validate schedulable nodes have work centers; outsource has lead time + min ship qty (no WC)
   for (const node of version.nodes || []) {
     if (SCHEDULABLE_TYPES.has(node.activity_type) && !node.work_center_id) {
       throw httpError(
         `Cannot activate: "${node.label}" (${node.activity_type}) requires a work center`
       );
     }
+    if (node.activity_type === 'outsource' && node.work_center_id) {
+      throw httpError(
+        `Cannot activate: "${node.label}" (outsource) must not have a work center — use Outsourcing tab`
+      );
+    }
     if (node.activity_type === 'outsource' && node.lead_time_days == null) {
       throw httpError(
         `Cannot activate: "${node.label}" (outsource) requires lead_time_days`
+      );
+    }
+    if (
+      node.activity_type === 'outsource' &&
+      (node.min_ship_qty == null || !(Number(node.min_ship_qty) > 0))
+    ) {
+      throw httpError(
+        `Cannot activate: "${node.label}" (outsource) requires min_ship_qty (minimum components to send)`
       );
     }
   }

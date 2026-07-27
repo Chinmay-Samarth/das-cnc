@@ -32,7 +32,9 @@ export const SCHEDULABLE_TYPES = new Set([
   'assembly',
   'inspection',
   'packing',
-  'outsource',
 ]);
+
+/** Outsource uses the Outsourcing tab — not a work center */
+export const OUTSOURCE_TYPES = new Set(['outsource']);
 
 export const TERMINAL_DISPATCH_TYPES = new Set(['dispatch']);

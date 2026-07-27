@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import api from '../api/client';
+import { appAlert } from '../components/dialog';
 
 const STAGES = {
   idle: { pct: 0, label: 'Ready' },
@@ -38,7 +39,11 @@ export default function GIRNInvoiceUpload({ onExtracted, disabled = false }) {
     } catch (err) {
       console.error('GIRN invoice extraction failed:', err);
       setStatus('error');
-      alert(err.response?.data?.error || err.message || 'Unable to extract invoice');
+      await appAlert({
+        title: 'Extraction failed',
+        message: err.response?.data?.error || err.message || 'Unable to extract invoice',
+        tone: 'danger',
+      });
     } finally {
       event.target.value = '';
     }

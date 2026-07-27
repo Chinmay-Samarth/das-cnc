@@ -90,7 +90,7 @@ export default function ProductionCardTrackingPage() {
   const handoffRows = useMemo(() => {
     const tracking = detail?.tracking || [];
     return tracking
-      .filter((t) => t.schedulable || t.activity_type === 'dispatch')
+      .filter((t) => t.schedulable || t.outsource || t.activity_type === 'dispatch')
       .slice()
       .sort((a, b) => (Number(a.sequence) || 0) - (Number(b.sequence) || 0));
   }, [detail?.tracking]);
@@ -135,29 +135,29 @@ export default function ProductionCardTrackingPage() {
       <PageHeader
         eyebrow="Production tracking"
         title={card?.card_number || 'Production card'}
-        subtitle={
-          <span>
-            <TruncatedText>
-              {[card?.component_label, card?.customer_name, card?.schedule_number]
-                .filter(Boolean)
-                .join(' · ')}
-            </TruncatedText>
-            {' · '}
-            Due {formatDueLabel(card?.schedule_due_date, card?.schedule_due_weekday_label)}
-            {detail?.tracking_pointer?.label
-              ? ` · Lot at: ${detail.tracking_pointer.label}${
-                  detail.tracking_pointer.lot_number
-                    ? ` (${detail.tracking_pointer.lot_number})`
-                    : ''
-                }`
-              : card?.current_node_label
-                ? ` · Current: ${card.current_node_label}`
-                : ''}
-            <span className="muted" style={{ display: 'block', marginTop: 4, fontSize: 13 }}>
-              Each machined step credits its operator. Schedule day complete ≠ route complete.
-            </span>
-          </span>
-        }
+        // subtitle={
+        //   <span>
+        //     <TruncatedText>
+        //       {[card?.component_label, card?.customer_name, card?.schedule_number]
+        //         .filter(Boolean)
+        //         .join(' · ')}
+        //     </TruncatedText>
+        //     {' · '}
+        //     Due {formatDueLabel(card?.schedule_due_date, card?.schedule_due_weekday_label)}
+        //     {detail?.tracking_pointer?.label
+        //       ? ` · Lot at: ${detail.tracking_pointer.label}${
+        //           detail.tracking_pointer.lot_number
+        //             ? ` (${detail.tracking_pointer.lot_number})`
+        //             : ''
+        //         }`
+        //       : card?.current_node_label
+        //         ? ` · Current: ${card.current_node_label}`
+        //         : ''}
+        //     <span className="muted" style={{ display: 'block', marginTop: 4, fontSize: 13 }}>
+        //       Each machined step credits its operator. Schedule day complete ≠ route complete.
+        //     </span>
+        //   </span>
+        // }
         actions={
           <>
             <StatusBadge status={card?.status} />

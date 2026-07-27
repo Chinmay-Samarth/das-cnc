@@ -251,6 +251,30 @@ async function assignLotToNode(lotId, node, workDate, opts = {}) {
     return { lot: data, assignee: null, node, ready_for_dispatch: true };
   }
 
+  // Outsource: no work center — lot waits on Outsourcing tab (stage / send / receive)
+  if (node.activity_type === 'outsource') {
+    const { data, error } = await supabase
+      .from('production_lots')
+      .update({
+        current_activity_flow_node_id: node.id,
+        work_center_id: null,
+        assigned_employee_id: null,
+        assignment_status: 'unassigned',
+        status: 'in_process',
+      })
+      .eq('id', lotId)
+      .select('*')
+      .single();
+    if (error) throw error;
+    return {
+      lot: data,
+      assignee: null,
+      node,
+      ready_for_dispatch: false,
+      reason: 'Outsource — use Outsourcing tab',
+    };
+  }
+
   // Mid-route shop node without WC: stay in process unassigned (do NOT jump to RFD)
   if (!node.work_center_id) {
     const { data, error } = await supabase
@@ -599,7 +623,7 @@ async function listMyTodayLots(employeeId) {
     .from('production_lots')
     .select('*')
     .eq('assigned_employee_id', employeeId)
-    .in('status', ['in_process', 'received', 'at_supplier'])
+    .in('status', ['in_process', 'received', 'staged', 'at_supplier'])
     .order('created_at', { ascending: true });
   if (error) throw error;
   return enrichLots(data || []);

@@ -413,7 +413,7 @@ export default function AddBlanketPoPage() {
                   onClick={() => selectCadenceMode(m.id)}
                   aria-pressed={cadenceMode === m.id}
                 >
-                  <strong style={{ display: 'block', fontSize: 13 }}>{m.label}</strong>
+                  <strong style={{ display: 'block', fontSize: 13, color: 'black' }}>{m.label}</strong>
                   <span className="muted" style={{ fontSize: 12 }}>
                     {m.hint}
                   </span>

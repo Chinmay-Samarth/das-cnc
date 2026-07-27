@@ -19,6 +19,7 @@ import {
   Receipt,
   Wrench,
   PackageCheck,
+  Send,
 } from 'lucide-react';
 
 const NAV_SECTIONS = [
@@ -48,6 +49,7 @@ const NAV_SECTIONS = [
     items: [
       { to: '/production', label: 'Production', icon: Factory, end: true },
       { to: '/production/work-centers', label: 'WC Board', icon: LayoutGrid },
+      { to: '/production/outsource', label: 'Outsourcing', icon: Send },
       { to: '/production/dispatch', label: 'Ready for Dispatch', icon: PackageCheck },
     ],
   },

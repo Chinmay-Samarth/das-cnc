@@ -6,7 +6,6 @@ const {
   getLineWithBlanket,
   todayDateString,
 } = require('./blanketPosEngine');
-const { generateComponentLotNumber } = require('./componentLotEngine');
 const { backflushRawMaterials } = require('./backflushEngine');
 
 const supabase = createClient(
@@ -1133,7 +1132,7 @@ async function listCardFlowNodes(cardId) {
   const { data, error } = await supabase
     .from('activity_flow_nodes')
     .select(
-      'id, label, activity_type, sequence, supplier_id, lead_time_days, work_center_id, position_x, position_y'
+      'id, label, activity_type, sequence, supplier_id, lead_time_days, min_ship_qty, work_center_id, position_x, position_y'
     )
     .eq('flow_version_id', card.activity_flow_version_id)
     .order('sequence', { ascending: true });
@@ -1182,7 +1181,7 @@ async function listCardOpCompletions(cardId) {
 }
 
 async function getCardTrackingDetail(cardId) {
-  const { SCHEDULABLE_TYPES, TERMINAL_DISPATCH_TYPES } = require('../config/activityFlowTypes');
+  const { SCHEDULABLE_TYPES, OUTSOURCE_TYPES, TERMINAL_DISPATCH_TYPES } = require('../config/activityFlowTypes');
   const { getVersionById } = require('./activityFlowEngine');
 
   const card = await getCardById(cardId);
@@ -1282,7 +1281,7 @@ async function getCardTrackingDetail(cardId) {
   }
 
   const activeLots = (lots || []).filter((l) =>
-    ['in_process', 'received', 'at_supplier', 'ready_for_dispatch', 'quarantine'].includes(
+    ['in_process', 'received', 'staged', 'at_supplier', 'ready_for_dispatch', 'quarantine'].includes(
       String(l.status || '')
     )
   );
@@ -1335,6 +1334,8 @@ async function getCardTrackingDetail(cardId) {
 
   const tracking = flowNodes.map((n) => {
     const schedulable = SCHEDULABLE_TYPES.has(n.activity_type);
+    const isOutsource = OUTSOURCE_TYPES.has(n.activity_type);
+    const pathOp = schedulable || isOutsource;
     const isDispatch = TERMINAL_DISPATCH_TYPES.has(n.activity_type);
     const completion = completionByNode[n.id] || null;
     const seq = pathIndexById[n.id] != null ? pathIndexById[n.id] : Number(n.sequence) || 0;
@@ -1342,7 +1343,7 @@ async function getCardTrackingDetail(cardId) {
     let status = 'pending';
     let phase = null;
 
-    if (!schedulable || isDispatch) {
+    if (!pathOp || isDispatch) {
       status = 'info';
       const pastByPointer = pointerSeq != null && seq < pointerSeq;
       const dispatchPassed =
@@ -1416,6 +1417,7 @@ async function getCardTrackingDetail(cardId) {
       status,
       phase,
       schedulable,
+      outsource: isOutsource,
       activity_type: n.activity_type,
       label: n.label,
       sequence: seq,
@@ -1478,168 +1480,15 @@ async function getCardTrackingDetail(cardId) {
 }
 
 async function sendOutsource(payload, actorEmployeeId, opts = {}) {
-  const cardId = payload.production_card_id;
-  const nodeId = payload.activity_flow_node_id;
-  const lotIds = Array.isArray(payload.lot_ids) ? payload.lot_ids : [];
-  const merge = !!payload.merge;
-
-  const card = await getCardById(cardId);
-  if (!isValidUUID(nodeId)) throw httpError('activity_flow_node_id is required');
-  if (!lotIds.length) throw httpError('lot_ids are required');
-
-  const { data: node, error: nErr } = await supabase
-    .from('activity_flow_nodes')
-    .select('*')
-    .eq('id', nodeId)
-    .eq('flow_version_id', card.activity_flow_version_id)
-    .maybeSingle();
-  if (nErr) throw nErr;
-  if (!node) throw httpError('Outsource node not found on this routing', 404);
-  if (node.activity_type !== 'outsource') throw httpError('Node must be an outsource activity');
-
-  const { data: lots, error: lErr } = await supabase
-    .from('production_lots')
-    .select('*')
-    .in('id', lotIds)
-    .eq('production_card_id', cardId);
-  if (lErr) throw lErr;
-  if (!lots?.length || lots.length !== lotIds.length) {
-    throw httpError('One or more lots not found on this card');
-  }
-  if (lots.some((l) => !['in_process', 'received'].includes(l.status))) {
-    throw httpError('Lots must be in_process or received to send');
-  }
-
-  const canAct =
-    opts.isManager ||
-    card.assigned_employee_id === actorEmployeeId ||
-    lots.some((l) => l.assigned_employee_id === actorEmployeeId);
-  if (!canAct) throw httpError('Only the assigned employee can send outsource', 403);
-
-  let shipLotIds = lotIds;
-
-  if (merge) {
-    if (lots.length < 2) throw httpError('Merge requires at least two lots');
-    const sumQty = lots.reduce((s, l) => s + toNumber(l.quantity), 0);
-    const lotNumber = await generateComponentLotNumber(card.master_record_id);
-    const { data: mergedLot, error: mErr } = await supabase
-      .from('production_lots')
-      .insert({
-        lot_number: lotNumber,
-        master_record_id: card.master_record_id,
-        production_card_id: cardId,
-        activity_flow_node_id: nodeId,
-        current_activity_flow_node_id: nodeId,
-        work_center_id: node.work_center_id || null,
-        quantity: sumQty,
-        status: 'in_process',
-        assignment_status: 'unassigned',
-      })
-      .select('*')
-      .single();
-    if (mErr) throw mErr;
-
-    for (const src of lots) {
-      const { error: uErr } = await supabase
-        .from('production_lots')
-        .update({ status: 'merged', merged_into_lot_id: mergedLot.id })
-        .eq('id', src.id);
-      if (uErr) throw uErr;
-      const { error: jErr } = await supabase.from('production_lot_merges').insert({
-        result_lot_id: mergedLot.id,
-        source_lot_id: src.id,
-      });
-      if (jErr) throw jErr;
-    }
-    shipLotIds = [mergedLot.id];
-  }
-
-  const shipmentNumber = await nextDocumentNumber('outsource_shipment', 'OS');
-  const { data: shipment, error: sErr } = await supabase
-    .from('outsource_shipments')
-    .insert({
-      shipment_number: shipmentNumber,
-      production_card_id: cardId,
-      activity_flow_node_id: nodeId,
-      supplier_id: node.supplier_id || null,
-      status: 'sent',
-      sent_at: new Date().toISOString(),
-      notes: payload.notes || null,
-    })
-    .select('*')
-    .single();
-  if (sErr) throw sErr;
-
-  for (const lotId of shipLotIds) {
-    const { error: linkErr } = await supabase.from('outsource_shipment_lots').insert({
-      shipment_id: shipment.id,
-      lot_id: lotId,
-    });
-    if (linkErr) throw linkErr;
-    const { error: lotUp } = await supabase
-      .from('production_lots')
-      .update({
-        status: 'at_supplier',
-        current_activity_flow_node_id: nodeId,
-        assigned_employee_id: null,
-        assignment_status: 'unassigned',
-      })
-      .eq('id', lotId);
-    if (lotUp) throw lotUp;
-  }
-
-  return { shipment, lot_ids: shipLotIds };
+  return require('./outsourceEngine').sendOutsource(payload, actorEmployeeId, opts);
 }
 
 async function receiveOutsource(shipmentId, actorEmployeeId, opts = {}) {
-  if (!isValidUUID(shipmentId)) throw httpError('Invalid shipment id');
+  return require('./outsourceEngine').receiveOutsource(shipmentId, actorEmployeeId, opts);
+}
 
-  const { data: shipment, error } = await supabase
-    .from('outsource_shipments')
-    .select('*')
-    .eq('id', shipmentId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!shipment) throw httpError('Shipment not found', 404);
-  if (shipment.status !== 'sent') throw httpError('Only sent shipments can be received');
-
-  const card = await getCardById(shipment.production_card_id);
-  if (!opts.isManager && card.assigned_employee_id !== actorEmployeeId) {
-    throw httpError('Only the assigned employee or a manager can receive this shipment', 403);
-  }
-
-  const { data: links, error: lErr } = await supabase
-    .from('outsource_shipment_lots')
-    .select('lot_id')
-    .eq('shipment_id', shipmentId);
-  if (lErr) throw lErr;
-
-  const { advanceLotAfterOp } = require('./lotTravelerEngine');
-  const advancedLots = [];
-
-  for (const link of links || []) {
-    const { error: lotUp } = await supabase
-      .from('production_lots')
-      .update({ status: 'received' })
-      .eq('id', link.lot_id);
-    if (lotUp) throw lotUp;
-
-    const result = await advanceLotAfterOp(link.lot_id, shipment.activity_flow_node_id, {
-      employee_id: actorEmployeeId,
-      work_center_id: null,
-    });
-    advancedLots.push(result);
-  }
-
-  const { data: updated, error: upErr } = await supabase
-    .from('outsource_shipments')
-    .update({ status: 'received', received_at: new Date().toISOString() })
-    .eq('id', shipmentId)
-    .select('*')
-    .single();
-  if (upErr) throw upErr;
-
-  return { shipment: updated, lots: advancedLots };
+async function stageOutsourceLots(payload, actorEmployeeId, opts = {}) {
+  return require('./outsourceEngine').stageOutsourceLots(payload, actorEmployeeId, opts);
 }
 
 async function listCardShipments(cardId) {
@@ -1669,6 +1518,7 @@ module.exports = {
   listCardOpCompletions,
   sendOutsource,
   receiveOutsource,
+  stageOutsourceLots,
   listCardShipments,
   listWorkingDays,
   equalSplit,

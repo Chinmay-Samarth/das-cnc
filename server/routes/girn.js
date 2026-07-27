@@ -315,6 +315,7 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       notes,
       items = [],
       auto_approve = false,
+      outsource_shipment_id = null,
     } = req.body;
 
     if (!received_by || !received_date) {
@@ -325,9 +326,36 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       return res.status(400).json({ error: 'Supplier details are required' });
     }
 
-    const resolvedSupplierId = await resolveGirnSupplier(req.body);
+    let outsourceShipment = null;
+    const isOutsourceReturn = !!outsource_shipment_id;
+    if (isOutsourceReturn) {
+      const { getOutsourceShipmentById } = require('../services/outsourceEngine');
+      outsourceShipment = await getOutsourceShipmentById(outsource_shipment_id);
+      if (outsourceShipment.status !== 'sent') {
+        return res.status(409).json({ error: 'Outsource shipment must be at supplier (sent) to file GIRN' });
+      }
+      if (outsourceShipment.girn_id) {
+        return res.status(409).json({ error: 'A GIRN is already linked to this outsource shipment' });
+      }
+    }
+
+    const resolvedSupplierId = await resolveGirnSupplier(
+      isOutsourceReturn && outsourceShipment?.supplier_id
+        ? { ...req.body, supplier_id: outsourceShipment.supplier_id || supplier_id }
+        : req.body
+    );
     if (!resolvedSupplierId) {
       return res.status(400).json({ error: 'Unable to resolve supplier from the provided details' });
+    }
+
+    if (
+      isOutsourceReturn &&
+      outsourceShipment.supplier_id &&
+      resolvedSupplierId !== outsourceShipment.supplier_id
+    ) {
+      return res.status(400).json({
+        error: 'GIRN supplier must match the outsource shipment supplier',
+      });
     }
 
     if (items.length === 0) {
@@ -349,7 +377,9 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       return sum + (parseFloat(item.total_amount) || 0);
     }, 0);
 
-    const shouldAutoApprove = auto_approve && girnCanAutoApprove(resolvedItems);
+    // Outsource returns are documentary — never auto-stock WIP as FG
+    const shouldAutoApprove =
+      !isOutsourceReturn && auto_approve && girnCanAutoApprove(resolvedItems);
     const initialStatus = shouldAutoApprove ? 'approved' : 'draft';
 
     const { data: newGirn, error: girnError } = await supabase
@@ -359,12 +389,14 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
         invoice_id: invoice_id || null,
         supplier_id: resolvedSupplierId,
         received_by,
-        po_reference: po_reference || null,
+        po_reference: po_reference || outsourceShipment?.shipment_number || null,
         received_date,
         csr: csr || null,
         notes: notes || null,
         grand_total: grandTotal,
         status: initialStatus,
+        source: isOutsourceReturn ? 'outsource_return' : 'standard',
+        outsource_shipment_id: isOutsourceReturn ? outsource_shipment_id : null,
       })
       .select()
       .single();
@@ -396,27 +428,83 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       }
     }
 
+    let outsourceReceive = null;
+    if (isOutsourceReturn) {
+      try {
+        const { receiveOutsourceAfterGirn } = require('../services/outsourceEngine');
+        outsourceReceive = await receiveOutsourceAfterGirn(
+          outsource_shipment_id,
+          newGirn.id,
+          req.user?.sub || received_by,
+          { isManager: true }
+        );
+      } catch (recvErr) {
+        // Roll back GIRN if receive fails so operator can retry cleanly
+        await supabase.from('girn_items').delete().eq('girn_id', newGirn.id);
+        await supabase.from('girns').delete().eq('id', newGirn.id);
+        throw recvErr;
+      }
+
+      try {
+        const { broadcastProductionRealtime } = require('../socket/productionRealtime');
+        const cardId = outsourceReceive?.shipment?.production_card_id;
+        broadcastProductionRealtime({
+          action: 'outsource_received',
+          card: cardId ? { id: cardId } : null,
+          operatorId: req.user?.sub || null,
+        });
+        for (const adv of outsourceReceive?.lots || []) {
+          if (adv?.lot) {
+            broadcastProductionRealtime({
+              action: adv.ready_for_dispatch ? 'lot_ready_for_dispatch' : 'lot_advanced',
+              card: cardId ? { id: cardId } : null,
+              lot: adv.lot,
+              operatorId: req.user?.sub || null,
+              previousEmployeeId: adv.from_employee_id || null,
+              previousWorkCenterId: adv.from_work_center_id || null,
+              advance: {
+                advanced: !!adv.advanced,
+                from_employee_id: adv.from_employee_id,
+                from_work_center_id: adv.from_work_center_id,
+              },
+            });
+          }
+        }
+      } catch (rtErr) {
+        console.error('Outsource receive realtime fan-out failed:', rtErr.message);
+      }
+    }
+
     emitGirnUpdated({ girnId: newGirn.id, action: 'created', status: initialStatus });
     if (shouldAutoApprove) {
       emitInventoryUpdated({ action: 'girn_approved', girnId: newGirn.id });
     }
 
     return res.status(201).json({
-      message: shouldAutoApprove ? 'GIRN registered and approved' : 'GIRN created successfully',
+      message: isOutsourceReturn
+        ? 'GIRN registered and outsource shipment received'
+        : shouldAutoApprove
+          ? 'GIRN registered and approved'
+          : 'GIRN created successfully',
       girn: { ...newGirn, status: initialStatus },
+      outsource_receive: outsourceReceive,
     });
   } catch (err) {
     console.error('GIRN create error:', err);
     const isClientError =
+      err.status === 400 ||
+      err.status === 409 ||
       err.message?.includes('RM ID') ||
       err.message?.includes('raw material') ||
       err.message?.includes('RM Code') ||
       err.message?.includes('Supplier') ||
       err.message?.includes('line item') ||
       err.message?.includes('Master') ||
-      err.message?.includes('existing');
-    return res.status(isClientError ? 400 : 500).json({
-      error: isClientError ? err.message : 'Unable to create GIRN',
+      err.message?.includes('existing') ||
+      err.message?.includes('GIRN') ||
+      err.message?.includes('shipment');
+    return res.status(err.status || (isClientError ? 400 : 500)).json({
+      error: isClientError || err.status ? err.message : 'Unable to create GIRN',
     });
   }
 });
@@ -647,7 +735,7 @@ router.post('/:id/submit', verifyEmployeeAuth, async (req, res) => {
 
     const { data: existing, error: fetchError } = await supabase
       .from('girns')
-      .select('id, status')
+      .select('id, status, source')
       .eq('id', id)
       .maybeSingle();
 
@@ -670,7 +758,14 @@ router.post('/:id/submit', verifyEmployeeAuth, async (req, res) => {
         .select('*')
         .eq('girn_id', id);
 
-      const { stockUpdates, ledgerIds } = await applyStockForGirn(id, fullItems || []);
+      const skipStock = existing.source === 'outsource_return';
+      let stockUpdates = [];
+      let ledgerIds = [];
+      if (!skipStock) {
+        const stock = await applyStockForGirn(id, fullItems || []);
+        stockUpdates = stock.stockUpdates;
+        ledgerIds = stock.ledgerIds;
+      }
 
       try {
         const { data: approved, error: approveError } = await supabase
@@ -682,7 +777,9 @@ router.post('/:id/submit', verifyEmployeeAuth, async (req, res) => {
 
         if (approveError) throw approveError;
         emitGirnUpdated({ girnId: id, action: 'approved', status: 'approved' });
-        emitInventoryUpdated({ action: 'girn_approved', girnId: id });
+        if (!skipStock) {
+          emitInventoryUpdated({ action: 'girn_approved', girnId: id });
+        }
         return res.json({ message: 'GIRN approved (no inspection required)', girn: approved });
       } catch (approveErr) {
         await rollbackStock(stockUpdates, ledgerIds);
@@ -717,7 +814,7 @@ router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
   try {
     const { data: girn, error: girnError } = await supabase
       .from('girns')
-      .select('id, status')
+      .select('id, status, source')
       .eq('id', id)
       .maybeSingle();
 
@@ -764,9 +861,11 @@ router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
       }
     }
 
-    const stockResult = await applyStockForGirn(id, itemsWithInspections);
-    stockUpdates = stockResult.stockUpdates;
-    ledgerIds = stockResult.ledgerIds;
+    if (girn.source !== 'outsource_return') {
+      const stockResult = await applyStockForGirn(id, itemsWithInspections);
+      stockUpdates = stockResult.stockUpdates;
+      ledgerIds = stockResult.ledgerIds;
+    }
 
     const { data: approved, error: approveError } = await supabase
       .from('girns')
@@ -778,9 +877,17 @@ router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
     if (approveError) throw approveError;
 
     emitGirnUpdated({ girnId: id, action: 'approved', status: 'approved' });
-    emitInventoryUpdated({ action: 'girn_approved', girnId: id });
+    if (girn.source !== 'outsource_return') {
+      emitInventoryUpdated({ action: 'girn_approved', girnId: id });
+    }
 
-    return res.json({ message: 'GIRN approved and stock updated', girn: approved });
+    return res.json({
+      message:
+        girn.source === 'outsource_return'
+          ? 'GIRN approved (outsource return — no stock posting)'
+          : 'GIRN approved and stock updated',
+      girn: approved,
+    });
   } catch (err) {
     console.error('GIRN approve error — rolling back:', err);
     await rollbackStock(stockUpdates, ledgerIds).catch((e) => console.error('Rollback failed:', e));

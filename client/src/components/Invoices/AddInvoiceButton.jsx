@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import api from '../../api/client';
+import { appAlert } from '../../components/dialog';
 
 const POLL_INTERVAL = 3000;
 const MAX_POLLS = 40;
@@ -62,7 +63,11 @@ export default function AddInvoiceButton({ onUploaded }) {
       if(onUploaded) await onUploaded(finalInvoice)
     } catch (err) {
       console.error('Upload failed', err);
-      alert(err.response?.data?.error || err.message || 'Upload failed');
+      await appAlert({
+        title: 'Upload failed',
+        message: err.response?.data?.error || err.message || 'Upload failed',
+        tone: 'danger',
+      });
     } finally {
       e.target.value = '';
       setTimeout(() => setStatus('idle'), 1500); // reset button after brief feedback

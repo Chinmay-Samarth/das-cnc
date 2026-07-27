@@ -4,6 +4,8 @@
  */
 const {
   SCHEDULABLE_TYPES,
+  PATH_GATE_TYPES,
+  TRAVELER_STOP_TYPES,
   TERMINAL_DISPATCH_TYPES,
 } = require('../config/activityFlowTypes');
 
@@ -29,7 +31,7 @@ const SKIP_TYPES = new Set([
 function isTravelerNode(node) {
   if (!node) return false;
   if (TERMINAL_DISPATCH_TYPES.has(node.activity_type)) return true;
-  return SCHEDULABLE_TYPES.has(node.activity_type);
+  return TRAVELER_STOP_TYPES.has(node.activity_type);
 }
 
 function isSkipOnPath(node) {
@@ -168,7 +170,7 @@ function priorSchedulableOnPath(nodes, edges, untilNodeId) {
   const result = [];
   for (const n of path) {
     if (untilNodeId && n.id === untilNodeId) break;
-    if (SCHEDULABLE_TYPES.has(n.activity_type)) result.push(n);
+    if (PATH_GATE_TYPES.has(n.activity_type)) result.push(n);
   }
   return result;
 }
@@ -182,7 +184,7 @@ function computeActivateSequencePlan(nodes, edges) {
   const onPath = new Set(path.map((n) => n.id));
 
   const unreachableSchedulable = (nodes || []).filter(
-    (n) => SCHEDULABLE_TYPES.has(n.activity_type) && !onPath.has(n.id)
+    (n) => PATH_GATE_TYPES.has(n.activity_type) && !onPath.has(n.id)
   );
 
   const dispatchOnPath = path.filter((n) => TERMINAL_DISPATCH_TYPES.has(n.activity_type));

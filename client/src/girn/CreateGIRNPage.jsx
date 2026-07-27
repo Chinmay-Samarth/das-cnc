@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
+import { appAlert } from '../components/dialog';
 import EmployeeSelect from './EmployeeSelect';
 import GIRNInvoiceUpload from './GIRNInvoiceUpload';
 import MasterItemSelect from './MasterItemSelect';
@@ -71,6 +72,7 @@ function HeaderReview({
   onChange,
   onReceivedByChange,
   onSupplierSelect,
+  supplierLocked = false,
 }) {
   const [overrideEmployee, setOverrideEmployee] = useState(false);
   const selectedEmployee = employees.find((e) => String(e.id) === String(header.received_by));
@@ -98,7 +100,7 @@ function HeaderReview({
             value={header.supplier_name || ''}
             onChange={onChange}
             required={!header.supplier_id}
-            disabled={Boolean(header.supplier_id)}
+            disabled={supplierLocked || Boolean(header.supplier_id)}
           />
         </label>
 
@@ -109,7 +111,7 @@ function HeaderReview({
             name="supplier_gstin"
             value={header.supplier_gstin || ''}
             onChange={onChange}
-            disabled={Boolean(header.supplier_id)}
+            disabled={supplierLocked || Boolean(header.supplier_id)}
           />
         </label>
 
@@ -119,6 +121,7 @@ function HeaderReview({
             name="supplier_id"
             value={header.supplier_id}
             onChange={onSupplierSelect}
+            disabled={supplierLocked}
           >
             <option value="">Create from OCR details above</option>
             {suppliers.map((supplier) => (
@@ -382,23 +385,32 @@ function ItemsReview({ items, onItemChange, onMasterSelect, onCategoryChange, on
 
 export default function CreateGIRNPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
+  const outsourceShipmentId = searchParams.get('outsource_shipment_id') || '';
+  const querySupplierId = searchParams.get('supplier_id') || '';
+  const queryPoReference = searchParams.get('po_reference') || '';
+  const isOutsourceReturn = Boolean(outsourceShipmentId);
+
   const [suppliers, setSuppliers] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [invoice, setInvoice] = useState(null);
   const [step, setStep] = useState('scan');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [outsourceShipment, setOutsourceShipment] = useState(null);
+  const [supplierLocked, setSupplierLocked] = useState(false);
   const [header, setHeader] = useState({
     invoice_id: '',
-    supplier_id: '',
+    supplier_id: querySupplierId || '',
     supplier_name: '',
     supplier_gstin: '',
-    po_reference: '',
+    po_reference: queryPoReference || '',
     received_date: new Date().toISOString().slice(0, 10),
     received_by: '',
     csr: '',
     notes: '',
+    outsource_shipment_id: outsourceShipmentId || '',
   });
   const [items, setItems] = useState([{ ...EMPTY_ITEM }]);
 
@@ -406,6 +418,47 @@ export default function CreateGIRNPage() {
     api.get('/suppliers').then(({ data }) => setSuppliers(data.suppliers || []));
     api.get('/employees').then(({ data }) => setEmployees(data.employees || []));
   }, []);
+
+  useEffect(() => {
+    if (!outsourceShipmentId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/production/outsource/shipments/${outsourceShipmentId}`);
+        const shipment = data.shipment;
+        if (cancelled || !shipment) return;
+        setOutsourceShipment(shipment);
+        setSupplierLocked(!!shipment.supplier_id);
+        setHeader((prev) => ({
+          ...prev,
+          outsource_shipment_id: shipment.id,
+          supplier_id: shipment.supplier_id || prev.supplier_id || querySupplierId,
+          supplier_name: shipment.supplier_name || prev.supplier_name,
+          po_reference: shipment.shipment_number || queryPoReference || prev.po_reference,
+        }));
+        if (shipment.master_record_id || shipment.sent_qty_total) {
+          setItems([
+            calcItem({
+              ...EMPTY_ITEM,
+              item_category: 'component',
+              quantity_type: 'number',
+              master_record_id: shipment.master_record_id || null,
+              master_record_label: shipment.component_label || '',
+              item_description: shipment.component_label || '',
+              quantity: String(shipment.sent_qty_total || ''),
+            }),
+          ]);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err.response?.data?.error || 'Unable to load outsource shipment.');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [outsourceShipmentId, querySupplierId, queryPoReference]);
 
   useEffect(() => {
     if (user?.id && !header.received_by) {
@@ -425,16 +478,39 @@ export default function CreateGIRNPage() {
     setHeader((prev) => ({
       ...prev,
       invoice_id: draft.invoice_id || data.invoice?.id || '',
-      supplier_id: draft.supplier_id || data.invoice?.supplier_id || '',
-      supplier_name: draft.supplier_name || '',
-      supplier_gstin: draft.supplier_gstin || '',
-      po_reference: draft.po_reference || '',
+      supplier_id: supplierLocked
+        ? prev.supplier_id
+        : draft.supplier_id || data.invoice?.supplier_id || prev.supplier_id || '',
+      supplier_name: supplierLocked
+        ? prev.supplier_name
+        : draft.supplier_name || prev.supplier_name || '',
+      supplier_gstin: supplierLocked
+        ? prev.supplier_gstin
+        : draft.supplier_gstin || prev.supplier_gstin || '',
+      po_reference: prev.po_reference || draft.po_reference || '',
       received_date: draft.received_date || new Date().toISOString().slice(0, 10),
       received_by: user?.id || draft.received_by || prev.received_by,
       csr: draft.csr || '',
       notes: draft.notes || '',
+      outsource_shipment_id: prev.outsource_shipment_id || outsourceShipmentId || '',
     }));
-    setItems(normalizeDraftItems(draft.items));
+    const draftItems = normalizeDraftItems(draft.items);
+    // Keep prefilled component line when OCR returns nothing useful for outsource return
+    if (isOutsourceReturn && draftItems.length === 1 && !draftItems[0].master_record_id && items[0]?.master_record_id) {
+      setItems([
+        calcItem({
+          ...draftItems[0],
+          item_category: 'component',
+          quantity_type: 'number',
+          master_record_id: items[0].master_record_id,
+          master_record_label: items[0].master_record_label,
+          item_description: items[0].item_description || draftItems[0].item_description,
+          quantity: draftItems[0].quantity || items[0].quantity,
+        }),
+      ]);
+    } else {
+      setItems(draftItems);
+    }
     setStep('review');
   }
 
@@ -444,6 +520,7 @@ export default function CreateGIRNPage() {
   }
 
   function handleSupplierSelect(event) {
+    if (supplierLocked) return;
     const supplierId = event.target.value;
     if (!supplierId) {
       setHeader((prev) => ({ ...prev, supplier_id: '' }));
@@ -540,7 +617,8 @@ export default function CreateGIRNPage() {
     try {
       const payload = {
         ...header,
-        auto_approve: allOilOrOther && !submitForInspection,
+        outsource_shipment_id: header.outsource_shipment_id || outsourceShipmentId || null,
+        auto_approve: allOilOrOther && !submitForInspection && !isOutsourceReturn,
         items: items.map((item) => ({
           item_category: item.item_category || 'raw_material',
           master_record_id: item.master_record_id || item.raw_material_id || null,
@@ -564,8 +642,19 @@ export default function CreateGIRNPage() {
 
       const { data } = await api.post('/girn', payload);
       const newId = data.girn.id;
-      if (submitForInspection && !allOilOrOther) {
+      if (submitForInspection && !allOilOrOther && !isOutsourceReturn) {
         await api.post(`/girn/${newId}/submit`);
+      }
+      if (isOutsourceReturn) {
+        await appAlert({
+          title: 'Shipment received',
+          message:
+            data.message ||
+            'GIRN registered. Outsource lots have been received and will continue routing.',
+          tone: 'success',
+        });
+        navigate('/production/outsource');
+        return;
       }
       navigate(`/girn/${newId}`);
     } catch (err) {
@@ -580,9 +669,15 @@ export default function CreateGIRNPage() {
     <main className="app-shell employees-page">
       <header className="app-header">
         <div className="header-title-block">
-          <p className="eyebrow">Procurement</p>
-          <h1>New GIRN</h1>
-          {/* <p className="muted">Upload a scanned invoice, review OCR details, then register the GIRN.</p> */}
+          <p className="eyebrow">{isOutsourceReturn ? 'Outsourcing return' : 'Procurement'}</p>
+          <h1>{isOutsourceReturn ? 'GIRN — outsource inward' : 'New GIRN'}</h1>
+          {isOutsourceReturn ? (
+            <p className="muted">
+              Upload the supplier invoice for shipment{' '}
+              <strong>{outsourceShipment?.shipment_number || header.po_reference || 'OS'}</strong>.
+              Registering this GIRN receives the lots and resumes routing.
+            </p>
+          ) : null}
         </div>
       </header>
 
@@ -677,6 +772,7 @@ export default function CreateGIRNPage() {
               user={user}
               onChange={handleHeaderChange}
               onSupplierSelect={handleSupplierSelect}
+              supplierLocked={supplierLocked}
               onReceivedByChange={(employeeId) => setHeader((prev) => ({ ...prev, received_by: employeeId }))}
             />
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/client';
+import { appAlert } from '../components/dialog';
 import { getCategoryConfig } from './girnCategoryConfig';
 
 function cellValue(flat, sectionSlug, fieldSlug) {
@@ -132,7 +133,11 @@ export default function MasterItemSelect({
       setSearch('');
     } catch (err) {
       console.error('Failed to load master record:', err);
-      alert(err.response?.data?.error || 'Unable to load item details.');
+      await appAlert({
+        title: 'Unable to load item',
+        message: err.response?.data?.error || 'Unable to load item details.',
+        tone: 'danger',
+      });
     } finally {
       setLoading(false);
     }

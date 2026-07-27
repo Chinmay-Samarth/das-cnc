@@ -15,8 +15,16 @@ const SCHEDULABLE_TYPES = new Set([
   'assembly',
   'inspection',
   'packing',
-  'outsource',
 ]);
+
+/** Outsource is a traveler stop (routing gate) but not a WC-board op */
+const OUTSOURCE_TYPES = new Set(['outsource']);
+
+/** Primary-path ops lots must complete before dispatch (WC ops + outsource) */
+const PATH_GATE_TYPES = new Set([...SCHEDULABLE_TYPES, ...OUTSOURCE_TYPES]);
+
+/** Nodes where lots pause on the traveler (not firewall/note skips) */
+const TRAVELER_STOP_TYPES = PATH_GATE_TYPES;
 
 /** Terminal gate — Ready for Dispatch queue (not shop-floor EQL assign unless node has WC) */
 const TERMINAL_DISPATCH_TYPES = new Set(['dispatch']);
@@ -41,6 +49,9 @@ const DEFAULT_LABELS = {
 module.exports = {
   ACTIVITY_TYPES,
   SCHEDULABLE_TYPES,
+  OUTSOURCE_TYPES,
+  PATH_GATE_TYPES,
+  TRAVELER_STOP_TYPES,
   TERMINAL_DISPATCH_TYPES,
   EDGE_KINDS,
   INSPECTION_KINDS,

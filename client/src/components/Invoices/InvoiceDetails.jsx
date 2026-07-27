@@ -16,6 +16,7 @@ import {
   Minimize2,
 } from "lucide-react";
 import api from "../../api/client";
+import { appPrompt } from "../../components/dialog";
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -251,7 +252,13 @@ export default function InvoiceDetails() {
       await navigator.clipboard.writeText(invoice.file_url);
       setActionMessage('Link copied to clipboard');
     } catch {
-      window.prompt('Copy this invoice link:', invoice.file_url);
+      await appPrompt({
+        title: 'Copy invoice link',
+        message: 'Select and copy the link below.',
+        defaultValue: invoice.file_url,
+        readOnly: true,
+        confirmLabel: 'Close',
+      });
     }
   };
 

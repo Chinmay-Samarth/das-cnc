@@ -13,7 +13,15 @@ const {
   completeMachiningOp,
   sendOutsource,
   receiveOutsource,
+  stageOutsourceLots,
 } = require('../services/productionCardEngine');
+const {
+  unstageOutsourceLots,
+  listOutsourceBatches,
+  listOutsourceShipments,
+  listStageCandidates,
+  getOutsourceShipmentById,
+} = require('../services/outsourceEngine');
 const {
   assignUnassignedForDate,
   reassignCard,
@@ -85,10 +93,13 @@ function notifyProduction(action, cardOrMeta = {}, extras = {}) {
   const card = cardOrMeta.card || cardOrMeta;
   const advance = cardOrMeta.advance || extras.advance || card.advance || null;
   const lot = extras.lot || cardOrMeta.lot || advance?.lot || null;
+  const opCard = extras.opCard || cardOrMeta.op_card || null;
   broadcastProductionRealtime({
     action,
     card,
     lot,
+    opCard,
+    assignee: extras.assignee || null,
     operatorId: extras.operatorId || null,
     quantityGood: extras.quantityGood ?? null,
     quantityScrap: extras.quantityScrap ?? null,
@@ -222,6 +233,7 @@ router.post(
     notifyProduction('reassigned', card, {
       previousEmployeeId: result.previous_employee_id || null,
       previousWorkCenterId: card.work_center_id,
+      assignee: result.assignee,
     });
     return res.json({ card, assignee: result.assignee });
   })
@@ -511,8 +523,80 @@ router.post(
       previousEmployeeId: result.previous_employee_id || null,
       previousWorkCenterId: lot?.work_center_id || null,
       lot,
+      assignee: result.assignee,
     });
     return res.json({ lot, assignee: result.assignee });
+  })
+);
+
+router.get(
+  '/outsource/batches',
+  wrap(async (req, res) => {
+    const batches = await listOutsourceBatches({ status: req.query.status });
+    return res.json({ batches });
+  })
+);
+
+router.get(
+  '/outsource/shipments/:shipmentId',
+  wrap(async (req, res) => {
+    const shipment = await getOutsourceShipmentById(req.params.shipmentId);
+    return res.json({ shipment });
+  })
+);
+
+router.get(
+  '/outsource/shipments',
+  wrap(async (req, res) => {
+    const shipments = await listOutsourceShipments({ status: req.query.status || 'sent' });
+    return res.json({ shipments });
+  })
+);
+
+router.get(
+  '/outsource/stage-candidates',
+  wrap(async (req, res) => {
+    const lots = await listStageCandidates();
+    return res.json({ lots });
+  })
+);
+
+router.post(
+  '/outsource/stage',
+  wrap(async (req, res) => {
+    const result = await stageOutsourceLots(req.body || {}, req.user?.sub, {
+      isManager: isManager(req.user),
+    });
+    const lotIds = result.lot_ids || [];
+    if (lotIds.length) {
+      const { data: lots } = await supabase
+        .from('production_lots')
+        .select('production_card_id')
+        .in('id', lotIds);
+      const cardIds = [...new Set((lots || []).map((l) => l.production_card_id).filter(Boolean))];
+      for (const cardId of cardIds) {
+        try {
+          const card = await getCardById(cardId);
+          notifyProduction('outsource_staged', card, { operatorId: req.user?.sub });
+        } catch {
+          /* ignore */
+        }
+      }
+    } else {
+      notifyProduction('outsource_staged', { id: null }, { operatorId: req.user?.sub });
+    }
+    return res.status(201).json(result);
+  })
+);
+
+router.post(
+  '/outsource/unstage',
+  wrap(async (req, res) => {
+    const result = await unstageOutsourceLots(req.body || {}, req.user?.sub, {
+      isManager: isManager(req.user),
+    });
+    notifyProduction('outsource_unstaged', { id: null }, { operatorId: req.user?.sub });
+    return res.json(result);
   })
 );
 
@@ -522,8 +606,10 @@ router.post(
     const result = await sendOutsource(req.body || {}, req.user?.sub, {
       isManager: isManager(req.user),
     });
-    const card = await getCardById(req.body?.production_card_id);
-    notifyProduction('outsource_sent', card);
+    const cardId =
+      result.shipment?.production_card_id || req.body?.production_card_id || result.card_ids?.[0];
+    const card = cardId ? await getCardById(cardId) : { id: null };
+    notifyProduction('outsource_sent', card, { cardIds: result.card_ids || null });
     return res.status(201).json(result);
   })
 );
@@ -533,6 +619,8 @@ router.post(
   wrap(async (req, res) => {
     const result = await receiveOutsource(req.params.shipmentId, req.user?.sub, {
       isManager: isManager(req.user),
+      lines: req.body?.lines,
+      girnId: req.body?.girn_id || null,
     });
     const card = await getCardById(result.shipment?.production_card_id);
     notifyProduction('outsource_received', card);
@@ -583,8 +671,17 @@ router.post(
     const op_card = await startOpCard(req.params.id, req.user?.sub, {
       isManager: isManager(req.user),
     });
-    notifyProduction('op_started', { id: op_card.production_card_id }, {
+    let card = {};
+    if (op_card.parent_production_card_id) {
+      try {
+        card = await getCardById(op_card.parent_production_card_id);
+      } catch {
+        card = { id: op_card.parent_production_card_id };
+      }
+    }
+    notifyProduction('op_started', card, {
       operatorId: req.user?.sub,
+      opCard: op_card,
       lot: op_card.production_lot_id ? { id: op_card.production_lot_id } : null,
     });
     return res.json({ op_card });
@@ -628,6 +725,7 @@ router.post(
         previousWorkCenterId: advance?.from_work_center_id || null,
         advance,
         lot: result.lot || advance?.lot || null,
+        opCard: result.op_card || null,
       }
     );
     return res.json(result);
@@ -667,6 +765,7 @@ router.post(
         previousWorkCenterId: advance?.from_work_center_id || null,
         advance,
         lot: result.lot || null,
+        opCard: result.op_card || null,
       }
     );
     return res.json(result);
@@ -680,12 +779,29 @@ router.post(
       return res.status(403).json({ error: 'Manager access required' });
     }
     const result = await reassignOpCard(req.params.id, req.body?.employee_id);
-    notifyProduction('op_reassigned', { id: result.op_card?.production_card_id }, {
+    const op = result.op_card;
+    let card = {};
+    if (op?.parent_production_card_id) {
+      try {
+        card = await getCardById(op.parent_production_card_id);
+      } catch {
+        card = { id: op.parent_production_card_id };
+      }
+    }
+    let lot = null;
+    if (op?.production_lot_id) {
+      try {
+        lot = await getLotById(op.production_lot_id);
+      } catch {
+        lot = { id: op.production_lot_id };
+      }
+    }
+    notifyProduction('op_reassigned', card, {
       previousEmployeeId: result.previous_employee_id || null,
-      previousWorkCenterId: result.op_card?.work_center_id || null,
-      lot: result.op_card?.production_lot_id
-        ? { id: result.op_card.production_lot_id }
-        : null,
+      previousWorkCenterId: op?.work_center_id || null,
+      opCard: op,
+      assignee: result.assignee,
+      lot,
     });
     return res.json(result);
   })

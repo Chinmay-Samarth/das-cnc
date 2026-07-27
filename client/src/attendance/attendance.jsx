@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import api from '../api/client';
+import { appAlert } from '../components/dialog';
 import useDailyAttendance, { toDisplayTime, toISODateString } from './useDailyAttendance';
 import { formatDisplayDate } from '../utils/dateFormat';
 import { useNavigate } from 'react-router-dom';
@@ -182,7 +183,11 @@ export default function AttendancePage() {
       URL.revokeObjectURL(link.href);
     } catch (err) {
       console.error('Failed to download attendance Excel:', err);
-      alert('Unable to generate attendance Excel. Please try again.');
+      await appAlert({
+        title: 'Export failed',
+        message: 'Unable to generate attendance Excel. Please try again.',
+        tone: 'danger',
+      });
     } finally {
       setIsExporting(false);
     }
@@ -195,7 +200,11 @@ export default function AttendancePage() {
       await refresh();
       } catch (err) {
       console.error('Biometric sync failed:', err);
-      alert('Failed to sync biometric attendance. Please try again.');
+      await appAlert({
+        title: 'Sync failed',
+        message: 'Failed to sync biometric attendance. Please try again.',
+        tone: 'danger',
+      });
     } finally {
       setSyncing(false);
     }

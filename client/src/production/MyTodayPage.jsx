@@ -337,7 +337,7 @@ export default function MyTodayPage() {
       <PageHeader
         eyebrow="Operator"
         title="My Today"
-        subtitle="Operation cards for your assigned work — complete each op to open the next (Ready for Dispatch only after all route ops)."
+        // subtitle="Operation cards for your assigned work — complete each op to open the next (Ready for Dispatch only after all route ops)."
         actions={
           <button type="button" className="mes-btn mes-btn-secondary" onClick={load} disabled={loading}>
             <RefreshCw size={16} />
@@ -627,6 +627,12 @@ export default function MyTodayPage() {
             const openLots = (info?.lots || []).filter((l) =>
               ['in_process', 'received'].includes(l.status)
             );
+            const stageableLots = openLots.filter(
+              (l) =>
+                l.current_activity_flow_node_id &&
+                outsourceNodes.some((n) => n.id === l.current_activity_flow_node_id)
+            );
+            const stagedLots = (info?.lots || []).filter((l) => l.status === 'staged');
             const sentShipments = (info?.shipments || []).filter((s) => s.status === 'sent');
             const toneClass =
               card.status === 'OVERDUE'
@@ -903,67 +909,106 @@ export default function MyTodayPage() {
                                       }}
                                     />
                                     {l.lot_number} · {l.quantity} · {l.status}
+                                    {l.current_activity_flow_node_id &&
+                                    outsourceNodes.some(
+                                      (n) => n.id === l.current_activity_flow_node_id
+                                    )
+                                      ? ' · at outsource'
+                                      : ''}
                                   </label>
                                 </li>
                               ))}
                               {!openLots.length ? <li className="muted">No open lots yet.</li> : null}
                             </ul>
 
-                            <select
-                              value={inp.outNode || ''}
-                              disabled={busy}
-                              onChange={(e) => patchInput(card.id, { outNode: e.target.value })}
-                            >
-                              <option value="">Outsource step…</option>
-                              {outsourceNodes.map((n) => (
-                                <option key={n.id} value={n.id}>
-                                  {n.sequence}. {n.label}
-                                </option>
-                              ))}
-                            </select>
-                            <label className="pc-check-inline">
-                              <input
-                                type="checkbox"
-                                checked={!!inp.merge}
-                                onChange={(e) => patchInput(card.id, { merge: e.target.checked })}
-                              />
-                              Merge selected lots
-                            </label>
-                            <button
-                              type="button"
-                              className="mes-btn mes-btn-primary"
-                              disabled={busy || !inp.outNode || !(inp.lotIds || []).length}
-                              onClick={() =>
-                                run(card.id, () =>
-                                  api.post('/production/outsource/send', {
-                                    production_card_id: card.id,
-                                    activity_flow_node_id: inp.outNode,
-                                    lot_ids: inp.lotIds,
-                                    merge: !!inp.merge,
-                                  })
-                                )
-                              }
-                            >
-                              Send outsource
-                            </button>
+                            {stageableLots.length ? (
+                              <>
+                                <select
+                                  value={inp.outNode || stageableLots[0]?.current_activity_flow_node_id || ''}
+                                  disabled={busy}
+                                  onChange={(e) => patchInput(card.id, { outNode: e.target.value })}
+                                >
+                                  <option value="">Outsource step…</option>
+                                  {outsourceNodes.map((n) => (
+                                    <option key={n.id} value={n.id}>
+                                      {n.sequence}. {n.label}
+                                      {n.min_ship_qty != null ? ` (min ${n.min_ship_qty})` : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  className="mes-btn mes-btn-primary"
+                                  disabled={
+                                    busy ||
+                                    !(inp.outNode || stageableLots[0]?.current_activity_flow_node_id) ||
+                                    !(inp.lotIds || []).length
+                                  }
+                                  onClick={() =>
+                                    run(card.id, () =>
+                                      api.post('/production/outsource/stage', {
+                                        activity_flow_node_id:
+                                          inp.outNode ||
+                                          stageableLots[0]?.current_activity_flow_node_id,
+                                        lot_ids: inp.lotIds,
+                                      })
+                                    )
+                                  }
+                                >
+                                  Stage to inventory
+                                </button>
+                                <button
+                                  type="button"
+                                  className="mes-btn mes-btn-secondary"
+                                  style={{ marginLeft: 8 }}
+                                  onClick={() => navigate('/production/outsource')}
+                                >
+                                  Open Outsourcing
+                                </button>
+                              </>
+                            ) : outsourceNodes.length ? (
+                              <p className="muted" style={{ fontSize: 12 }}>
+                                No lots at an outsource step yet.{' '}
+                                <button
+                                  type="button"
+                                  className="mes-btn mes-btn-secondary"
+                                  style={{ padding: '2px 8px', fontSize: 12 }}
+                                  onClick={() => navigate('/production/outsource')}
+                                >
+                                  Outsourcing tab
+                                </button>
+                              </p>
+                            ) : null}
+
+                            {stagedLots.length ? (
+                              <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+                                Staged: {stagedLots.map((l) => l.lot_number).join(', ')} — send when
+                                min qty is met on Outsourcing.
+                              </p>
+                            ) : null}
                           </div>
 
                           {sentShipments.length ? (
                             <div className="pc-ops-block">
                               <h3>At supplier</h3>
+                              <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+                                File a GIRN with the supplier invoice to receive these shipments.
+                              </p>
                               {sentShipments.map((s) => (
                                 <button
                                   key={s.id}
                                   type="button"
                                   className="mes-btn mes-btn-secondary"
                                   disabled={busy}
-                                  onClick={() =>
-                                    run(card.id, () =>
-                                      api.post(`/production/outsource/${s.id}/receive`)
-                                    )
-                                  }
+                                  onClick={() => {
+                                    const params = new URLSearchParams();
+                                    params.set('outsource_shipment_id', s.id);
+                                    if (s.supplier_id) params.set('supplier_id', s.supplier_id);
+                                    if (s.shipment_number) params.set('po_reference', s.shipment_number);
+                                    navigate(`/girn/create?${params.toString()}`);
+                                  }}
                                 >
-                                  Receive {s.shipment_number}
+                                  File GIRN · {s.shipment_number}
                                 </button>
                               ))}
                             </div>
