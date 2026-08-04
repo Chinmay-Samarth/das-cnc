@@ -30,6 +30,17 @@ export const GIRN_CATEGORIES = {
     keyFieldMatchers: ['component-id', 'component-code', 'code', 'part-no'],
     codeFieldMatchers: ['component-code', 'code', 'part-no'],
   },
+  unfinished_lot: {
+    label: 'Unfinished Lots',
+    masterSlug: 'component',
+    quantityType: 'number',
+    requiresInspection: false,
+    updatesStock: true,
+    assignsLot: true,
+    inspectionCheckpoints: [],
+    keyFieldMatchers: ['component-id', 'component-code', 'lot-number'],
+    codeFieldMatchers: ['component-code', 'lot-number'],
+  },
   tool: {
     label: 'Tool',
     masterSlug: 'tool',

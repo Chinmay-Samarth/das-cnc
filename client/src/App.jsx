@@ -1,4 +1,4 @@
-import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
+import { Navigate, Outlet, Route, Routes, useParams } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/authContext';
 import { DialogProvider } from './components/dialog';
 import { SocketProvider } from './socket/socketContext';
@@ -36,6 +36,7 @@ import BlanketPosPage from './blanketPos/BlanketPosPage';
 import AddBlanketPoPage from './blanketPos/AddBlanketPoPage';
 import BlanketPoDetailsPage from './blanketPos/BlanketPoDetailsPage';
 import DeliverySchedulesPage from './blanketPos/DeliverySchedulesPage';
+import HorizonPlannerPage from './production/HorizonPlannerPage';
 import MyTodayPage from './production/MyTodayPage';
 import ProductionBoardPage from './production/ProductionBoardPage';
 import WorkCenterBoardPage from './production/WorkCenterBoardPage';
@@ -70,6 +71,16 @@ function PublicOnly() {
   }
 
   return <Outlet />;
+}
+
+function WCCommandRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/production/today?wc=${id}`} replace />;
+}
+
+function CommitmentToCardRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/production/cards/${id}`} replace />;
 }
 
 export default function App() {
@@ -128,10 +139,13 @@ export default function App() {
             <Route path="/blanket-pos/:id" element={<BlanketPoDetailsPage />} />
             <Route path="/delivery-schedules" element={<DeliverySchedulesPage />} />
             <Route path="/production/today" element={<MyTodayPage />} />
+            <Route path="/production/horizon-planner" element={<HorizonPlannerPage />} />
+            <Route path="/production/wc-command/:id" element={<WCCommandRedirect />} />
             <Route path="/production/work-centers" element={<WorkCenterBoardPage />} />
             <Route path="/production/dispatch" element={<ReadyForDispatchPage />} />
             <Route path="/production/outsource" element={<OutsourcingPage />} />
             <Route path="/production/cards/:id" element={<ProductionCardTrackingPage />} />
+            <Route path="/production/commitments/:id" element={<CommitmentToCardRedirect />} />
             <Route path="/production" element={<ProductionBoardPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>

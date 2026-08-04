@@ -41,6 +41,18 @@ const GIRN_CATEGORIES = {
     codeFieldMatchers: ['component-code', 'code', 'part-no', 'part_no'],
     classifyPriority: 1,
   },
+  unfinished_lot: {
+    label: 'Unfinished Lots',
+    masterSlug: 'component',
+    quantityType: 'number',
+    requiresInspection: false,
+    updatesStock: true,
+    assignsLot: true,
+    inspectionCheckpoints: [],
+    keyFieldMatchers: ['component-id', 'component-code', 'lot-number'],
+    codeFieldMatchers: ['component-code', 'lot-number'],
+    classifyPriority: 0,
+  },
   tool: {
     label: 'Tool',
     masterSlug: 'tool',

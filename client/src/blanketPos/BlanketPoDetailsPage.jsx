@@ -10,7 +10,6 @@ import {
 import api from '../api/client';
 import { appAlert, appConfirm, appPrompt } from '../components/dialog';
 import ComponentSelect from './ComponentSelect';
-import ReleaseToFloorModal from '../production/ReleaseToFloorModal';
 import {
   WEEKDAYS,
   formatRuleLabel,
@@ -34,8 +33,8 @@ function formatMoney(n) {
 }
 
 function carrierLabel(status) {
-  if (status === 'released') return 'Released to floor';
-  if (status === 'planned') return 'Awaiting release';
+  if (status === 'released') return 'In horizon';
+  if (status === 'planned') return 'Planned';
   if (status === 'cancelled') return 'Cancelled';
   return status || '—';
 }
@@ -56,7 +55,6 @@ export default function BlanketPoDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [releaseSchedule, setReleaseSchedule] = useState(null);
   const [showTerms, setShowTerms] = useState(false);
 
   const [compId, setCompId] = useState('');
@@ -1077,24 +1075,14 @@ export default function BlanketPoDetailsPage() {
                         <StatusBadge status={s.status}>{carrierLabel(s.status)}</StatusBadge>
                         <div className="" style={{display: 'flex', flexDirection: 'row', gap: 4}}>
                         {s.status === 'planned' ? (
-                          <>
-                            <button
-                              type="button"
-                              className="mes-btn mes-btn-secondary"
-                              disabled={busy}
-                              onClick={() => handleEditQty(s)}
-                            >
-                              Edit qty
-                            </button>
-                            <button
-                              type="button"
-                              className="mes-btn mes-btn-primary"
-                              disabled={busy}
-                              onClick={() => setReleaseSchedule(s)}
-                            >
-                              Release to floor
-                            </button>
-                          </>
+                          <button
+                            type="button"
+                            className="mes-btn mes-btn-secondary"
+                            disabled={busy}
+                            onClick={() => handleEditQty(s)}
+                          >
+                            Edit qty
+                          </button>
                         ) : null}
                         {s.status !== 'cancelled' ? (
                           <button
@@ -1116,16 +1104,6 @@ export default function BlanketPoDetailsPage() {
           ) : null}
         </>
       ) : null}
-
-      <ReleaseToFloorModal
-        open={!!releaseSchedule}
-        schedule={releaseSchedule}
-        onClose={() => setReleaseSchedule(null)}
-        onReleased={async () => {
-          setReleaseSchedule(null);
-          await reload();
-        }}
-      />
     </main>
   );
 }

@@ -14,6 +14,7 @@ const {
   sendOutsource,
   receiveOutsource,
   stageOutsourceLots,
+  splitRemainingToNewCard,
 } = require('../services/productionCardEngine');
 const {
   unstageOutsourceLots,
@@ -240,6 +241,31 @@ router.post(
 );
 
 router.post(
+  '/cards/:id/split-remaining',
+  wrap(async (req, res) => {
+    if (!isManager(req.user)) {
+      return res.status(403).json({ error: 'Manager access required' });
+    }
+    const result = await splitRemainingToNewCard(req.params.id, {
+      quantity: req.body?.quantity,
+      employee_id: req.body?.employee_id,
+      work_date: req.body?.work_date,
+    });
+    notifyProduction('split_remaining', result.source, {
+      assignee: result.assignee,
+      cardIds: [result.source?.id, result.card?.id].filter(Boolean),
+    });
+    if (result.card?.id) {
+      notifyProduction('released', result.card, {
+        assignee: result.assignee,
+        cardIds: [result.source?.id, result.card?.id].filter(Boolean),
+      });
+    }
+    return res.json(result);
+  })
+);
+
+router.post(
   '/rollover',
   wrap(async (req, res) => {
     const result = await rolloverOverdue();
@@ -308,9 +334,16 @@ router.post(
   wrap(async (req, res) => {
     const card = await startCard(req.params.id, req.user?.sub, {
       isManager: isManager(req.user),
+      lean: true,
     });
-    notifyProduction('started', card);
-    return res.json({ card });
+    res.json({ card });
+    setImmediate(() => {
+      try {
+        notifyProduction('started', card);
+      } catch (e) {
+        console.error('started notify:', e.message);
+      }
+    });
   })
 );
 
@@ -671,20 +704,28 @@ router.post(
     const op_card = await startOpCard(req.params.id, req.user?.sub, {
       isManager: isManager(req.user),
     });
-    let card = {};
-    if (op_card.parent_production_card_id) {
+    // Respond immediately — broadcast after so Start isn't blocked on socket fan-out
+    res.json({ op_card });
+    setImmediate(() => {
       try {
-        card = await getCardById(op_card.parent_production_card_id);
-      } catch {
-        card = { id: op_card.parent_production_card_id };
+        notifyProduction(
+          'op_started',
+          {
+            id: op_card.parent_production_card_id || op_card.production_card_id,
+            work_center_id: op_card.work_center_id,
+            assigned_employee_id: op_card.assigned_employee_id,
+            status: 'RUNNING',
+          },
+          {
+            operatorId: req.user?.sub,
+            opCard: op_card,
+            lot: op_card.production_lot_id ? { id: op_card.production_lot_id } : null,
+          }
+        );
+      } catch (e) {
+        console.error('op_started notify:', e.message);
       }
-    }
-    notifyProduction('op_started', card, {
-      operatorId: req.user?.sub,
-      opCard: op_card,
-      lot: op_card.production_lot_id ? { id: op_card.production_lot_id } : null,
     });
-    return res.json({ op_card });
   })
 );
 

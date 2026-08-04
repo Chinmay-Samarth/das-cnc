@@ -39,14 +39,11 @@ const NAV_SECTIONS = [
     items: [{ to: '/delivery-schedules', label: 'Delivery Schedules', icon: Truck }],
   },
   {
-    id: 'operator',
-    label: 'Operator',
-    items: [{ to: '/production/today', label: 'My Today', icon: UserCheck }],
-  },
-  {
     id: 'shopfloor',
     label: 'Shop floor',
     items: [
+      { to: '/production/horizon-planner', label: 'Horizon Planner', icon: Factory },
+      { to: '/production/today', label: 'My Today', icon: UserCheck, managerOnly: true },
       { to: '/production', label: 'Production', icon: Factory, end: true },
       { to: '/production/work-centers', label: 'WC Board', icon: LayoutGrid },
       { to: '/production/outsource', label: 'Outsourcing', icon: Send },
@@ -78,11 +75,21 @@ const NAV_SECTIONS = [
 export default function Sidebar({ onNavigate }) {
   const { user, logout } = useAuth();
   const [masters, setMasters] = useState([]);
+  const [managesWorkCenter, setManagesWorkCenter] = useState(false);
 
   useEffect(() => {
     api.get('/masters/sidebar').then((res) => {
       setMasters(res.data || []);
     });
+  }, []);
+
+  useEffect(() => {
+    api
+      .get('/campaigns/managed-work-centers')
+      .then(({ data }) => {
+        setManagesWorkCenter((data.work_centers || []).length > 0);
+      })
+      .catch(() => setManagesWorkCenter(false));
   }, []);
 
   return (
@@ -92,26 +99,30 @@ export default function Sidebar({ onNavigate }) {
       </div>
 
       <nav className="sidebar-nav">
-        {NAV_SECTIONS.map((section) => (
-          <div key={section.id} className="sidebar-domain">
-            {section.label ? <p className="sidebar-section-label">{section.label}</p> : null}
-            {section.items.map((item) => {
-              const Icon = item.icon;
-              return (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end || false}
-                  className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
-                  onClick={onNavigate}
-                >
-                  {Icon ? <Icon size={16} className="sidebar-link-icon" aria-hidden /> : null}
-                  <span>{item.label}</span>
-                </NavLink>
-              );
-            })}
-          </div>
-        ))}
+        {NAV_SECTIONS.map((section) => {
+          const items = section.items.filter((item) => !item.managerOnly || managesWorkCenter);
+          if (!items.length) return null;
+          return (
+            <div key={section.id} className="sidebar-domain">
+              {section.label ? <p className="sidebar-section-label">{section.label}</p> : null}
+              {items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end || false}
+                    className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
+                    onClick={onNavigate}
+                  >
+                    {Icon ? <Icon size={16} className="sidebar-link-icon" aria-hidden /> : null}
+                    <span>{item.label}</span>
+                  </NavLink>
+                );
+              })}
+            </div>
+          );
+        })}
 
         {masters.length ? (
           <div className="sidebar-domain">

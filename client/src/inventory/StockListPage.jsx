@@ -16,6 +16,7 @@ const CATEGORY_OPTIONS = Object.entries(GIRN_CATEGORIES)
 const CATEGORY_COLORS = {
   raw_material: '#3730a3',
   component: '#166534',
+  unfinished_lot: '#0f766e',
   tool: '#854d0e',
   oil: '#1d4ed8',
   gauge: '#9d174d',

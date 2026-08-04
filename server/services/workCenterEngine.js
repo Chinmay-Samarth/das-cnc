@@ -119,6 +119,7 @@ async function enrichWorkCenter(workCenter, { includeMachines = true } = {}) {
     code: workCenter.code,
     department_id: workCenter.department_id,
     department,
+    manager_employee_id: workCenter.manager_employee_id,
     overhead_hourly_rate: Number(workCenter.overhead_hourly_rate),
     speed: Number(workCenter.speed),
     efficiency: Number(workCenter.efficiency),
@@ -188,7 +189,7 @@ async function getWorkCenterById(id) {
 
   const { data, error } = await supabase
     .from('work_centers')
-    .select('*')
+    .select('*, manager_employee_id')
     .eq('id', id)
     .maybeSingle();
 

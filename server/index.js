@@ -43,6 +43,7 @@ app.use('/api/work-centers', require('./routes/workCenters'));
 app.use('/api/blanket-pos', require('./routes/blanketPos'));
 app.use('/api/delivery-schedules', require('./routes/deliverySchedules'));
 app.use('/api/production', require('./routes/production'));
+app.use('/api/campaigns', require('./routes/campaigns'));
 // app.use('/api/machines',   require('./routes/machines'));    // next module
  
 // Health check

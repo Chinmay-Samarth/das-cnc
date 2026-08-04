@@ -5,12 +5,15 @@ const TONE_MAP = {
   inactive: 'mes-badge-danger',
   closed: 'mes-badge-danger',
   blocked: 'mes-badge-danger',
+  ot_required: 'mes-badge-danger',
 
   completed: 'mes-badge-success',
   COMPLETED: 'mes-badge-success',
   active: 'mes-badge-success',
   received: 'mes-badge-success',
   released: 'mes-badge-success',
+  met: 'mes-badge-success',
+  locked: 'mes-badge-success',
 
   ready: 'mes-badge-amber',
   READY: 'mes-badge-amber',
@@ -19,10 +22,15 @@ const TONE_MAP = {
   pending: 'mes-badge-amber',
   unassigned: 'mes-badge-amber',
   on_hold: 'mes-badge-amber',
+  queued: 'mes-badge-amber',
+  planning: 'mes-badge-amber',
+  open: 'mes-badge-amber',
+  paused: 'mes-badge-amber',
 
   running: 'mes-badge-info',
   RUNNING: 'mes-badge-info',
   assigned: 'mes-badge-info',
+  in_progress: 'mes-badge-info',
 };
 
 export default function StatusBadge({ status, children, className = '' }) {

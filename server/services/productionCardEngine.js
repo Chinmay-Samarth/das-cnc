@@ -189,8 +189,10 @@ async function enrichCards(rows) {
         const iso = js === 0 ? 7 : js;
         return { 1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday', 5: 'Friday', 6: 'Saturday', 7: 'Sunday' }[iso] || null;
       })(),
-      bom_version_id: sched?.bom_version_id || null,
-      activity_flow_version_id: sched?.activity_flow_version_id || null,
+      bom_version_id: c.bom_version_id || sched?.bom_version_id || null,
+      activity_flow_version_id: c.activity_flow_version_id || sched?.activity_flow_version_id || null,
+      campaign_id: c.campaign_id || null,
+      efficiency_unlocked: !!c.lot_minted_at,
       customer_name: meta.customer_name || null,
       blanket_number: meta.blanket_number || null,
       day_goal: dayGoal(c),
@@ -245,95 +247,31 @@ async function releaseToProduction(payload, createdBy) {
     throw httpError('Already released to production', 409);
   }
 
-  const { data: existing } = await supabase
-    .from('production_cards')
-    .select('id')
-    .eq('delivery_schedule_id', scheduleId)
-    .limit(1);
-  if (existing?.length) throw httpError('Daily production cards already exist for this schedule', 409);
-
   const { line } = await getLineWithBlanket(schedule.blanket_po_line_id);
 
-  let bomVersionId = schedule.bom_version_id;
-  let afVersionId = schedule.activity_flow_version_id;
-  let releasedSchedule = schedule;
+  const bomVersionId = await getActiveBomVersionId(line.master_record_id);
+  const afVersionId = await getActiveActivityFlowVersionId(line.master_record_id);
+  if (!bomVersionId) throw httpError('Cannot release: component has no active BOM');
+  if (!afVersionId) throw httpError('Cannot release: component has no active Activity Flow');
 
-  if (schedule.status === 'planned') {
-    bomVersionId = await getActiveBomVersionId(line.master_record_id);
-    afVersionId = await getActiveActivityFlowVersionId(line.master_record_id);
-    if (!bomVersionId) throw httpError('Cannot release: component has no active BOM');
-    if (!afVersionId) throw httpError('Cannot release: component has no active Activity Flow');
-
-    const { data: updated, error: upErr } = await supabase
-      .from('delivery_schedules')
-      .update({
-        status: 'released',
-        bom_version_id: bomVersionId,
-        activity_flow_version_id: afVersionId,
-      })
-      .eq('id', scheduleId)
-      .select('*')
-      .single();
-    if (upErr) throw upErr;
-    releasedSchedule = updated;
-  } else {
-    throw httpError('Schedule cannot be released to production');
-  }
-
-  const today = todayDateString();
-  const start = today > releasedSchedule.due_date ? releasedSchedule.due_date : today;
-  const workingDays = listWorkingDays(start, releasedSchedule.due_date);
-  if (!workingDays.length) {
-    throw httpError('No working days (Mon–Sat) from today through the due date');
-  }
-
-  const targets = equalSplit(releasedSchedule.quantity, workingDays.length);
-  const cards = [];
-
-  for (let i = 0; i < workingDays.length; i++) {
-    const cardNumber = await nextDocumentNumber('production_card', 'JOB');
-    const { data: card, error: insErr } = await supabase
-      .from('production_cards')
-      .insert({
-        card_number: cardNumber,
-        delivery_schedule_id: scheduleId,
-        master_record_id: line.master_record_id,
-        assigned_employee_id: null,
-        work_date: workingDays[i],
-        target_quantity: targets[i],
-        overdue_quantity: 0,
-        total_good_produced: 0,
-        total_scrap_produced: 0,
-        backflushed_good_qty: 0,
-        status: 'READY',
-        assignment_status: 'unassigned',
-        created_by: createdBy || null,
-      })
-      .select('*')
-      .single();
-    if (insErr) throw insErr;
-    cards.push(card);
-  }
-
-  // Auto-assign by earliest due date, equalizing backlog one card at a time
-  const { assignCardsInDueOrder } = require('./productionAssignEngine');
-  const assignments = await assignCardsInDueOrder(cards);
-  const assignedRows = assignments.map((a) => a.card);
+  const { data: releasedSchedule, error: upErr } = await supabase
+    .from('delivery_schedules')
+    .update({
+      status: 'released',
+      bom_version_id: bomVersionId,
+      activity_flow_version_id: afVersionId,
+    })
+    .eq('id', scheduleId)
+    .select('*')
+    .single();
+  if (upErr) throw upErr;
 
   return {
     schedule: releasedSchedule,
-    cards: await enrichCards(assignedRows),
-    assignments: assignments.map((a) => ({
-      card_id: a.card?.id,
-      employee_id: a.assignee?.id || null,
-      employee_name: a.assignee?.full_name || null,
-      work_center_id: a.node?.work_center_id || a.card?.work_center_id || null,
-      node_id: a.node?.id || null,
-      node_label: a.node?.label || null,
-      assignment_status: a.card?.assignment_status,
-      reason: a.reason || null,
-    })),
-    split_preview: workingDays.map((d, i) => ({ work_date: d, target_quantity: targets[i] })),
+    cards: [],
+    assignments: [],
+    message:
+      'Schedule released for horizon campaign planning. Lock a horizon wave on the WC to create production campaigns.',
   };
 }
 
@@ -410,13 +348,24 @@ async function listMyToday(employeeId) {
   const completedGoodToday = completionStats.good_qty;
   const cardsCompletedToday = cards.filter((c) => c.status === 'COMPLETED').length;
 
-  // Efficiency: current-op progress on open cards + ledgered good from finished ops today.
-  // Completed-op good also counts toward the goal so handoffs don't zero out the index.
+  // Efficiency: planned day goals stay fixed; produced goods move independently.
+  // Do NOT set goal = completed good (that collapses the goal after Done / handoffs).
   const openCards = cards.filter((c) => c.status !== 'COMPLETED');
+  const completedTodayCards = cards.filter(
+    (c) => c.status === 'COMPLETED' && String(c.work_date || '').slice(0, 10) === today
+  );
   const openGood = openCards.reduce((s, c) => s + toNumber(c.total_good_produced), 0);
   const openGoal = openCards.reduce((s, c) => s + dayGoal(c), 0);
+  const completedCardGoal = completedTodayCards.reduce((s, c) => s + dayGoal(c), 0);
+  const completedCardGood = completedTodayCards.reduce(
+    (s, c) => s + toNumber(c.total_good_produced),
+    0
+  );
+  // Mid-route lot completions aren't covered by schedule-card day goals
+  const midRouteLedgerGood = Math.max(0, completedGoodToday - completedCardGood);
+
   const goodToday = openGood + completedGoodToday;
-  const goalToday = openGoal + completedGoodToday;
+  const goalToday = openGoal + completedCardGoal + midRouteLedgerGood;
   const efficiencyPct = goalToday > 0 ? Math.round((goodToday / goalToday) * 100) : 0;
 
   return {
@@ -757,77 +706,52 @@ async function countOpCompletionsForEmployee(employeeId, date) {
   return stats.count;
 }
 
-async function rolloverOverdue() {
-  const today = todayDateString();
-
-  const { data: stale, error } = await supabase
-    .from('production_cards')
-    .select('*')
-    .lt('work_date', today)
-    .in('status', ['READY', 'RUNNING']);
-
-  if (error) throw error;
-
-  const updated = [];
-
-  for (const card of stale || []) {
-    const goal = dayGoal(card);
-    const good = toNumber(card.total_good_produced);
-    const shortfall = Math.max(0, goal - good);
-
-    const { data: marked, error: markErr } = await supabase
-      .from('production_cards')
-      .update({
-        status: shortfall > 0 ? 'OVERDUE' : 'COMPLETED',
-        completed_at: shortfall > 0 ? null : card.completed_at || new Date().toISOString(),
-      })
-      .eq('id', card.id)
-      .select('*')
-      .single();
-    if (markErr) throw markErr;
-
-    if (shortfall > 0) {
-      const { data: nextCards, error: nextErr } = await supabase
-        .from('production_cards')
-        .select('*')
-        .eq('delivery_schedule_id', card.delivery_schedule_id)
-        .gt('work_date', card.work_date)
-        .order('work_date', { ascending: true })
-        .limit(1);
-      if (nextErr) throw nextErr;
-
-      if (nextCards?.length) {
-        const next = nextCards[0];
-        const { error: carryErr } = await supabase
-          .from('production_cards')
-          .update({ overdue_quantity: toNumber(next.overdue_quantity) + shortfall })
-          .eq('id', next.id);
-        if (carryErr) throw carryErr;
-      }
-    }
-
-    updated.push(mapCard(marked));
-  }
-
-  return { rolled: updated.length, cards: updated };
+/**
+ * Carry unfinished day goal onto the next future schedule card (same delivery schedule).
+ * Returns the target card when carry succeeded, otherwise null.
+ */
+async function carryShortfallToNextCard(_card, shortfall) {
+  // Campaign daily cards stay open until goal — no rollover.
+  return { carried: false, next_card: null, shortfall: Math.max(0, toNumber(shortfall)) };
 }
 
-async function startCard(cardId, actorEmployeeId, { isManager = false } = {}) {
-  const card = await getCardById(cardId);
-  if (!isManager && card.assigned_employee_id !== actorEmployeeId) {
+async function rolloverOverdue() {
+  // Campaign daily cards: end-of-day rollover disabled (stay-open until goal).
+  return { rolled: 0, cards: [] };
+}
+
+async function startCard(cardId, actorEmployeeId, { isManager = false, lean = false } = {}) {
+  // Lean path: single select + update (no enrichCards) for fast Start UX
+  const { data: card, error: fetchErr } = await supabase
+    .from('production_cards')
+    .select('*')
+    .eq('id', cardId)
+    .maybeSingle();
+  if (fetchErr) throw fetchErr;
+  if (!card) throw httpError('Production card not found', 404);
+
+  if (card.campaign_id) {
+    const { assertWCManager } = require('./productionCampaignEngine');
+    await assertWCManager(card.work_center_id, actorEmployeeId, { isSupervisor: isManager });
+  } else if (!isManager && card.assigned_employee_id !== actorEmployeeId) {
     throw httpError('Only the assigned employee can start this card', 403);
+  }
+  if (card.status === 'RUNNING') {
+    return lean ? mapCard(card) : (await enrichCards([card]))[0];
   }
   if (!['READY', 'OVERDUE'].includes(card.status)) {
     throw httpError('Only READY or OVERDUE cards can be started');
   }
 
+  const now = new Date().toISOString();
   const { data, error } = await supabase
     .from('production_cards')
-    .update({ status: 'RUNNING', started_at: new Date().toISOString() })
+    .update({ status: 'RUNNING', started_at: now })
     .eq('id', cardId)
     .select('*')
     .single();
   if (error) throw error;
+  if (lean) return mapCard(data);
   const [enriched] = await enrichCards([data]);
   return enriched;
 }
@@ -843,16 +767,24 @@ function formatMintedLotPayload(mintedLot) {
   };
 }
 
+/**
+ * Manager posts progress on a campaign daily card.
+ * Stay-open until goal; on goal met → mint LOT → set lot_minted_at (unlocks efficiency UI).
+ */
 async function reportProgress(cardId, payload, actorEmployeeId, { isManager = false } = {}) {
-  const card = await getCardById(cardId);
-  if (!isManager && card.assigned_employee_id !== actorEmployeeId) {
+  let card = await getCardById(cardId);
+
+  if (card.campaign_id) {
+    const { assertWCManager } = require('./productionCampaignEngine');
+    await assertWCManager(card.work_center_id, actorEmployeeId, { isSupervisor: isManager });
+  } else if (!isManager && card.assigned_employee_id !== actorEmployeeId) {
     throw httpError('Only the assigned employee can update this card', 403);
   }
-  if (!['RUNNING', 'OVERDUE'].includes(card.status) && card.status !== 'READY') {
-    // allow READY only after start — force RUNNING
-  }
+
   if (card.status === 'COMPLETED') throw httpError('Card is already completed');
-  if (card.status === 'READY') throw httpError('Start the card before reporting progress');
+  if (card.status === 'READY') {
+    card = await startCard(cardId, actorEmployeeId, { isManager: true });
+  }
 
   const goodDelta = toNumber(payload.good_qty);
   const scrapDelta = toNumber(payload.scrap_qty);
@@ -862,7 +794,8 @@ async function reportProgress(cardId, payload, actorEmployeeId, { isManager = fa
   const newGood = toNumber(card.total_good_produced) + goodDelta;
   const newScrap = toNumber(card.total_scrap_produced) + scrapDelta;
   const goal = dayGoal(card);
-  const doneForDay = !!payload.done_for_day || newGood >= goal;
+  const goalMet = newGood >= goal;
+  const doneForDay = !!payload.done_for_day || goalMet;
 
   const {
     resolveFirstSchedulableNode,
@@ -870,7 +803,6 @@ async function reportProgress(cardId, payload, actorEmployeeId, { isManager = fa
   } = require('./productionAssignEngine');
   const { mintLotFromScheduleCard } = require('./lotTravelerEngine');
 
-  // Backflush RM only on the first schedulable AF node (pieces already issued upstream)
   const firstNode = await resolveFirstSchedulableNode(card.activity_flow_version_id);
   const sourceNodeId = card.current_activity_flow_node_id || firstNode?.id || null;
   const isFirstOp =
@@ -880,17 +812,18 @@ async function reportProgress(cardId, payload, actorEmployeeId, { isManager = fa
   let backflushedGood = toNumber(card.backflushed_good_qty);
   if (goodDelta > 0 && isFirstOp) {
     const bomVersionId = card.bom_version_id;
-    await backflushRawMaterials({
-      bomVersionId,
-      deltaGood: goodDelta,
-      productionCardId: cardId,
-      parentMasterRecordId: card.master_record_id,
-      cardNumber: card.card_number,
-    });
-    backflushedGood += goodDelta;
+    if (bomVersionId) {
+      await backflushRawMaterials({
+        bomVersionId,
+        deltaGood: goodDelta,
+        productionCardId: cardId,
+        parentMasterRecordId: card.master_record_id,
+        cardNumber: card.card_number,
+      });
+      backflushedGood += goodDelta;
+    }
   }
 
-  // Persist qty first; decide COMPLETED vs handoff after mint
   const updates = {
     total_good_produced: newGood,
     total_scrap_produced: newScrap,
@@ -907,10 +840,37 @@ async function reportProgress(cardId, payload, actorEmployeeId, { isManager = fa
     .single();
   if (error) throw error;
 
+  // Roll campaign totals when this is a campaign daily card
+  if (card.campaign_id && goodDelta > 0) {
+    const { data: camp } = await supabase
+      .from('production_campaigns')
+      .select('id, good_quantity, scrap_quantity')
+      .eq('id', card.campaign_id)
+      .maybeSingle();
+    if (camp) {
+      await supabase
+        .from('production_campaigns')
+        .update({
+          good_quantity: toNumber(camp.good_quantity) + goodDelta,
+          scrap_quantity: toNumber(camp.scrap_quantity) + scrapDelta,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', camp.id);
+      try {
+        const { allocateCoverage, completeCampaignIfDone } = require('./productionCampaignEngine');
+        await allocateCoverage(camp.id, goodDelta);
+        await completeCampaignIfDone(camp.id);
+      } catch (e) {
+        console.error('Campaign coverage after card progress:', e.message);
+      }
+    }
+  }
+
   let mintedLot = null;
 
-  // First machining: mint traveler immediately for newly reported good (lot number + next AF node)
-  if (isFirstOp && goodDelta > 0 && card.activity_flow_version_id) {
+  // Campaign cards: mint only when goal is met (production handoff first, then efficiency).
+  // Legacy schedule cards: mint incremental good on first op.
+  if (!card.campaign_id && isFirstOp && goodDelta > 0 && card.activity_flow_version_id) {
     mintedLot = await mintLotFromScheduleCard(
       { ...card, ...qtyUpdated, activity_flow_version_id: card.activity_flow_version_id },
       {
@@ -922,8 +882,7 @@ async function reportProgress(cardId, payload, actorEmployeeId, { isManager = fa
     );
   }
 
-  if (doneForDay && newGood >= goal) {
-    // First-op credit on schedule card — do NOT advance schedule card past Op1
+  if (goalMet) {
     await recordOpCompletion(qtyUpdated, {
       good_qty: newGood,
       scrap_qty: newScrap,
@@ -932,8 +891,7 @@ async function reportProgress(cardId, payload, actorEmployeeId, { isManager = fa
       activity_flow_node_id: sourceNodeId,
     });
 
-    // Backfill any good that pre-dated auto-mint (or slipped past)
-    if (isFirstOp && card.activity_flow_version_id) {
+    if (card.activity_flow_version_id) {
       const { data: existingLots } = await supabase
         .from('production_lots')
         .select('quantity, status')
@@ -943,7 +901,12 @@ async function reportProgress(cardId, payload, actorEmployeeId, { isManager = fa
       const toMint = Math.max(0, newGood - alreadyLotized);
       if (toMint > 0) {
         mintedLot = await mintLotFromScheduleCard(
-          { ...card, ...qtyUpdated, activity_flow_version_id: card.activity_flow_version_id },
+          {
+            ...card,
+            ...qtyUpdated,
+            activity_flow_version_id: card.activity_flow_version_id,
+            campaign_id: card.campaign_id,
+          },
           {
             quantity: toMint,
             scrapQty: 0,
@@ -954,11 +917,13 @@ async function reportProgress(cardId, payload, actorEmployeeId, { isManager = fa
       }
     }
 
+    const now = new Date().toISOString();
     const { data: completed, error: cErr } = await supabase
       .from('production_cards')
       .update({
         status: 'COMPLETED',
-        completed_at: new Date().toISOString(),
+        completed_at: now,
+        lot_minted_at: mintedLot?.lot ? now : card.lot_minted_at || now,
         total_good_produced: newGood,
         total_scrap_produced: newScrap,
       })
@@ -979,10 +944,71 @@ async function reportProgress(cardId, payload, actorEmployeeId, { isManager = fa
     const lotPayload = formatMintedLotPayload(mintedLot);
     return {
       ...enriched,
+      efficiency_unlocked: true,
       advance: {
         advanced: false,
         lot_minted: !!lotPayload,
         lot: lotPayload,
+        from_work_center_id: card.work_center_id,
+        from_employee_id: actorEmployeeId || card.assigned_employee_id,
+      },
+      lot: lotPayload,
+      minted_lot: lotPayload ? { lot: lotPayload } : null,
+    };
+  }
+
+  // Stay-open: shortfall keeps card RUNNING (campaign) — do not close / roll
+  if (doneForDay && newGood < goal) {
+    if (card.campaign_id) {
+      const [enriched] = await enrichCards([qtyUpdated]);
+      return {
+        ...enriched,
+        advance: {
+          advanced: false,
+          lot_minted: false,
+          lot: null,
+          shortfall_rolled: false,
+          shortfall: Math.max(0, goal - newGood),
+          stay_open: true,
+          from_work_center_id: card.work_center_id,
+          from_employee_id: actorEmployeeId || card.assigned_employee_id,
+        },
+        lot: null,
+      };
+    }
+
+    const shortfall = Math.max(0, goal - newGood);
+    await recordOpCompletion(qtyUpdated, {
+      good_qty: newGood,
+      scrap_qty: newScrap,
+      employee_id: actorEmployeeId || card.assigned_employee_id,
+      work_center_id: card.work_center_id,
+      activity_flow_node_id: sourceNodeId,
+    });
+
+    const { data: overdueCard, error: oErr } = await supabase
+      .from('production_cards')
+      .update({
+        status: 'OVERDUE',
+        completed_at: null,
+        total_good_produced: newGood,
+        total_scrap_produced: newScrap,
+      })
+      .eq('id', cardId)
+      .select('*')
+      .single();
+    if (oErr) throw oErr;
+
+    const [enriched] = await enrichCards([overdueCard]);
+    const lotPayload = formatMintedLotPayload(mintedLot);
+    return {
+      ...enriched,
+      advance: {
+        advanced: false,
+        lot_minted: !!lotPayload,
+        lot: lotPayload,
+        shortfall_rolled: false,
+        shortfall,
         from_work_center_id: card.work_center_id,
         from_employee_id: actorEmployeeId || card.assigned_employee_id,
       },
@@ -1001,15 +1027,13 @@ async function reportProgress(cardId, payload, actorEmployeeId, { isManager = fa
   const lotPayload = formatMintedLotPayload(mintedLot);
   return {
     ...enriched,
-    advance: lotPayload
-      ? {
-          advanced: false,
-          lot_minted: true,
-          lot: lotPayload,
-          from_work_center_id: card.work_center_id,
-          from_employee_id: actorEmployeeId || card.assigned_employee_id,
-        }
-      : null,
+    advance: {
+      advanced: false,
+      lot_minted: !!lotPayload,
+      lot: lotPayload,
+      from_work_center_id: card.work_center_id,
+      from_employee_id: actorEmployeeId || card.assigned_employee_id,
+    },
     lot: lotPayload,
   };
 }
@@ -1361,6 +1385,9 @@ async function getCardTrackingDetail(cardId) {
       }
     } else if (completion) {
       status = 'done';
+    } else if (hasOpenLots && pointerSeq != null && seq < pointerSeq) {
+      // Traveler already past this node (e.g. Op1 minted lot → outsourcing)
+      status = 'done';
     } else if (pointerId && n.id === pointerId) {
       status = 'running';
     } else if (
@@ -1465,6 +1492,8 @@ async function getCardTrackingDetail(cardId) {
       }
     : null;
 
+  const { available: splitAvailable } = await sumRolloverSplitAvailable(card);
+
   return {
     card,
     lots,
@@ -1476,6 +1505,7 @@ async function getCardTrackingDetail(cardId) {
     tracking_pointer: trackingPointer,
     completions,
     lot_completions: lotCompletions,
+    split_available: splitAvailable,
   };
 }
 
@@ -1502,6 +1532,184 @@ async function listCardShipments(cardId) {
   return data || [];
 }
 
+/**
+ * Rolled-over qty pools for manager split: overdue_quantity on this card and later
+ * cards of the same delivery schedule (automatic Done/rollover writes that overdue).
+ * Does not include planned target remaining — automatic carry stays the source of truth.
+ */
+async function collectRolloverOverduePools(source) {
+  if (!source?.delivery_schedule_id || !source?.work_date) return [];
+
+  const { data: cards, error } = await supabase
+    .from('production_cards')
+    .select('*')
+    .eq('delivery_schedule_id', source.delivery_schedule_id)
+    .gte('work_date', source.work_date)
+    .order('work_date', { ascending: true });
+  if (error) throw error;
+
+  const pools = [];
+  for (const c of cards || []) {
+    const overdue = toNumber(c.overdue_quantity);
+    if (overdue > 0) pools.push({ card: c, overdue });
+  }
+  return pools;
+}
+
+async function sumRolloverSplitAvailable(source) {
+  const pools = await collectRolloverOverduePools(source);
+  return {
+    available: pools.reduce((sum, p) => sum + p.overdue, 0),
+    pools,
+  };
+}
+
+/**
+ * Manager: peel rolled-over overdue qty from future (or this) schedule cards into a NEW
+ * card on the same delivery schedule, assigned to a chosen employee at Op1.
+ * Leaves automatic Done/rollover carry logic untouched — only moves existing overdue.
+ */
+async function splitRemainingToNewCard(
+  sourceCardId,
+  { quantity, employee_id, work_date } = {}
+) {
+  if (!isValidUUID(sourceCardId)) throw httpError('Invalid card id');
+  if (!isValidUUID(employee_id)) throw httpError('employee_id is required');
+
+  const source = await getCardById(sourceCardId);
+  if (!source.delivery_schedule_id) {
+    throw httpError('Source card has no delivery schedule');
+  }
+  if (!source.master_record_id) {
+    throw httpError('Source card has no component');
+  }
+
+  const { available, pools } = await sumRolloverSplitAvailable(source);
+  if (!(available > 0)) {
+    throw httpError('No rolled-over quantity to split from future cards');
+  }
+
+  const qty =
+    quantity != null && quantity !== ''
+      ? toNumber(quantity)
+      : available;
+  if (!(qty > 0)) throw httpError('quantity must be > 0');
+  if (qty > available) throw httpError(`Cannot split more than ${available}`);
+
+  const workDate =
+    work_date && /^\d{4}-\d{2}-\d{2}$/.test(String(work_date))
+      ? String(work_date).slice(0, 10)
+      : todayDateString();
+
+  const { resolveFirstSchedulableNode } = require('./productionAssignEngine');
+  let workCenterId = source.work_center_id || null;
+  let firstNodeId = source.current_activity_flow_node_id || null;
+
+  if (source.activity_flow_version_id || source.delivery_schedule_id) {
+    const { data: schedule } = await supabase
+      .from('delivery_schedules')
+      .select('id, activity_flow_version_id, bom_version_id')
+      .eq('id', source.delivery_schedule_id)
+      .maybeSingle();
+    const afVersionId =
+      schedule?.activity_flow_version_id || source.activity_flow_version_id || null;
+    if (afVersionId) {
+      const node = await resolveFirstSchedulableNode(afVersionId);
+      if (node?.work_center_id) {
+        workCenterId = node.work_center_id;
+        firstNodeId = node.id;
+      }
+    }
+  }
+
+  if (!workCenterId) {
+    throw httpError('Cannot determine work center for the new card');
+  }
+
+  const { data: membership, error: mErr } = await supabase
+    .from('employee_work_centers')
+    .select('id')
+    .eq('work_center_id', workCenterId)
+    .eq('employee_id', employee_id)
+    .maybeSingle();
+  if (mErr) throw mErr;
+  if (!membership) {
+    throw httpError('Employee is not a member of this work center');
+  }
+
+  const { data: emp, error: eErr } = await supabase
+    .from('employees')
+    .select('id, full_name, employee_code, is_active')
+    .eq('id', employee_id)
+    .eq('is_active', true)
+    .maybeSingle();
+  if (eErr) throw eErr;
+  if (!emp) throw httpError('Employee not found or inactive', 404);
+
+  // Peel overdue only (FIFO by work_date) — never touch planned target_quantity
+  let toPeel = qty;
+  const peeledCards = [];
+  for (const pool of pools) {
+    if (toPeel <= 0) break;
+    const take = Math.min(pool.overdue, toPeel);
+    if (!(take > 0)) continue;
+    const { data: updated, error: peelErr } = await supabase
+      .from('production_cards')
+      .update({ overdue_quantity: pool.overdue - take })
+      .eq('id', pool.card.id)
+      .select('*')
+      .single();
+    if (peelErr) throw peelErr;
+    peeledCards.push(updated);
+    toPeel -= take;
+  }
+
+  const cardNumber = await nextDocumentNumber('production_card', 'JOB');
+  const { data: newCard, error: insErr } = await supabase
+    .from('production_cards')
+    .insert({
+      card_number: cardNumber,
+      delivery_schedule_id: source.delivery_schedule_id,
+      master_record_id: source.master_record_id,
+      assigned_employee_id: employee_id,
+      work_center_id: workCenterId,
+      current_activity_flow_node_id: firstNodeId,
+      work_date: workDate,
+      target_quantity: qty,
+      overdue_quantity: 0,
+      total_good_produced: 0,
+      total_scrap_produced: 0,
+      backflushed_good_qty: 0,
+      status: 'READY',
+      assignment_status: 'assigned',
+      created_by: null,
+    })
+    .select('*')
+    .single();
+  if (insErr) throw insErr;
+
+  try {
+    const { spawnOp1ForScheduleCard, syncOp1Progress } = require('./productionOpCardEngine');
+    for (const peeled of peeledCards) {
+      await syncOp1Progress(peeled);
+    }
+    await spawnOp1ForScheduleCard(newCard);
+    await syncOp1Progress(newCard);
+  } catch (e) {
+    console.error('Op1 sync after splitRemainingToNewCard:', e.message);
+  }
+
+  const srcEnriched = await getCardById(sourceCardId);
+  const cardEnriched = await getCardById(newCard.id);
+  return {
+    quantity: qty,
+    source: srcEnriched,
+    peeled: peeledCards.map(mapCard),
+    card: cardEnriched,
+    assignee: emp,
+  };
+}
+
 module.exports = {
   previewDailySplit,
   releaseToProduction,
@@ -1510,6 +1718,8 @@ module.exports = {
   getCardById,
   getCardTrackingDetail,
   rolloverOverdue,
+  carryShortfallToNextCard,
+  splitRemainingToNewCard,
   startCard,
   reportProgress,
   completeMachiningOp,

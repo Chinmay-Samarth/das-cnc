@@ -1,6 +1,7 @@
 const { createClient } = require('@supabase/supabase-js');
 const {
   TERMINAL_DISPATCH_TYPES,
+  SCHEDULABLE_TYPES,
 } = require('../config/activityFlowTypes');
 const { generateComponentLotNumber } = require('./componentLotEngine');
 const { todayDateString } = require('./blanketPosEngine');
@@ -81,6 +82,15 @@ async function gateDispatchOrRedirect(lot, intendedNode, activityFlowVersionId) 
 }
 
 async function getAfVersionIdForLot(lot) {
+  if (lot?.campaign_id) {
+    const { data: camp, error: campErr } = await supabase
+      .from('production_campaigns')
+      .select('activity_flow_version_id')
+      .eq('id', lot.campaign_id)
+      .maybeSingle();
+    if (campErr) throw campErr;
+    if (camp?.activity_flow_version_id) return camp.activity_flow_version_id;
+  }
   if (!lot?.production_card_id) return null;
   const { data: card, error } = await supabase
     .from('production_cards')
@@ -183,6 +193,8 @@ async function healFalseReadyForDispatch(lot) {
 
 async function assignLotToNode(lotId, node, workDate, opts = {}) {
   const { pickAssignee } = require('./productionAssignEngine');
+  const { receiveUnfinishedLot, receiveFinishedComponent } = require('./inventoryProductionEngine');
+  const parkAtNext = opts.parkAtNext === true;
 
   // No further traveler node — do NOT auto RFD (only AF dispatch node is the gate)
   if (!node) {
@@ -248,6 +260,11 @@ async function assignLotToNode(lotId, node, workDate, opts = {}) {
       .select('*')
       .single();
     if (error) throw error;
+    try {
+      await receiveFinishedComponent(data);
+    } catch (invErr) {
+      console.error('FG inventory receive on RFD:', invErr.message);
+    }
     return { lot: data, assignee: null, node, ready_for_dispatch: true };
   }
 
@@ -296,6 +313,35 @@ async function assignLotToNode(lotId, node, workDate, opts = {}) {
       node,
       ready_for_dispatch: false,
       reason: 'Activity-flow node has no work center',
+    };
+  }
+
+  // Park at next schedulable node — WIP inventory, no auto-start
+  if (parkAtNext && node.work_center_id && SCHEDULABLE_TYPES.has(node.activity_type)) {
+    const { data, error } = await supabase
+      .from('production_lots')
+      .update({
+        current_activity_flow_node_id: node.id,
+        work_center_id: node.work_center_id,
+        assigned_employee_id: null,
+        assignment_status: 'unassigned',
+        status: 'staged',
+      })
+      .eq('id', lotId)
+      .select('*')
+      .single();
+    if (error) throw error;
+    try {
+      await receiveUnfinishedLot(data, opts.completedNodeId || null);
+    } catch (invErr) {
+      console.error('Unfinished lot inventory receive:', invErr.message);
+    }
+    return {
+      lot: data,
+      assignee: null,
+      node,
+      ready_for_dispatch: false,
+      parked: true,
     };
   }
 
@@ -354,6 +400,7 @@ async function mintLotFromScheduleCard(card, { quantity, scrapQty = 0, sourceNod
       lot_number: lotNumber,
       master_record_id: card.master_record_id,
       production_card_id: card.id,
+      campaign_id: card.campaign_id || null,
       activity_flow_node_id: sourceNode,
       current_activity_flow_node_id: sourceNode,
       quantity: qty,
@@ -367,10 +414,17 @@ async function mintLotFromScheduleCard(card, { quantity, scrapQty = 0, sourceNod
     .single();
   if (error) throw error;
 
-  // Op1 credit stays on production_card_op_completions (Done for day / Create lot).
-  // Lot ledger starts when the traveler completes mid/late ops via advanceLotAfterOp.
+  // Prefer park at next schedulable op (WIP inventory) when mid-route
+  const shouldPark =
+    next &&
+    next.work_center_id &&
+    SCHEDULABLE_TYPES.has(next.activity_type) &&
+    !TERMINAL_DISPATCH_TYPES.has(next.activity_type);
 
-  const placed = await assignLotToNode(lot.id, next, card.work_date);
+  const placed = await assignLotToNode(lot.id, next, card.work_date, {
+    parkAtNext: !!shouldPark,
+    afVersionId: card.activity_flow_version_id,
+  });
   try {
     const { spawnOpCardForLotPlacement } = require('./productionOpCardEngine');
     await spawnOpCardForLotPlacement(placed, card);
@@ -382,8 +436,71 @@ async function mintLotFromScheduleCard(card, { quantity, scrapQty = 0, sourceNod
     next_node: placed.node,
     assignee: placed.assignee,
     ready_for_dispatch: !!placed.ready_for_dispatch,
+    parked: !!placed.parked,
     from_work_center_id: card.work_center_id || null,
     from_employee_id: actorEmployeeId || card.assigned_employee_id || null,
+  };
+}
+
+/**
+ * Mint a traveler lot from a WC daily commitment / campaign (no schedule card required).
+ * Requires production_card_id nullable (see 20260729_commitment_lot_fks.sql).
+ */
+async function mintLotFromCommitment(campaign, commitment, { quantity, scrapQty = 0, actorEmployeeId } = {}) {
+  const qty = toNumber(quantity);
+  if (!(qty > 0)) throw httpError('Lot quantity must be > 0');
+  if (!campaign?.id) throw httpError('Campaign is required');
+  if (!campaign.activity_flow_version_id) {
+    throw httpError('Campaign has no activity flow version — cannot mint lot');
+  }
+
+  const sourceNode = campaign.activity_flow_node_id || null;
+  const next = await resolveNextTravelerNode(campaign.activity_flow_version_id, sourceNode);
+  const lotNumber = await generateComponentLotNumber(campaign.master_record_id);
+  const workDate = commitment?.work_date || todayDateString();
+
+  const { data: lot, error } = await supabase
+    .from('production_lots')
+    .insert({
+      lot_number: lotNumber,
+      master_record_id: campaign.master_record_id,
+      production_card_id: null,
+      campaign_id: campaign.id,
+      wc_daily_commitment_id: commitment?.id || null,
+      activity_flow_node_id: sourceNode,
+      current_activity_flow_node_id: sourceNode,
+      quantity: qty,
+      scrap_qty: toNumber(scrapQty),
+      status: 'in_process',
+      assignment_status: 'unassigned',
+      work_center_id: campaign.work_center_id || null,
+      assigned_employee_id: null,
+    })
+    .select('*')
+    .single();
+  if (error) throw error;
+
+  const placed = await assignLotToNode(lot.id, next, workDate, {
+    afVersionId: campaign.activity_flow_version_id,
+  });
+
+  // Op cards require a parent schedule card — skip until a lightweight parent exists
+  try {
+    if (placed?.lot?.production_card_id) {
+      const { spawnOpCardForLotPlacement } = require('./productionOpCardEngine');
+      await spawnOpCardForLotPlacement(placed, null);
+    }
+  } catch (e) {
+    console.error('spawnOpCardForLotPlacement after commitment mint:', e.message);
+  }
+
+  return {
+    lot: placed.lot,
+    next_node: placed.node,
+    assignee: placed.assignee,
+    ready_for_dispatch: !!placed.ready_for_dispatch,
+    from_work_center_id: campaign.work_center_id || null,
+    from_employee_id: actorEmployeeId || null,
   };
 }
 
@@ -444,15 +561,19 @@ async function advanceLotAfterOp(lotId, completedNodeId, snapshot = {}) {
     };
   }
 
-  const { data: card, error: cErr } = await supabase
-    .from('production_cards')
-    .select('id, work_date, delivery_schedule_id')
-    .eq('id', lot.production_card_id)
-    .maybeSingle();
-  if (cErr) throw cErr;
+  let card = null;
+  if (lot.production_card_id) {
+    const { data: cardRow, error: cErr } = await supabase
+      .from('production_cards')
+      .select('id, work_date, delivery_schedule_id')
+      .eq('id', lot.production_card_id)
+      .maybeSingle();
+    if (cErr) throw cErr;
+    card = cardRow;
+  }
 
-  let afVersionId = null;
-  if (card?.delivery_schedule_id) {
+  let afVersionId = await getAfVersionIdForLot(lot);
+  if (!afVersionId && card?.delivery_schedule_id) {
     const { data: schedule } = await supabase
       .from('delivery_schedules')
       .select('activity_flow_version_id')
@@ -467,7 +588,15 @@ async function advanceLotAfterOp(lotId, completedNodeId, snapshot = {}) {
     .eq('id', lotId);
 
   const next = await resolveNextTravelerNode(afVersionId, finishedNodeId);
-  const placed = await assignLotToNode(lotId, next, card?.work_date || todayDateString());
+  const shouldPark =
+    next &&
+    next.work_center_id &&
+    SCHEDULABLE_TYPES.has(next.activity_type) &&
+    !TERMINAL_DISPATCH_TYPES.has(next.activity_type);
+  const placed = await assignLotToNode(lotId, next, card?.work_date || todayDateString(), {
+    parkAtNext: shouldPark,
+    completedNodeId: finishedNodeId,
+  });
 
   // Close any open Op Card for the finished node; spawn next if mid-route
   try {
@@ -695,6 +824,18 @@ async function dispatchLot(lotId, actorEmployeeId) {
     throw httpError('Lot is not at an AF dispatch node', 409);
   }
 
+  // FUTURE (not this build): generate invoice from delivered qty (delivery schedule /
+  // campaign_schedule_coverage), push to Accounts Due, alert admin if unpaid past due.
+  // Hook: coverage qty for lot.campaign_id + schedule due dates.
+
+  const { issueFinishedComponent } = require('./inventoryProductionEngine');
+  try {
+    await issueFinishedComponent(lot);
+  } catch (invErr) {
+    console.error('FG inventory issue on dispatch:', invErr.message);
+    throw invErr;
+  }
+
   const { data: updated, error } = await supabase
     .from('production_lots')
     .update({
@@ -794,6 +935,7 @@ async function listLotOpCompletions(lotId) {
 
 module.exports = {
   mintLotFromScheduleCard,
+  mintLotFromCommitment,
   advanceLotAfterOp,
   assignLotToNode,
   resolveNextTravelerNode,

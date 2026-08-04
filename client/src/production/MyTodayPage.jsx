@@ -1,29 +1,44 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Activity, CheckCircle2, Copy, Gauge, Hash, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ChevronDown, ChevronRight, Copy, Package, RefreshCw, UserCheck, Users } from 'lucide-react';
 import api from '../api/client';
-import { formatDueLabel } from '../blanketPos/scheduleLabels';
-import { useSocket, useProductionRealtime } from '../socket/socketContext';
-import { useAuth } from '../auth/authContext';
-import {
-  PageHeader,
-  MetricCard,
-  StatusBadge,
-  EmptyState,
-  TruncatedText,
-} from '../components/mes';
+import { useSocket } from '../socket/socketContext';
+import { PageHeader, EmptyState, StatusBadge, TruncatedText } from '../components/mes';
+import { appAlert } from '../components/dialog';
 
-function extractMintedLot(response) {
-  const body = response?.data;
-  if (!body) return null;
-  const lot =
-    body.lot ||
-    body.card?.lot ||
-    body.card?.advance?.lot ||
-    body.advance?.lot ||
-    null;
-  if (!lot?.lot_number) return null;
-  return lot;
+const DONE_CHIP_LIMIT = 8;
+
+function getEfficiencyMood(efficiency, opsCompletedToday, hasActive) {
+  if (efficiency >= 80 && opsCompletedToday >= 1) return 'good';
+  if (efficiency >= 50 || (opsCompletedToday >= 1 && efficiency < 80)) return 'ok';
+  if (efficiency < 50 && (opsCompletedToday === 0 || hasActive)) return 'low';
+  return 'ok';
+}
+
+const MOOD_META = {
+  good: { emoji: '🙂', label: 'On track', className: 'is-good' },
+  ok: { emoji: '😐', label: 'Steady pace', className: 'is-ok' },
+  low: { emoji: '☹️', label: 'Needs attention', className: 'is-low' },
+};
+
+function EfficiencyHero({ efficiency, good, goal, opsCompletedToday, hasActive }) {
+  const mood = getEfficiencyMood(efficiency, opsCompletedToday, hasActive);
+  const meta = MOOD_META[mood];
+  return (
+    <section className={`mt-efficiency-hero ${meta.className}`} aria-label="Efficiency index">
+      <span className="mt-efficiency-emoji" role="img" aria-label={meta.label}>
+        {meta.emoji}
+      </span>
+      <div className="mt-efficiency-body">
+        <p className="mt-efficiency-label">Efficiency index</p>
+        <p className="mt-efficiency-value">{efficiency}%</p>
+        <p className="mt-efficiency-sub">
+          {opsCompletedToday} op{opsCompletedToday === 1 ? '' : 's'} done · {Number(good)} /{' '}
+          {Number(goal)} good vs goal
+        </p>
+      </div>
+    </section>
+  );
 }
 
 function LotReceiptModal({ lot, cardLabel, onClose }) {
@@ -86,1017 +101,773 @@ function LotReceiptModal({ lot, cardLabel, onClose }) {
   );
 }
 
+function MyTodayJobCard({
+  cardNumber,
+  componentLabel,
+  operationLabel,
+  todayGoal,
+  goodSoFar,
+  busy,
+  goodValue,
+  scrapValue,
+  onGoodChange,
+  onScrapChange,
+  onDone,
+  isActive,
+  children,
+}) {
+  return (
+    <article className={`mt-job-card${isActive ? ' is-focus' : ' is-subdued'}`}>
+      <div className="mt-job-fields">
+        {cardNumber ? (
+          <div className="mt-job-row">
+            <span className="mt-job-field-label">Card</span>
+            <span className="mt-job-number">{cardNumber}</span>
+          </div>
+        ) : null}
+        <div className="mt-job-row">
+          <span className="mt-job-field-label">Component</span>
+          <span className="mt-job-component">{componentLabel || '—'}</span>
+        </div>
+        <div className="mt-job-row">
+          <span className="mt-job-field-label">Operation</span>
+          <span className="mt-job-operation">{operationLabel}</span>
+        </div>
+        {todayGoal != null && todayGoal > 0 ? (
+          <div className="mt-job-row mt-job-row-goal">
+            <span className="mt-job-field-label">Today&apos;s goal</span>
+            <span className="mt-job-goal">
+              <strong>{Number(goodSoFar ?? 0)}</strong>
+              <span className="mt-job-goal-sep"> / </span>
+              <strong>{Number(todayGoal)}</strong>
+            </span>
+          </div>
+        ) : null}
+      </div>
+
+      {isActive ? (
+        <div className="mt-job-actions">
+          <label className="mt-qty-label mt-qty-good">
+            Good
+            <input
+              type="number"
+              min="0"
+              step="any"
+              inputMode="decimal"
+              value={goodValue ?? ''}
+              disabled={busy}
+              onChange={(e) => onGoodChange(e.target.value)}
+            />
+          </label>
+          <label className="mt-qty-label mt-qty-scrap">
+            Scrap
+            <input
+              type="number"
+              min="0"
+              step="any"
+              inputMode="decimal"
+              value={scrapValue ?? ''}
+              disabled={busy}
+              onChange={(e) => onScrapChange(e.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            className="mes-btn mes-btn-primary mt-job-done"
+            disabled={busy}
+            onClick={onDone}
+          >
+            Done
+          </button>
+        </div>
+      ) : null}
+
+      {children}
+    </article>
+  );
+}
+
+/** Collapsed summary for a completed daily card */
+function CompletedCardCollapsed({ card, lotNumber, onOpenTracking }) {
+  return (
+    <button type="button" className="mes-list-item mt-complete-item" onClick={onOpenTracking}>
+      <div className="mes-list-item-top">
+        <span className="mes-list-item-title mt-mono">{card.card_number || 'Card'}</span>
+        <StatusBadge status="COMPLETED">Done</StatusBadge>
+      </div>
+      <p className="mes-list-item-sub">
+        <TruncatedText>{card.component_label || '—'}</TruncatedText>
+      </p>
+      <div className="mt-list-meta">
+        <span>
+          {Number(card.good_qty || 0)} / {Number(card.committed_qty || 0)} good
+        </span>
+        {lotNumber ? (
+          <span className="mt-mono mt-lot-tag">
+            <Package size={12} strokeWidth={2} aria-hidden />
+            {lotNumber}
+          </span>
+        ) : null}
+      </div>
+    </button>
+  );
+}
+
+function DoneTodayList({ rows, formatOpTime, onOpenCard }) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? rows : rows.slice(0, DONE_CHIP_LIMIT);
+  const hiddenCount = rows.length - DONE_CHIP_LIMIT;
+
+  if (!rows.length) return null;
+
+  return (
+    <section className="mes-card mt-panel" aria-label="Done today">
+      <header className="mt-panel-header">
+        <div>
+          <p className="mes-eyebrow">Completed</p>
+          <h2 className="mt-panel-title">Done today</h2>
+        </div>
+        <StatusBadge status="COMPLETED">{rows.length}</StatusBadge>
+      </header>
+
+      <div className="mt-panel-list">
+        {visible.map((row) => {
+          const lotLabel =
+            row.lot_number ||
+            (row.lot_numbers && row.lot_numbers.length ? row.lot_numbers.join(', ') : null);
+          return (
+            <button
+              key={row.id}
+              type="button"
+              className="mes-list-item mt-done-item"
+              // onClick={() => onOpenCard?.(row.id)}
+            >
+              <div className="mes-list-item-top">
+                <span className="mes-list-item-title mt-mono">{row.card_number || '—'}</span>
+                <span className="mt-list-time">{formatOpTime(row.completed_at || row.work_date)}</span>
+              </div>
+              <p className="mes-list-item-sub">
+              <div className="mt-list-meta">
+                <TruncatedText>#{row.component_label || '—'}</TruncatedText>
+                <span>{Number(row.good_qty || 0)} good</span>
+                {lotLabel ? (
+                  <span className="mt-mono mt-lot-tag">
+                    <Package size={12} strokeWidth={2} aria-hidden />
+                    {lotLabel}
+                  </span>
+                ) : null}
+              </div>
+                </p>
+            </button>
+          );
+        })}
+      </div>
+
+      {!expanded && hiddenCount > 0 ? (
+        <button type="button" className="mes-btn mes-btn-secondary mt-panel-more" onClick={() => setExpanded(true)}>
+          View all ({rows.length})
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+function EfficiencyMatrix({ team, workCenterId, workDate, initiallySaved, onSave }) {
+  const [rows, setRows] = useState(() =>
+    team.map((emp) => ({
+      employee_id: emp.employee_id || emp.id,
+      full_name: emp.full_name,
+      efficiency_pct: emp.efficiency_pct ?? '',
+      notes: emp.notes || '',
+    }))
+  );
+  const [saving, setSaving] = useState(false);
+  const [savedCollapsed, setSavedCollapsed] = useState(!!initiallySaved);
+  const [expanded, setExpanded] = useState(!initiallySaved);
+
+  useEffect(() => {
+    setRows(
+      team.map((emp) => ({
+        employee_id: emp.employee_id || emp.id,
+        full_name: emp.full_name,
+        efficiency_pct: emp.efficiency_pct ?? '',
+        notes: emp.notes || '',
+      }))
+    );
+    if (initiallySaved) {
+      setSavedCollapsed(true);
+      setExpanded(false);
+    }
+  }, [team, initiallySaved]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      for (const row of rows) {
+        if (row.efficiency_pct !== '' && row.efficiency_pct != null) {
+          await api.post('/campaigns/efficiency', {
+            work_center_id: workCenterId,
+            work_date: workDate,
+            employee_id: row.employee_id,
+            efficiency_pct: Number(row.efficiency_pct),
+            notes: row.notes || undefined,
+          });
+        }
+      }
+      setSavedCollapsed(true);
+      setExpanded(false);
+      await appAlert({ title: 'Efficiency saved', tone: 'success' });
+      if (onSave) onSave();
+    } catch (err) {
+      await appAlert(err.response?.data?.error || 'Efficiency save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const filled = rows.filter((r) => r.efficiency_pct !== '' && r.efficiency_pct != null);
+  const avg =
+    filled.length > 0
+      ? Math.round(filled.reduce((s, r) => s + Number(r.efficiency_pct), 0) / filled.length)
+      : null;
+
+  if (savedCollapsed && !expanded) {
+    return (
+      <section className="mes-card mt-panel" aria-label="Team efficiency">
+        <header className="mt-panel-header">
+          <div className="mt-panel-header-main">
+            <span className="mt-panel-icon" aria-hidden>
+              <Users size={16} strokeWidth={1.75} />
+            </span>
+            <div>
+              <p className="mes-eyebrow">Team</p>
+              <h2 className="mt-panel-title">Efficiency</h2>
+            </div>
+          </div>
+          <div className="mt-panel-header-actions">
+            <StatusBadge status="COMPLETED">Saved</StatusBadge>
+            {avg != null ? <span className="mt-eff-avg">{avg}% avg</span> : null}
+            <button
+              type="button"
+              className="mes-btn mes-btn-secondary"
+              onClick={() => setExpanded(true)}
+              aria-expanded="false"
+            >
+              View
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </header>
+
+        {filled.length === 0 ? (
+          <p className="mt-panel-empty">No efficiency percentages recorded.</p>
+        ) : (
+          <ul className="mt-eff-summary">
+            {filled.map((row) => (
+              <li key={row.employee_id} className="mt-eff-summary-row">
+                <TruncatedText className="mt-eff-name">{row.full_name}</TruncatedText>
+                <span className="mt-eff-pct">{Number(row.efficiency_pct)}%</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    );
+  }
+
+  return (
+    <section className="mes-card mt-panel" aria-label="Team efficiency editor">
+      <header className="mt-panel-header">
+        <div className="mt-panel-header-main">
+          <span className="mt-panel-icon" aria-hidden>
+            <Users size={16} strokeWidth={1.75} />
+          </span>
+          <div>
+            <p className="mes-eyebrow">Team</p>
+            <h2 className="mt-panel-title">Efficiency</h2>
+          </div>
+        </div>
+        {savedCollapsed ? (
+          <button
+            type="button"
+            className="mes-btn mes-btn-secondary"
+            onClick={() => setExpanded(false)}
+            aria-expanded="true"
+          >
+            <ChevronDown size={16} />
+            Collapse
+          </button>
+        ) : null}
+      </header>
+
+      <p className="mt-panel-hint">
+        {savedCollapsed
+          ? 'Update values and save again if needed.'
+          : 'Optional after lot handoff — save when ready.'}
+      </p>
+
+      <div className="data-table-wrap">
+        <table className="app-table">
+          <thead>
+            <tr>
+              <th>Employee</th>
+              <th>Efficiency %</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, idx) => (
+              <tr key={row.employee_id}>
+                <td>{row.full_name}</td>
+                <td>
+                  <input
+                    type="number"
+                    min="0"
+                    max="200"
+                    step="1"
+                    value={row.efficiency_pct}
+                    onChange={(e) => {
+                      const next = [...rows];
+                      next[idx].efficiency_pct = e.target.value;
+                      setRows(next);
+                    }}
+                    style={{ width: 80 }}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="text"
+                    value={row.notes}
+                    onChange={(e) => {
+                      const next = [...rows];
+                      next[idx].notes = e.target.value;
+                      setRows(next);
+                    }}
+                    style={{ width: '100%' }}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <button
+        type="button"
+        className="mes-btn mes-btn-primary"
+        onClick={handleSave}
+        disabled={saving}
+        style={{ marginTop: 12 }}
+      >
+        {saving ? 'Saving…' : savedCollapsed ? 'Update efficiency' : 'Save efficiency'}
+      </button>
+    </section>
+  );
+}
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export default function MyTodayPage() {
   const navigate = useNavigate();
-  const { joinWorkCenterRoom, leaveWorkCenterRoom } = useSocket();
-  const { user } = useAuth();
-  const [cards, setCards] = useState([]);
-  const [lots, setLots] = useState([]);
-  const [opCards, setOpCards] = useState([]);
-  const [completedOpsToday, setCompletedOpsToday] = useState([]);
-  const [opsCompletedToday, setOpsCompletedToday] = useState(0);
-  const [completedCredit, setCompletedCredit] = useState(0);
-  const [goodToday, setGoodToday] = useState(0);
-  const [goalToday, setGoalToday] = useState(0);
-  const [efficiencyPct, setEfficiencyPct] = useState(0);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { subscribe } = useSocket();
+  const [managedWcs, setManagedWcs] = useState([]);
+  const [selectedWc, setSelectedWc] = useState('');
+  const [command, setCommand] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [accessReady, setAccessReady] = useState(false);
   const [error, setError] = useState(null);
   const [busyId, setBusyId] = useState(null);
-  const [detail, setDetail] = useState({});
-  const [inputs, setInputs] = useState({});
-  const [lastMintedLot, setLastMintedLot] = useState({});
+  const [postForm, setPostForm] = useState({ good: '', scrap: '' });
   const [lotReceipt, setLotReceipt] = useState(null);
+  const [efficiencyUnlocked, setEfficiencyUnlocked] = useState(false);
+  const [justCompletedCard, setJustCompletedCard] = useState(null);
 
   const load = useCallback(async ({ silent = false } = {}) => {
+    const wcId = searchParams.get('wc') || selectedWc;
+    if (!wcId) {
+      setCommand(null);
+      if (!silent) setLoading(false);
+      return;
+    }
+
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const { data } = await api.get('/production/cards/my-today');
-      setCards(data.cards || []);
-      setLots(data.lots || []);
-      setOpCards(data.op_cards || []);
-      setCompletedOpsToday(data.completed_ops_today || []);
-      setOpsCompletedToday(Number(data.ops_completed_today || 0));
-      setCompletedCredit(
-        Number(data.completed_credit ?? data.ops_completed_today ?? 0)
-      );
-      setGoodToday(Number(data.good_today || 0));
-      setGoalToday(Number(data.goal_today || 0));
-      setEfficiencyPct(Number(data.efficiency_pct || 0));
+      const { data } = await api.get(`/campaigns/work-centers/${wcId}/command`, {
+        params: { work_date: todayStr() },
+      });
+      setCommand(data);
+      if (data?.efficiency_saved) setEfficiencyUnlocked(true);
     } catch (err) {
-      setError(err.response?.data?.error || 'Unable to load today’s tasks.');
-      setCards([]);
-      setLots([]);
-      setOpCards([]);
-      setCompletedOpsToday([]);
-      setOpsCompletedToday(0);
-      setCompletedCredit(0);
-      setGoodToday(0);
-      setGoalToday(0);
-      setEfficiencyPct(0);
+      setError(err.response?.data?.error || 'Unable to load command');
+      setCommand(null);
     } finally {
       if (!silent) setLoading(false);
     }
-  }, []);
+  }, [searchParams, selectedWc]);
 
   useEffect(() => {
-    load();
-  }, [load]);
-
-  // Join WC rooms for assigned op cards / cards / lots so handoffs arrive instantly
-  useEffect(() => {
-    const wcIds = [
-      ...new Set(
-        [...opCards, ...cards, ...lots].map((c) => c.work_center_id).filter(Boolean)
-      ),
-    ];
-    wcIds.forEach((id) => joinWorkCenterRoom(id));
-    return () => {
-      wcIds.forEach((id) => leaveWorkCenterRoom(id));
-    };
-  }, [opCards, cards, lots, joinWorkCenterRoom, leaveWorkCenterRoom]);
-
-  const onRealtime = useCallback(
-    (payload) => {
-      if (
-        !payload?.employeeId ||
-        payload.employeeId === user?.id ||
-        payload?.operator_id === user?.id ||
-        payload?.previousEmployeeId === user?.id ||
-        payload?.action === 'released' ||
-        payload?.action === 'rollover' ||
-        payload?.action === 'assign_unassigned' ||
-        payload?.action === 'reassigned' ||
-        payload?.action === 'advanced' ||
-        payload?.action === 'lot_advanced' ||
-        payload?.action === 'lot_created' ||
-        payload?.action === 'lot_reassigned' ||
-        payload?.action === 'task:assigned' ||
-        payload?.task_id ||
-        payload?.lotId ||
-        payload?.lot_id
-      ) {
-        load({ silent: true });
-        setDetail({});
+    async function loadManagedWcs() {
+      try {
+        const { data } = await api.get('/campaigns/managed-work-centers');
+        const centers = data.work_centers || [];
+        setManagedWcs(centers);
+        const wcParam = searchParams.get('wc');
+        if (wcParam && centers.some((wc) => wc.id === wcParam)) {
+          setSelectedWc(wcParam);
+        } else if (centers.length === 1) {
+          setSelectedWc(centers[0].id);
+        } else if (wcParam && !centers.some((wc) => wc.id === wcParam)) {
+          setSelectedWc('');
+          setSearchParams({});
+        }
+      } catch {
+        setManagedWcs([]);
+      } finally {
+        setAccessReady(true);
+        setLoading(false);
       }
-    },
-    [load, user?.id]
-  );
+    }
+    loadManagedWcs();
+  }, [searchParams, setSearchParams]);
 
-  useProductionRealtime(onRealtime, [onRealtime]);
+  useEffect(() => {
+    const wcParam = searchParams.get('wc');
+    if (wcParam && wcParam !== selectedWc && managedWcs.some((wc) => wc.id === wcParam)) {
+      setSelectedWc(wcParam);
+    }
+  }, [searchParams, selectedWc, managedWcs]);
 
-  const useOpCards = opCards.length > 0;
-  // When Op Cards exist, they are the single floor work token (avoid duplicate card+lot rows)
-  const queueCards = useOpCards ? [] : cards;
-  const queueLots = useOpCards ? [] : lots;
-  const hasActive = opCards.length > 0 || queueCards.length > 0 || queueLots.length > 0;
-  const hasDoneToday = completedOpsToday.length > 0;
+  useEffect(() => {
+    if (!accessReady || !managedWcs.length) return;
+    load();
+  }, [load, accessReady, managedWcs.length]);
+
+  useEffect(() => {
+    return subscribe('production:updated', () => {
+      if (managedWcs.length) load({ silent: true });
+    });
+  }, [subscribe, load, managedWcs.length]);
+
+  const hasManagerAccess = managedWcs.length > 0;
+
+  async function handleDone() {
+    const card = command?.today_card || command?.today_commitment;
+    if (!card?.id) return;
+
+    const hasQty =
+      (postForm.good !== '' && Number(postForm.good) > 0) ||
+      (postForm.scrap !== '' && Number(postForm.scrap) > 0);
+    if (!hasQty) {
+      setError('Enter good or scrap quantity before Done.');
+      return;
+    }
+
+    setBusyId(card.id);
+    setError(null);
+    try {
+      let receiptLot = null;
+
+      const { data: progressData } = await api.post(`/production/cards/${card.id}/progress`, {
+        good_qty: postForm.good !== '' ? Number(postForm.good) : undefined,
+        scrap_qty: postForm.scrap !== '' ? Number(postForm.scrap) : undefined,
+        done_for_day: true,
+      });
+      setPostForm({ good: '', scrap: '' });
+
+      const cardResult = progressData?.card || progressData;
+      receiptLot =
+        cardResult?.lot ||
+        cardResult?.minted_lot?.lot ||
+        cardResult?.advance?.lot ||
+        progressData?.lot ||
+        null;
+
+      if (cardResult?.status === 'COMPLETED' || cardResult?.efficiency_unlocked || receiptLot) {
+        setJustCompletedCard({
+          ...card,
+          ...cardResult,
+          good_qty: cardResult?.total_good_produced ?? cardResult?.good_qty ?? card.good_qty,
+          committed_qty: cardResult?.target_quantity ?? cardResult?.committed_qty ?? card.committed_qty,
+          card_number: cardResult?.card_number || card.card_number,
+          component_label: command?.active_campaign?.component_label || card.component_label,
+          lot_number: receiptLot?.lot_number || null,
+        });
+      }
+
+      if (cardResult?.efficiency_unlocked || cardResult?.lot_minted_at || receiptLot?.lot_number) {
+        if (!receiptLot?.lot_number) setEfficiencyUnlocked(true);
+      }
+
+      if (receiptLot?.lot_number) {
+        setLotReceipt({
+          lot: receiptLot,
+          cardLabel: command?.active_campaign?.component_label || null,
+          unlockEfficiency: true,
+        });
+      }
+
+      await load({ silent: true });
+    } catch (err) {
+      setError(err.response?.data?.error || 'Done failed');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function handleWcChange(wcId) {
+    setSelectedWc(wcId);
+    setSearchParams(wcId ? { wc: wcId } : {});
+    setJustCompletedCard(null);
+    setEfficiencyUnlocked(false);
+  }
+
+  const camp = command?.active_campaign;
+  const commit = command?.today_card || command?.today_commitment;
+  const campaignQueue = command?.campaign_queue || [];
+  const team = command?.team || [];
+  const closedCommitments = command?.closed_cards || command?.closed_commitments || [];
+
+  const opsCompletedToday =
+    Number(command?.ops_completed_today ?? closedCommitments.length) || 0;
+
+  // Hero uses full day totals (completed cards + active card progress)
+  const goal =
+    command?.today_goal_qty != null
+      ? Number(command.today_goal_qty)
+      : closedCommitments.reduce((s, c) => s + Number(c.committed_qty || 0), 0) +
+        (commit && commit.status !== 'COMPLETED' ? Number(commit.committed_qty || 0) : 0);
+
+  const good =
+    command?.today_good_qty != null
+      ? Number(command.today_good_qty)
+      : closedCommitments.reduce((s, c) => s + Number(c.good_qty || 0), 0) +
+        (commit && commit.status !== 'COMPLETED' ? Number(commit.good_qty || 0) : 0);
+
+  const efficiency = goal > 0 ? Math.round((good / goal) * 100) : 0;
+
+  const lastClosed = closedCommitments[closedCommitments.length - 1];
+  const canShowEfficiencyMatrix =
+    team.length > 0 &&
+    (efficiencyUnlocked ||
+      command?.efficiency_saved ||
+      lastClosed?.efficiency_unlocked ||
+      lastClosed?.lot_minted_at ||
+      justCompletedCard?.lot_number ||
+      (commit?.status === 'COMPLETED' && (commit.efficiency_unlocked || commit.lot_minted_at)));
+
+  // Prefer live closed list; fall back to just-completed chip until reload lands
+  const collapsedCompleted =
+    justCompletedCard &&
+    !closedCommitments.some((c) => c.id === justCompletedCard.id)
+      ? justCompletedCard
+      : null;
 
   function formatOpTime(iso) {
     if (!iso) return '—';
     try {
-      const d = new Date(iso);
-      return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      return new Date(iso).toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
     } catch {
       return '—';
     }
   }
 
-  const metrics = useMemo(() => {
-    const active = useOpCards
-      ? opCards.filter((o) => o.status === 'RUNNING').length || opCards.length
-      : cards.filter((c) => c.status === 'RUNNING').length + lots.length;
-    const goal = goalToday;
-    const good = goodToday;
-    const efficiency =
-      goal > 0
-        ? efficiencyPct || Math.round((good / goal) * 100)
-        : 0;
-    return {
-      active,
-      completed: completedCredit,
-      opsCompletedToday,
-      efficiency,
-      goal,
-      good,
-    };
-  }, [
-    useOpCards,
-    opCards,
-    cards,
-    lots,
-    completedCredit,
-    opsCompletedToday,
-    goodToday,
-    goalToday,
-    efficiencyPct,
-  ]);
-
-  async function ensureDetail(cardId) {
-    if (detail[cardId]) return detail[cardId];
-    const { data } = await api.get(`/production/cards/${cardId}`);
-    const next = {
-      lots: data.lots || [],
-      nodes: data.nodes || [],
-      shipments: data.shipments || [],
-      op_cards: data.op_cards || [],
-    };
-    setDetail((d) => ({ ...d, [cardId]: next }));
-    return next;
+  if (!accessReady || (loading && !command && hasManagerAccess)) {
+    return (
+      <main className="mes-shell mt-page">
+        <p className="muted">Loading…</p>
+      </main>
+    );
   }
 
-  function patchInput(cardId, patch) {
-    setInputs((s) => ({ ...s, [cardId]: { ...(s[cardId] || {}), ...patch } }));
-  }
-
-  async function run(cardId, fn) {
-    setBusyId(cardId);
-    setError(null);
-    try {
-      const result = await fn();
-      const minted =
-        extractMintedLot(result) ||
-        extractMintedLot({ data: result?.data }) ||
-        (result?.data?.lot?.lot_number ? result.data.lot : null) ||
-        (result?.lot?.lot_number ? result.lot : null);
-      const parentKey =
-        cardId ||
-        minted?.production_card_id ||
-        result?.data?.op_card?.production_card_id;
-      if (minted?.lot_number) {
-        setLastMintedLot((m) => ({ ...m, [parentKey]: minted }));
-        const card =
-          cards.find((c) => c.id === parentKey) ||
-          opCards.find((o) => o.id === cardId || o.production_card_id === parentKey);
-        setLotReceipt({
-          lot: minted,
-          cardLabel: card?.component_label || card?.card_number || card?.op_card_number || null,
-          cardId: parentKey,
-        });
-        patchInput(cardId, { good: '', scrap: '' });
-      }
-      await load();
-      setDetail((d) => {
-        const copy = { ...d };
-        delete copy[cardId];
-        if (parentKey) delete copy[parentKey];
-        return copy;
-      });
-    } catch (err) {
-      setError(err.response?.data?.error || 'Action failed.');
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function completeLot(lot) {
-    const inp = inputs[lot.id] || {};
-    setBusyId(lot.id);
-    setError(null);
-    try {
-      await api.post(`/production/lots/${lot.id}/complete`, {
-        scrap_qty: Number(inp.scrap || 0),
-        good_qty: inp.good !== undefined && inp.good !== '' ? Number(inp.good) : undefined,
-      });
-      await load();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Lot complete failed.');
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function completeOpCard(op) {
-    const inp = inputs[op.id] || {};
-    setBusyId(op.id);
-    setError(null);
-    try {
-      const { data } = await api.post(`/production/op-cards/${op.id}/complete`, {
-        scrap_qty: Number(inp.scrap || 0),
-        good_qty: inp.good !== undefined && inp.good !== '' ? Number(inp.good) : undefined,
-      });
-      const minted = data?.lot || data?.advance?.lot || data?.parent?.lot || null;
-      if (minted?.lot_number) {
-        setLastMintedLot((m) => ({ ...m, [op.production_card_id || op.id]: minted }));
-        setLotReceipt({
-          lot: minted,
-          cardLabel: op.component_label || op.op_card_number,
-          cardId: op.production_card_id || op.id,
-        });
-      }
-      await load();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Operation complete failed.');
-    } finally {
-      setBusyId(null);
-    }
+  if (!hasManagerAccess) {
+    return (
+      <main className="mes-shell mt-page">
+        <PageHeader eyebrow="Manager" title="My Today" />
+        <EmptyState
+          icon={UserCheck}
+          title="Work center managers only"
+          description="You are not assigned as manager on any work center. Ask an admin to set you as WC Manager on the Operators tab."
+          actionLabel="Back to home"
+          onAction={() => navigate('/home')}
+        />
+      </main>
+    );
   }
 
   return (
-    <main className="mes-shell">
+    <main className="mes-shell mt-page">
       <PageHeader
-        eyebrow="Operator"
+        eyebrow="Manager"
         title="My Today"
-        // subtitle="Operation cards for your assigned work — complete each op to open the next (Ready for Dispatch only after all route ops)."
         actions={
-          <button type="button" className="mes-btn mes-btn-secondary" onClick={load} disabled={loading}>
+          <button
+            type="button"
+            className="mes-btn mes-btn-secondary"
+            onClick={() => load()}
+            disabled={loading}
+          >
             <RefreshCw size={16} />
             Refresh
           </button>
         }
       />
 
-      <div className="mes-metric-grid">
-        <MetricCard
-          label="My active tasks"
-          value={metrics.active}
-          hint="Currently RUNNING"
-          icon={Activity}
-          tone="info"
-        />
-        <MetricCard
-          label="Completed today"
-          value={metrics.completed}
-          hint={
-            metrics.opsCompletedToday
-              ? `${metrics.opsCompletedToday} op handoff${metrics.opsCompletedToday === 1 ? '' : 's'} credited`
-              : 'Finished cards / op handoffs'
-          }
-          icon={CheckCircle2}
-          tone="success"
-        />
-        <MetricCard
-          label="Efficiency index"
-          value={`${metrics.efficiency}%`}
-          hint={`${metrics.good} / ${metrics.goal} good vs goal (incl. finished ops)`}
-          icon={Gauge}
-          tone={metrics.efficiency >= 80 ? 'success' : metrics.efficiency >= 50 ? 'amber' : 'danger'}
-        />
+      <div className="mes-filters" style={{ marginBottom: 16 }}>
+        <label>
+          Work center
+          <select value={selectedWc} onChange={(e) => handleWcChange(e.target.value)}>
+            <option value="">Select work center…</option>
+            {managedWcs.map((wc) => (
+              <option key={wc.id} value={wc.id}>
+                {wc.code ? `${wc.code} — ` : ''}
+                {wc.name}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading…</p> : null}
 
-      {!loading && !hasActive && !hasDoneToday ? (
+      {!selectedWc ? (
         <EmptyState
-          icon={Hash}
-          title="No jobs assigned"
-          description="Nothing on your queue for today. Check the WC Board or ask a supervisor to assign work."
-          actionLabel="Open WC Board"
-          onAction={() => navigate('/production/work-centers')}
+          icon={UserCheck}
+          title="Select a work center"
+          description="Choose a work center to view today's daily card and post good/scrap quantities."
         />
-      ) : !loading ? (
+      ) : !camp ? (
+        <EmptyState
+          icon={UserCheck}
+          title="No active campaign"
+          description="Release a horizon wave in the planner to start production on this work center."
+          actionLabel="Open Horizon Planner"
+          onAction={() => navigate('/production/horizon-planner')}
+        />
+      ) : (
         <>
-          <div className="mes-task-queue">
-            <h2 className="mes-section-title" style={{ margin: '0 0 12px', fontSize: '1rem' }}>
-              Active
-            </h2>
-            {!hasActive ? (
-              <p className="muted" style={{ margin: '0 0 16px' }}>
-                No open work — finished ops appear under Done today.
-              </p>
-            ) : null}
-          {opCards.map((op) => {
-            const busy = busyId === op.id;
-            const inp = inputs[op.id] || {};
-            const goal = Number(op.target_quantity || 0);
-            const good = Number(op.good_qty || 0);
-            const toneClass =
-              op.status === 'RUNNING' ? 'is-running' : '';
-            return (
-              <article key={`op-${op.id}`} className={`mes-task-card ${toneClass}`.trim()}>
-                <div className="mes-task-top">
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <p className="mes-task-id">
-                      <Hash size={16} aria-hidden />
-                      <span>{op.op_card_number}</span>
-                      <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
-                        {op.is_op1 ? 'Op 1' : 'Operation'} · {op.current_node_label || 'Op'}
-                      </span>
-                      {op.production_card_id ? (
-                        <button
-                          type="button"
-                          className="mes-btn mes-btn-secondary"
-                          style={{ marginLeft: 8, padding: '2px 8px', fontSize: 12 }}
-                          onClick={() => navigate(`/production/cards/${op.production_card_id}`)}
-                        >
-                          Track route
-                        </button>
-                      ) : null}
-                    </p>
-                    <h2 style={{ margin: '0 0 4px', fontSize: '1.05rem' }}>
-                      <TruncatedText>{op.component_label || 'Component'}</TruncatedText>
-                    </h2>
-                    <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-                      Goal <strong>{goal}</strong>
-                      {' · '}Good <strong>{good}</strong>
-                      {op.lot_number ? ` · Lot ${op.lot_number}` : ''}
-                      {op.work_center_code ? ` · ${op.work_center_code}` : ''}
-                      {op.parent_card_number ? ` · Schedule ${op.parent_card_number}` : ''}
-                    </p>
-                  </div>
-                  <StatusBadge status={op.status || 'READY'} />
-                </div>
+          <EfficiencyHero
+            efficiency={efficiency}
+            good={good}
+            goal={goal}
+            opsCompletedToday={opsCompletedToday}
+            hasActive={!!camp && commit && commit.status !== 'COMPLETED'}
+          />
 
-                {lastMintedLot[op.production_card_id || op.id]?.lot_number ? (
-                  <button
-                    type="button"
-                    className="lot-receipt-inline"
-                    onClick={() =>
-                      setLotReceipt({
-                        lot: lastMintedLot[op.production_card_id || op.id],
-                        cardLabel: op.component_label || op.op_card_number,
-                        cardId: op.production_card_id || op.id,
-                      })
-                    }
-                  >
-                    <span className="lot-receipt-inline-label">Lot card</span>
-                    <span className="lot-receipt-inline-number">
-                      {lastMintedLot[op.production_card_id || op.id].lot_number}
-                    </span>
-                    <span className="muted" style={{ fontSize: 12 }}>
-                      Tap to show again
-                    </span>
-                  </button>
-                ) : null}
-
-                {op.status === 'READY' ? (
-                  <button
-                    type="button"
-                    className="mes-btn mes-btn-primary"
-                    style={{ width: '100%', padding: '16px', fontSize: 16 }}
-                    disabled={busy}
-                    onClick={() =>
-                      run(op.id, () => api.post(`/production/op-cards/${op.id}/start`))
-                    }
-                  >
-                    START
-                  </button>
-                ) : null}
-
-                {op.status === 'RUNNING' ? (
-                  <div>
-                    <div className="pc-qty-row">
-                      <label>
-                        Good
-                        <input
-                          type="number"
-                          min="0"
-                          step="any"
-                          inputMode="decimal"
-                          value={inp.good ?? ''}
-                          disabled={busy}
-                          onChange={(e) => patchInput(op.id, { good: e.target.value })}
-                        />
-                      </label>
-                      <label>
-                        Scrap
-                        <input
-                          type="number"
-                          min="0"
-                          step="any"
-                          inputMode="decimal"
-                          value={inp.scrap ?? ''}
-                          disabled={busy}
-                          onChange={(e) => patchInput(op.id, { scrap: e.target.value })}
-                        />
-                      </label>
-                    </div>
-                    {op.is_op1 ? (
-                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                        <button
-                          type="button"
-                          className="mes-btn mes-btn-secondary"
-                          style={{ flex: 1 }}
-                          disabled={busy}
-                          onClick={() =>
-                            run(op.id, () =>
-                              api.post(`/production/op-cards/${op.id}/progress`, {
-                                good_qty: Number(inp.good || 0),
-                                scrap_qty: Number(inp.scrap || 0),
-                              })
-                            )
-                          }
-                        >
-                          Log output
-                        </button>
-                        <button
-                          type="button"
-                          className="mes-btn mes-btn-primary"
-                          style={{ flex: 1 }}
-                          disabled={busy}
-                          onClick={() =>
-                            run(op.id, () =>
-                              api.post(`/production/op-cards/${op.id}/complete`, {
-                                good_qty: Number(inp.good || 0),
-                                scrap_qty: Number(inp.scrap || 0),
-                              })
-                            )
-                          }
-                        >
-                          Done for day
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="mes-btn mes-btn-primary"
-                        style={{ width: '100%', padding: '14px', fontSize: 15, marginTop: 10 }}
-                        disabled={busy}
-                        onClick={() => completeOpCard(op)}
-                      >
-                        Complete op → next
-                      </button>
-                    )}
-                  </div>
-                ) : null}
-              </article>
-            );
-          })}
-          {queueLots.map((lot) => {
-            const busy = busyId === lot.id;
-            const inp = inputs[lot.id] || {};
-            return (
-              <article key={`lot-${lot.id}`} className="mes-task-card is-running">
-                <div className="mes-task-top">
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <p className="mes-task-id">
-                      <Hash size={16} aria-hidden />
-                      <span>{lot.lot_number}</span>
-                      <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
-                        Lot traveler
-                      </span>
-                      {lot.production_card_id ? (
-                        <button
-                          type="button"
-                          className="mes-btn mes-btn-secondary"
-                          style={{ marginLeft: 8, padding: '2px 8px', fontSize: 12 }}
-                          onClick={() => navigate(`/production/cards/${lot.production_card_id}`)}
-                        >
-                          Track route
-                        </button>
-                      ) : null}
-                    </p>
-                    <h2 style={{ margin: '0 0 4px', fontSize: '1.05rem' }}>
-                      <TruncatedText>{lot.component_label || 'Component'}</TruncatedText>
-                    </h2>
-                    <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-                      Qty <strong>{Number(lot.quantity || 0)}</strong>
-                      {lot.current_node_label ? ` · Op: ${lot.current_node_label}` : ''}
-                      {lot.current_node_type ? ` (${lot.current_node_type})` : ''}
-                      {lot.work_center_code ? ` · ${lot.work_center_code}` : ''}
-                      {lot.card_number ? ` · Card ${lot.card_number}` : ''}
-                    </p>
-                  </div>
-                  <StatusBadge status={lot.status || 'in_process'} />
-                </div>
-                <div className="pc-qty-row">
-                  <label>
-                    Scrap
-                    <input
-                      type="number"
-                      min="0"
-                      step="any"
-                      inputMode="decimal"
-                      value={inp.scrap ?? ''}
-                      disabled={busy}
-                      onChange={(e) => patchInput(lot.id, { scrap: e.target.value })}
-                    />
-                  </label>
-                </div>
-                <button
-                  type="button"
-                  className="mes-btn mes-btn-primary"
-                  style={{ width: '100%', padding: '14px', fontSize: 15, marginTop: 10 }}
-                  disabled={busy}
-                  onClick={() => completeLot(lot)}
-                >
-                  Complete op → next
-                </button>
-              </article>
-            );
-          })}
-          {queueCards.map((card) => {
-            const goal = Number(card.day_goal ?? Number(card.target_quantity) + Number(card.overdue_quantity));
-            const good = Number(card.total_good_produced || 0);
-            const inp = inputs[card.id] || {};
-            const busy = busyId === card.id;
-            const info = detail[card.id];
-            const machiningNodes = (info?.nodes || []).filter((n) => n.activity_type === 'machining');
-            const outsourceNodes = (info?.nodes || []).filter((n) => n.activity_type === 'outsource');
-            const openLots = (info?.lots || []).filter((l) =>
-              ['in_process', 'received'].includes(l.status)
-            );
-            const stageableLots = openLots.filter(
-              (l) =>
-                l.current_activity_flow_node_id &&
-                outsourceNodes.some((n) => n.id === l.current_activity_flow_node_id)
-            );
-            const stagedLots = (info?.lots || []).filter((l) => l.status === 'staged');
-            const sentShipments = (info?.shipments || []).filter((s) => s.status === 'sent');
-            const toneClass =
-              card.status === 'OVERDUE'
-                ? 'is-overdue'
-                : card.status === 'RUNNING'
-                  ? 'is-running'
-                  : '';
-
-            return (
-              <article key={card.id} className={`mes-task-card ${toneClass}`.trim()}>
-                <div className="mes-task-top">
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <p className="mes-task-id">
-                      <Hash size={16} aria-hidden />
-                      <button
-                        type="button"
-                        className="pc-card-link"
-                        onClick={() => navigate(`/production/cards/${card.id}`)}
-                      >
-                        {card.card_number}
-                      </button>
-                      <button
-                        type="button"
-                        className="mes-btn mes-btn-secondary"
-                        style={{ marginLeft: 8, padding: '2px 8px', fontSize: 12 }}
-                        onClick={() => navigate(`/production/cards/${card.id}`)}
-                      >
-                        Track route
-                      </button>
-                    </p>
-                    <h2 style={{ margin: '0 0 4px', fontSize: '1.05rem' }}>
-                      <TruncatedText>{card.component_label || 'Component'}</TruncatedText>
-                    </h2>
-                    <p className="muted" style={{ margin: 0 }}>
-                      <TruncatedText>
-                        {[card.customer_name, card.schedule_number].filter(Boolean).join(' · ')}
-                      </TruncatedText>
-                    </p>
-                    <p className="muted" style={{ marginTop: 6, fontSize: 13 }}>
-                      Due{' '}
-                      <strong>
-                        {formatDueLabel(card.schedule_due_date, card.schedule_due_weekday_label)}
-                      </strong>
-                      {' · '}Work {formatDueLabel(card.work_date)}
-                      {card.work_center_code ? ` · ${card.work_center_code}` : ''}
-                      {card.current_node_label
-                        ? ` · Op: ${card.current_node_label}`
-                        : ''}
-                    </p>
-                  </div>
-                  <StatusBadge status={card.status} />
-                </div>
-
-                <div className="pc-metrics" style={{ marginBottom: 14 }}>
-                  <div>
-                    <span>Goal</span>
-                    <strong>{goal}</strong>
-                    {Number(card.overdue_quantity) > 0 ? (
-                      <small>+{card.overdue_quantity} overdue</small>
-                    ) : null}
-                  </div>
-                  <div>
-                    <span>Good</span>
-                    <strong>{good}</strong>
-                  </div>
-                  <div>
-                    <span>Remaining</span>
-                    <strong>{Math.max(0, goal - good)}</strong>
-                  </div>
-                </div>
-
-                {lastMintedLot[card.id]?.lot_number ? (
-                  <button
-                    type="button"
-                    className="lot-receipt-inline"
-                    onClick={() =>
-                      setLotReceipt({
-                        lot: lastMintedLot[card.id],
-                        cardLabel: card.component_label || card.card_number,
-                        cardId: card.id,
-                      })
-                    }
-                  >
-                    <span className="lot-receipt-inline-label">Lot card</span>
-                    <span className="lot-receipt-inline-number">
-                      {lastMintedLot[card.id].lot_number}
-                    </span>
-                    <span className="muted" style={{ fontSize: 12 }}>
-                      Tap to show again
-                    </span>
-                  </button>
-                ) : null}
-
-                {card.status === 'READY' || (card.status === 'OVERDUE' && !card.started_at) ? (
-                  <button
-                    type="button"
-                    className="mes-btn mes-btn-primary"
-                    style={{ width: '100%', padding: '16px', fontSize: 16 }}
-                    disabled={busy}
-                    onClick={() => run(card.id, () => api.post(`/production/cards/${card.id}/start`))}
-                  >
-                    START
-                  </button>
-                ) : null}
-
-                {card.status === 'RUNNING' || (card.status === 'OVERDUE' && card.started_at) ? (
-                  <div>
-                    <div className="pc-qty-row">
-                      <label>
-                        Good
-                        <input
-                          type="number"
-                          min="0"
-                          step="any"
-                          inputMode="decimal"
-                          value={inp.good ?? ''}
-                          disabled={busy}
-                          onChange={(e) => patchInput(card.id, { good: e.target.value })}
-                        />
-                      </label>
-                      <label>
-                        Scrap
-                        <input
-                          type="number"
-                          min="0"
-                          step="any"
-                          inputMode="decimal"
-                          value={inp.scrap ?? ''}
-                          disabled={busy}
-                          onChange={(e) => patchInput(card.id, { scrap: e.target.value })}
-                        />
-                      </label>
-                    </div>
-                    <div className="pc-action-row" style={{ marginTop: 10 }}>
-                      <button
-                        type="button"
-                        className="mes-btn mes-btn-secondary"
-                        disabled={busy}
-                        onClick={() =>
-                          run(card.id, () =>
-                            api.post(`/production/cards/${card.id}/progress`, {
-                              good_qty: Number(inp.good || 0),
-                              scrap_qty: Number(inp.scrap || 0),
-                            })
-                          )
-                        }
-                      >
-                        Save progress
-                      </button>
-                      <button
-                        type="button"
-                        className="mes-btn mes-btn-primary"
-                        disabled={busy}
-                        onClick={() =>
-                          run(card.id, () =>
-                            api.post(`/production/cards/${card.id}/complete`, {
-                              good_qty: Number(inp.good || 0),
-                              scrap_qty: Number(inp.scrap || 0),
-                            })
-                          )
-                        }
-                      >
-                        Done for day
-                      </button>
-                    </div>
-                    <p className="muted" style={{ margin: '8px 0 0', fontSize: 12 }}>
-                      Good qty on first machining automatically creates a lot number and sends it to the next AF step.
-                    </p>
-
-                    <details
-                      className="pc-ops"
-                      onToggle={async (e) => {
-                        if (e.target.open) {
-                          try {
-                            const infoLoaded = await ensureDetail(card.id);
-                            const currentId = card.current_activity_flow_node_id;
-                            const machining = (infoLoaded?.nodes || []).filter(
-                              (n) => n.activity_type === 'machining'
-                            );
-                            const defaultNode =
-                              (currentId && machining.some((n) => n.id === currentId)
-                                ? currentId
-                                : null) ||
-                              machining[0]?.id ||
-                              '';
-                            if (defaultNode && !(inputs[card.id] || {}).machineNode) {
-                              patchInput(card.id, { machineNode: defaultNode });
-                            }
-                          } catch (err) {
-                            setError(err.response?.data?.error || 'Unable to load operations');
-                          }
-                        }
-                      }}
-                    >
-                      <summary>Lots &amp; outsource</summary>
-                      {!info ? <p className="muted">Loading…</p> : null}
-                      {info ? (
-                        <>
-                          <div className="pc-ops-block">
-                            <h3>Create extra lot (optional)</h3>
-                            <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
-                              Save progress / Done for day already mints lots. Use this only to lotize more qty without
-                              entering progress again.
-                            </p>
-                            {card.current_node_label ? (
-                              <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
-                                Current op: {card.current_node_label}
-                                {card.work_center_code ? ` @ ${card.work_center_code}` : ''}
-                              </p>
-                            ) : null}
-                            <select
-                              value={
-                                inp.machineNode ||
-                                card.current_activity_flow_node_id ||
-                                ''
-                              }
-                              disabled={busy}
-                              onChange={(e) => patchInput(card.id, { machineNode: e.target.value })}
-                            >
-                              <option value="">Machining step…</option>
-                              {machiningNodes.map((n) => (
-                                <option key={n.id} value={n.id}>
-                                  {n.sequence}. {n.label}
-                                  {n.id === card.current_activity_flow_node_id ? ' (current)' : ''}
-                                </option>
-                              ))}
-                            </select>
-                            <input
-                              type="number"
-                              min="0.0001"
-                              step="any"
-                              placeholder="Qty through machine"
-                              value={inp.machineQty || ''}
-                              disabled={busy}
-                              onChange={(e) => patchInput(card.id, { machineQty: e.target.value })}
-                            />
-                            <button
-                              type="button"
-                              className="mes-btn mes-btn-primary"
-                              disabled={
-                                busy ||
-                                !(inp.machineNode || card.current_activity_flow_node_id) ||
-                                !inp.machineQty
-                              }
-                              onClick={() =>
-                                run(card.id, () =>
-                                  api.post(
-                                    `/production/cards/${card.id}/operations/${
-                                      inp.machineNode || card.current_activity_flow_node_id
-                                    }/complete`,
-                                    { quantity: Number(inp.machineQty) }
-                                  )
-                                )
-                              }
-                            >
-                              Create lot
-                            </button>
-                          </div>
-
-                          <div className="pc-ops-block">
-                            <h3>Open lots</h3>
-                            <ul className="pc-lot-list">
-                              {openLots.map((l) => (
-                                <li key={l.id}>
-                                  <label>
-                                    <input
-                                      type="checkbox"
-                                      checked={(inp.lotIds || []).includes(l.id)}
-                                      onChange={(e) => {
-                                        const set = new Set(inp.lotIds || []);
-                                        if (e.target.checked) set.add(l.id);
-                                        else set.delete(l.id);
-                                        patchInput(card.id, { lotIds: [...set] });
-                                      }}
-                                    />
-                                    {l.lot_number} · {l.quantity} · {l.status}
-                                    {l.current_activity_flow_node_id &&
-                                    outsourceNodes.some(
-                                      (n) => n.id === l.current_activity_flow_node_id
-                                    )
-                                      ? ' · at outsource'
-                                      : ''}
-                                  </label>
-                                </li>
-                              ))}
-                              {!openLots.length ? <li className="muted">No open lots yet.</li> : null}
-                            </ul>
-
-                            {stageableLots.length ? (
-                              <>
-                                <select
-                                  value={inp.outNode || stageableLots[0]?.current_activity_flow_node_id || ''}
-                                  disabled={busy}
-                                  onChange={(e) => patchInput(card.id, { outNode: e.target.value })}
-                                >
-                                  <option value="">Outsource step…</option>
-                                  {outsourceNodes.map((n) => (
-                                    <option key={n.id} value={n.id}>
-                                      {n.sequence}. {n.label}
-                                      {n.min_ship_qty != null ? ` (min ${n.min_ship_qty})` : ''}
-                                    </option>
-                                  ))}
-                                </select>
-                                <button
-                                  type="button"
-                                  className="mes-btn mes-btn-primary"
-                                  disabled={
-                                    busy ||
-                                    !(inp.outNode || stageableLots[0]?.current_activity_flow_node_id) ||
-                                    !(inp.lotIds || []).length
-                                  }
-                                  onClick={() =>
-                                    run(card.id, () =>
-                                      api.post('/production/outsource/stage', {
-                                        activity_flow_node_id:
-                                          inp.outNode ||
-                                          stageableLots[0]?.current_activity_flow_node_id,
-                                        lot_ids: inp.lotIds,
-                                      })
-                                    )
-                                  }
-                                >
-                                  Stage to inventory
-                                </button>
-                                <button
-                                  type="button"
-                                  className="mes-btn mes-btn-secondary"
-                                  style={{ marginLeft: 8 }}
-                                  onClick={() => navigate('/production/outsource')}
-                                >
-                                  Open Outsourcing
-                                </button>
-                              </>
-                            ) : outsourceNodes.length ? (
-                              <p className="muted" style={{ fontSize: 12 }}>
-                                No lots at an outsource step yet.{' '}
-                                <button
-                                  type="button"
-                                  className="mes-btn mes-btn-secondary"
-                                  style={{ padding: '2px 8px', fontSize: 12 }}
-                                  onClick={() => navigate('/production/outsource')}
-                                >
-                                  Outsourcing tab
-                                </button>
-                              </p>
-                            ) : null}
-
-                            {stagedLots.length ? (
-                              <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-                                Staged: {stagedLots.map((l) => l.lot_number).join(', ')} — send when
-                                min qty is met on Outsourcing.
-                              </p>
-                            ) : null}
-                          </div>
-
-                          {sentShipments.length ? (
-                            <div className="pc-ops-block">
-                              <h3>At supplier</h3>
-                              <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
-                                File a GIRN with the supplier invoice to receive these shipments.
-                              </p>
-                              {sentShipments.map((s) => (
-                                <button
-                                  key={s.id}
-                                  type="button"
-                                  className="mes-btn mes-btn-secondary"
-                                  disabled={busy}
-                                  onClick={() => {
-                                    const params = new URLSearchParams();
-                                    params.set('outsource_shipment_id', s.id);
-                                    if (s.supplier_id) params.set('supplier_id', s.supplier_id);
-                                    if (s.shipment_number) params.set('po_reference', s.shipment_number);
-                                    navigate(`/girn/create?${params.toString()}`);
-                                  }}
-                                >
-                                  File GIRN · {s.shipment_number}
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
-                        </>
-                      ) : null}
-                    </details>
-                  </div>
-                ) : null}
-
-                {card.status === 'COMPLETED' ? (
-                  <p className="muted" style={{ margin: 0 }}>
-                    Done for {formatDueLabel(card.work_date)}. Good {good} / goal {goal}.
-                  </p>
-                ) : null}
-              </article>
-            );
-          })}
-          </div>
-
-          {hasDoneToday ? (
-            <section style={{ marginTop: 28 }}>
-              <h2 className="mes-section-title" style={{ margin: '0 0 12px', fontSize: '1rem' }}>
-                Done today
-              </h2>
-              <div className="mes-card" style={{ padding: 0, overflow: 'hidden' }}>
-                <div className="employees-table-wrap" style={{ margin: 0 }}>
-                  <table className="app-table">
-                    <thead>
-                      <tr>
-                        <th>Time</th>
-                        <th>Operation</th>
-                        <th>Card / lot</th>
-                        <th>Good</th>
-                        <th />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {completedOpsToday.map((row) => (
-                        <tr key={`${row.source}-${row.id}`}>
-                          <td className="muted" style={{ whiteSpace: 'nowrap' }}>
-                            {formatOpTime(row.completed_at)}
-                          </td>
-                          <td>
-                            <strong>{row.op_label}</strong>
-                            {row.work_center_code ? (
-                              <div className="muted" style={{ fontSize: 12 }}>
-                                {row.work_center_code}
-                              </div>
-                            ) : null}
-                          </td>
-                          <td>
-                            <div>{row.card_number || '—'}</div>
-                            {row.lot_number ? (
-                              <div className="muted" style={{ fontSize: 12 }}>
-                                Lot {row.lot_number}
-                              </div>
-                            ) : null}
-                          </td>
-                          <td>{Number(row.good_qty || 0)}</td>
-                          <td>
-                            {row.production_card_id ? (
-                              <button
-                                type="button"
-                                className="mes-btn mes-btn-secondary"
-                                style={{ padding: '2px 8px', fontSize: 12 }}
-                                onClick={() => navigate(`/production/cards/${row.production_card_id}`)}
-                              >
-                                Track
-                              </button>
-                            ) : null}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </section>
+          {commit && commit.status !== 'COMPLETED' ? (
+            <MyTodayJobCard
+              cardNumber={commit.card_number}
+              componentLabel={camp.component_label || camp.master_record_id}
+              operationLabel={
+                commit.current_node_label || camp.operation_label || 'Campaign operation'
+              }
+              todayGoal={Number(commit.committed_qty || commit.target_quantity || 0)}
+              goodSoFar={Number(commit.good_qty || commit.total_good_produced || 0)}
+              busy={!!busyId}
+              goodValue={postForm.good}
+              scrapValue={postForm.scrap}
+              onGoodChange={(v) => setPostForm((f) => ({ ...f, good: v }))}
+              onScrapChange={(v) => setPostForm((f) => ({ ...f, scrap: v }))}
+              onDone={handleDone}
+              isActive
+            />
           ) : null}
+
+          {!commit && command?.next_card_date ? (
+            <div className="mes-card" style={{ padding: 16, marginTop: 12 }}>
+              <StatusBadge status="READY">Day complete</StatusBadge>
+              <p className="muted" style={{ margin: '8px 0 0' }}>
+                No daily card due today. Next card unlocks on{' '}
+                <strong>{command.next_card_date}</strong>.
+              </p>
+            </div>
+          ) : null}
+
+          {!commit && !command?.next_card_date && closedCommitments.length > 0 ? (
+            <div className="mes-card" style={{ padding: 16, marginTop: 12 }}>
+              <StatusBadge status="COMPLETED">Caught up</StatusBadge>
+              <p className="muted" style={{ margin: '8px 0 0' }}>
+                No open daily cards right now for this campaign.
+              </p>
+            </div>
+          ) : null}
+
+          {collapsedCompleted ? (
+            <div className="mt-panel-list" style={{ marginTop: 12 }}>
+              <CompletedCardCollapsed
+                card={collapsedCompleted}
+                lotNumber={collapsedCompleted.lot_number}
+                onOpenTracking={() => navigate(`/production/cards/${collapsedCompleted.id}`)}
+              />
+            </div>
+          ) : null}
+
+          {canShowEfficiencyMatrix ? (
+            <EfficiencyMatrix
+              team={team}
+              workCenterId={selectedWc}
+              workDate={todayStr()}
+              initiallySaved={!!command?.efficiency_saved}
+              onSave={() => load({ silent: true })}
+            />
+          ) : null}
+
+          {closedCommitments.length > 0 ? (
+            <DoneTodayList
+              rows={closedCommitments}
+              formatOpTime={formatOpTime}
+              onOpenCard={(id) => navigate(`/production/cards/${id}`)}
+            />
+          ) : null}
+
+          {campaignQueue.length > 1 ? (
+            <div style={{ marginTop: 20 }}>
+              <h3 className="mes-section-title">Campaign queue</h3>
+              {campaignQueue.slice(1).map((q) => (
+                <MyTodayJobCard
+                  key={q.id}
+                  cardNumber={null}
+                  componentLabel={q.component_label || q.master_record_id}
+                  operationLabel="Queued"
+                  todayGoal={null}
+                  goodSoFar={q.good_quantity}
+                  busy={false}
+                  goodValue=""
+                  scrapValue=""
+                  onGoodChange={() => {}}
+                  onScrapChange={() => {}}
+                  onDone={() => {}}
+                  isActive={false}
+                >
+                  <div style={{ marginTop: 8 }}>
+                    <StatusBadge status={q.status}>{q.status}</StatusBadge>
+                    <span className="muted" style={{ marginLeft: 8 }}>
+                      {q.good_quantity} / {q.target_quantity}
+                    </span>
+                  </div>
+                </MyTodayJobCard>
+              ))}
+            </div>
+          ) : null}
+
         </>
-      ) : null}
+      )}
 
       {lotReceipt?.lot?.lot_number ? (
         <LotReceiptModal
           lot={lotReceipt.lot}
           cardLabel={lotReceipt.cardLabel}
-          onClose={() => setLotReceipt(null)}
+          onClose={() => {
+            if (lotReceipt.unlockEfficiency) setEfficiencyUnlocked(true);
+            setLotReceipt(null);
+          }}
         />
       ) : null}
     </main>

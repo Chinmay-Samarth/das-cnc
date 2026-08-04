@@ -10,7 +10,6 @@ import {
   Package,
 } from 'lucide-react';
 import api from '../api/client';
-import ReleaseToFloorModal from '../production/ReleaseToFloorModal';
 import { formatDueLabel, formatScheduleLabel, formatScheduleCadence, WEEKDAYS } from './scheduleLabels';
 import { useSocket } from '../socket/socketContext';
 import {
@@ -71,7 +70,7 @@ function carrierLabel(status) {
   return status || '—';
 }
 
-function ScheduleRow({ s, onRelease, onContract }) {
+function ScheduleRow({ s, onContract }) {
   return (
     <article className="mes-ship-card">
       <div>
@@ -96,11 +95,6 @@ function ScheduleRow({ s, onRelease, onContract }) {
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
         <StatusBadge status={s.status}>{carrierLabel(s.status)}</StatusBadge>
-        {s.status === 'planned' ? (
-          <button type="button" className="mes-btn mes-btn-primary" onClick={() => onRelease(s)}>
-            Release to floor
-          </button>
-        ) : null}
         {s.blanket_po_id ? (
           <button
             type="button"
@@ -115,7 +109,7 @@ function ScheduleRow({ s, onRelease, onContract }) {
   );
 }
 
-function DayInspectorCard({ s, onRelease, onContract }) {
+function DayInspectorCard({ s, onContract }) {
   return (
     <article className={`mes-cal-item is-${s.status || 'planned'}`}>
       <div className="mes-cal-item-top">
@@ -138,11 +132,6 @@ function DayInspectorCard({ s, onRelease, onContract }) {
           Qty <strong>{formatQty(s.quantity)}</strong>
         </span>
         <div className="mes-cal-item-actions">
-          {s.status === 'planned' ? (
-            <button type="button" className="mes-btn mes-btn-primary" onClick={() => onRelease(s)}>
-              Release
-            </button>
-          ) : null}
           {s.blanket_po_id ? (
             <button
               type="button"
@@ -214,8 +203,6 @@ export default function DeliverySchedulesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
-  const [releaseSchedule, setReleaseSchedule] = useState(null);
-
   const applyMonth = useCallback((y, m, { selectToday = false } = {}) => {
     const bounds = monthBounds(y, m);
     setMonthCursor({ y, m });
@@ -436,7 +423,6 @@ export default function DeliverySchedulesPage() {
             <ScheduleRow
               key={s.id}
               s={s}
-              onRelease={setReleaseSchedule}
               onContract={(id) => navigate(`/blanket-pos/${id}`)}
             />
           ))}
@@ -582,7 +568,7 @@ export default function DeliverySchedulesPage() {
               <p className="mes-cal-side-sub">
                 {selectedDate
                   ? `${selectedSchedules.length} ${selectedSchedules.length === 1 ? 'schedule' : 'schedules'} · qty ${formatQty(selectedQty)}`
-                  : 'Pick a date to inspect deliveries and release to the floor.'}
+                  : 'Pick a date to inspect deliveries. Release via Horizon Planner.'}
               </p>
             </div>
 
@@ -607,7 +593,6 @@ export default function DeliverySchedulesPage() {
                   <DayInspectorCard
                     key={s.id}
                     s={s}
-                    onRelease={setReleaseSchedule}
                     onContract={(id) => navigate(`/blanket-pos/${id}`)}
                   />
                 ))}
@@ -616,17 +601,6 @@ export default function DeliverySchedulesPage() {
           </aside>
         </div>
       ) : null}
-
-      <ReleaseToFloorModal
-        open={!!releaseSchedule}
-        schedule={releaseSchedule}
-        onClose={() => setReleaseSchedule(null)}
-        onReleased={() => {
-          setReleaseSchedule(null);
-          reload();
-          navigate('/production');
-        }}
-      />
     </main>
   );
 }

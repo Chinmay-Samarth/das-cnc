@@ -410,7 +410,17 @@ async function listOpCardsForParent(parentCardId) {
 }
 
 async function startOpCard(opCardId, actorEmployeeId, { isManager = false } = {}) {
-  const op = await getOpCardById(opCardId);
+  if (!isValidUUID(opCardId)) throw httpError('Invalid op card id');
+
+  // Lean fetch — avoid full enrich round-trip before the update
+  const { data: op, error } = await supabase
+    .from('production_op_cards')
+    .select('*')
+    .eq('id', opCardId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!op) throw httpError('Operation card not found', 404);
+
   if (!isManager && op.assigned_employee_id !== actorEmployeeId) {
     throw httpError('Only the assigned employee can start this operation card', 403);
   }
@@ -418,30 +428,75 @@ async function startOpCard(opCardId, actorEmployeeId, { isManager = false } = {}
     throw httpError('Operation card is closed', 409);
   }
 
-  // Op1: also start parent schedule card
-  if (op.is_op1) {
-    const { startCard } = require('./productionCardEngine');
-    try {
-      await startCard(op.parent_production_card_id, actorEmployeeId, { isManager });
-    } catch (err) {
-      if (!String(err.message || '').includes('already')) throw err;
+  const now = new Date().toISOString();
+  const isOp1 = !op.production_lot_id;
+
+  // Issue unfinished WIP when starting a lot op at next machining step
+  if (!isOp1 && op.production_lot_id && op.status !== 'RUNNING') {
+    const { data: lotRow } = await supabase
+      .from('production_lots')
+      .select('*')
+      .eq('id', op.production_lot_id)
+      .maybeSingle();
+    if (lotRow?.status === 'staged') {
+      const { issueUnfinishedLot } = require('./inventoryProductionEngine');
+      try {
+        await issueUnfinishedLot(lotRow, op.activity_flow_node_id);
+      } catch (invErr) {
+        throw invErr;
+      }
+      await supabase
+        .from('production_lots')
+        .update({
+          status: 'in_process',
+          assignment_status: op.assigned_employee_id ? 'assigned' : 'unassigned',
+        })
+        .eq('id', lotRow.id);
     }
   }
 
-  if (op.status === 'RUNNING') return getOpCardById(opCardId);
+  // Start parent schedule card + op card in parallel (no enrich)
+  const parentPromise =
+    isOp1 && op.parent_production_card_id
+      ? supabase
+          .from('production_cards')
+          .update({ status: 'RUNNING', started_at: now })
+          .eq('id', op.parent_production_card_id)
+          .in('status', ['READY', 'OVERDUE'])
+      : Promise.resolve({ error: null });
 
-  const { data, error } = await supabase
-    .from('production_op_cards')
-    .update({
-      status: 'RUNNING',
-      started_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', opCardId)
-    .select('*')
-    .single();
-  if (error) throw error;
-  return getOpCardById(data.id);
+  const opPromise =
+    op.status !== 'RUNNING'
+      ? supabase
+          .from('production_op_cards')
+          .update({
+            status: 'RUNNING',
+            started_at: now,
+            updated_at: now,
+          })
+          .eq('id', opCardId)
+          .select('*')
+          .single()
+      : Promise.resolve({ data: op, error: null });
+
+  const [parentRes, opRes] = await Promise.all([parentPromise, opPromise]);
+  if (parentRes?.error) throw parentRes.error;
+  if (opRes?.error) throw opRes.error;
+
+  const updated = opRes.data || op;
+  // Lean payload — client already has labels; skip enrichOpCards
+  return {
+    ...updated,
+    status: 'RUNNING',
+    started_at: updated.started_at || now,
+    is_op1: isOp1,
+    kind: 'op_card',
+    target_quantity: toNumber(updated.target_quantity),
+    good_qty: toNumber(updated.good_qty),
+    scrap_qty: toNumber(updated.scrap_qty),
+    remaining_qty: Math.max(0, toNumber(updated.target_quantity) - toNumber(updated.good_qty)),
+    production_card_id: updated.parent_production_card_id,
+  };
 }
 
 /**
@@ -450,7 +505,7 @@ async function startOpCard(opCardId, actorEmployeeId, { isManager = false } = {}
  * Mid-route completes the lot op and advances.
  */
 async function reportOpCardProgress(opCardId, payload, actorEmployeeId, opts = {}) {
-  const op = await getOpCardById(opCardId);
+  let op = await getOpCardById(opCardId);
   if (!opts.isManager && op.assigned_employee_id !== actorEmployeeId) {
     throw httpError('Only the assigned employee can update this operation card', 403);
   }
@@ -458,9 +513,27 @@ async function reportOpCardProgress(opCardId, payload, actorEmployeeId, opts = {
     throw httpError('Operation card is not open', 409);
   }
 
+  // Ensure op (and Op1 parent schedule card) are started before progress/complete.
+  if (op.status === 'READY') {
+    op = await startOpCard(opCardId, actorEmployeeId, opts);
+  }
+
   if (op.is_op1) {
-    const { reportProgress } = require('./productionCardEngine');
-    const result = await reportProgress(op.parent_production_card_id, payload, actorEmployeeId, opts);
+    const { reportProgress, startCard, getCardById: getScheduleCard } = require('./productionCardEngine');
+    const parentId = op.parent_production_card_id;
+    const parent = await getScheduleCard(parentId);
+    if (
+      parent.status === 'READY' ||
+      (parent.status === 'OVERDUE' && !parent.started_at)
+    ) {
+      try {
+        await startCard(parentId, actorEmployeeId, opts);
+      } catch (err) {
+        const msg = String(err.message || '');
+        if (!msg.includes('already') && !msg.includes('RUNNING')) throw err;
+      }
+    }
+    const result = await reportProgress(parentId, payload, actorEmployeeId, opts);
     await syncOp1Progress({
       ...result,
       id: op.parent_production_card_id,

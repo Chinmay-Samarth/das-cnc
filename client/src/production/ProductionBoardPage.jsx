@@ -1,354 +1,247 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutGrid, UserCheck, AlertTriangle } from 'lucide-react';
+import { RefreshCw, Package, CheckCircle2, AlertCircle, XCircle } from 'lucide-react';
 import api from '../api/client';
-import { formatDueLabel } from '../blanketPos/scheduleLabels';
 import { useSocket } from '../socket/socketContext';
 import {
   PageHeader,
   MetricCard,
-  AlertBanner,
   StatusBadge,
-  ProgressRing,
-  TruncatedText,
   EmptyState,
+  TruncatedText,
+  ProgressBar,
 } from '../components/mes';
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function initials(name) {
-  if (!name) return '?';
-  return name
-    .split(/\s+/)
-    .map((n) => n[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
-}
-
-function RouteOperatorsCell({ card }) {
-  const crew = card.route_operators?.length
-    ? card.route_operators
-    : card.assigned_employee_name
-      ? [
-          {
-            id: card.assigned_employee_id,
-            name: card.assigned_employee_name,
-            code: card.assigned_employee_code,
-          },
-        ]
-      : [];
-  const shown = crew.slice(0, 3);
-  const extra = crew.length - shown.length;
-  const currentName = card.current_operator_name || card.assigned_employee_name || 'Unassigned';
-  const secondLine = [card.current_node_label, card.current_work_center_code || card.work_center_code]
-    .filter(Boolean)
-    .join(' · ');
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-          {shown.map((o, i) => (
-            <span
-              key={o.id || o.name}
-              className="mes-avatar"
-              title={o.name || '—'}
-              style={{
-                width: 22,
-                height: 22,
-                fontSize: 9,
-                marginLeft: i ? -6 : 0,
-                border: '1.5px solid var(--surface, #fff)',
-                zIndex: shown.length - i,
-              }}
-            >
-              {initials(o.name)}
-            </span>
-          ))}
-          {extra > 0 ? (
-            <span className="muted" style={{ marginLeft: 4, fontSize: 11 }}>
-              +{extra}
-            </span>
-          ) : null}
-        </span>
-        <TruncatedText style={{ maxWidth: 110 }}>{currentName}</TruncatedText>
-      </span>
-      {secondLine ? (
-        <span className="muted" style={{ fontSize: 11 }}>
-          <TruncatedText style={{ maxWidth: 160 }}>{secondLine}</TruncatedText>
-        </span>
-      ) : null}
-    </div>
-  );
+function addDays(dateStr, days) {
+  const d = new Date(`${dateStr}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 export default function ProductionBoardPage() {
   const navigate = useNavigate();
   const { subscribe } = useSocket();
-  const [from, setFrom] = useState(todayStr());
-  const [to, setTo] = useState(todayStr());
-  const [status, setStatus] = useState('');
-  const [employeeId, setEmployeeId] = useState('');
-  const [employees, setEmployees] = useState([]);
-  const [cards, setCards] = useState([]);
+  const [filters, setFilters] = useState({
+    from: addDays(todayStr(), -7),
+    to: addDays(todayStr(), 7),
+    work_center_id: '',
+    status: '',
+    search: '',
+  });
+  const [commitments, setCommitments] = useState([]);
+  const [workCenters, setWorkCenters] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [search, setSearch] = useState('');
 
-  useEffect(() => {
-    api
-      .get('/employees')
-      .then(({ data }) => setEmployees(data.employees || data || []))
-      .catch(() => setEmployees([]));
-  }, []);
-
-  const loadCards = useCallback(
+  const load = useCallback(
     async ({ silent = false } = {}) => {
       if (!silent) setLoading(true);
+      setError(null);
       try {
-        const { data } = await api.get('/production/cards', {
-          params: {
-            from: from || undefined,
-            to: to || undefined,
-            status: status || undefined,
-            employee_id: employeeId || undefined,
-          },
-        });
-        setCards(data.cards || []);
-        setError(null);
+        const params = {};
+        if (filters.from) params.from = filters.from;
+        if (filters.to) params.to = filters.to;
+        if (filters.work_center_id) params.work_center_id = filters.work_center_id;
+        if (filters.status) params.status = filters.status;
+        if (filters.search) params.search = filters.search;
+
+        const { data } = await api.get('/campaigns/commitments', { params });
+        setCommitments(data.commitments || []);
       } catch (err) {
-        setError(err.response?.data?.error || 'Unable to load production cards.');
+        setError(err.response?.data?.error || 'Unable to load daily cards');
+        setCommitments([]);
       } finally {
         if (!silent) setLoading(false);
       }
     },
-    [from, to, status, employeeId]
+    [filters]
   );
 
   useEffect(() => {
-    loadCards();
-  }, [loadCards]);
+    api
+      .get('/work-centers')
+      .then(({ data }) => setWorkCenters(data.work_centers || data || []))
+      .catch(() => setWorkCenters([]));
+  }, []);
 
   useEffect(() => {
-    return subscribe('production:updated', () => {
-      loadCards({ silent: true });
-    });
-  }, [subscribe, loadCards]);
+    load();
+  }, [load]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return cards;
-    return cards.filter((c) =>
-      [
-        c.card_number,
-        c.component_label,
-        c.assigned_employee_name,
-        c.current_operator_name,
-        ...(c.route_operators || []).flatMap((o) => [o.name, o.code]),
-        c.work_center_code,
-        c.current_work_center_code,
-        c.current_node_label,
-        c.customer_name,
-        c.schedule_number,
-        c.status,
-        c.assignment_status,
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(q)
-    );
-  }, [cards, search]);
+  useEffect(() => {
+    return subscribe('production:updated', () => load({ silent: true }));
+  }, [subscribe, load]);
 
-  const kpis = useMemo(() => {
-    const open = filtered.filter((c) => ['READY', 'RUNNING', 'OVERDUE'].includes(c.status));
-    const goal = open.reduce(
-      (s, c) => s + Number(c.day_goal ?? Number(c.target_quantity) + Number(c.overdue_quantity)),
+  const metrics = useMemo(() => {
+    const open = commitments.filter((c) =>
+      ['open', 'READY', 'RUNNING', 'OVERDUE'].includes(c.card_status || c.status)
+    ).length;
+    const met = commitments.filter((c) =>
+      ['COMPLETED', 'closed', 'met'].includes(c.card_status || c.status)
+    ).length;
+    const closed = met;
+    const remaining = commitments.reduce(
+      (sum, c) => sum + Math.max(0, Number(c.committed_qty || 0) - Number(c.good_qty || 0)),
       0
     );
-    const good = open.reduce((s, c) => s + Number(c.total_good_produced || 0), 0);
-    const overdue = filtered.filter((c) => c.status === 'OVERDUE').length;
-    const unassigned = filtered.filter(
-      (c) => c.assignment_status === 'unassigned' || c.assignment_status === 'blocked'
-    ).length;
-    return { open: open.length, goal, good, overdue, unassigned };
-  }, [filtered]);
+    return { open, met, closed, remaining };
+  }, [commitments]);
 
-  async function handleRollover() {
-    setError(null);
-    try {
-      await api.post('/production/rollover');
-      await loadCards({ silent: true });
-    } catch (err) {
-      setError(err.response?.data?.error || 'Rollover failed');
-    }
+  function handleFilterChange(key, value) {
+    setFilters((f) => ({ ...f, [key]: value }));
   }
 
   return (
     <main className="mes-shell">
       <PageHeader
-        eyebrow="Shop floor"
         title="Production"
-        subtitle="Supervisor overview of daily execution — yield against targets and assignment health."
+        subtitle="Campaign daily cards"
         actions={
-          <>
-            <button type="button" className="mes-btn mes-btn-secondary" onClick={handleRollover}>
-              Run overdue rollover
-            </button>
-            <button
-              type="button"
-              className="mes-btn mes-btn-secondary"
-              onClick={() => navigate('/production/work-centers')}
-            >
-              <LayoutGrid size={16} />
-              WC Board
-            </button>
-            <button
-              type="button"
-              className="mes-btn mes-btn-primary"
-              onClick={() => navigate('/production/today')}
-            >
-              <UserCheck size={16} />
-              My Today
-            </button>
-          </>
+          <button
+            type="button"
+            className="mes-btn mes-btn-secondary"
+            onClick={() => load()}
+            disabled={loading}
+          >
+            <RefreshCw size={16} />
+            Refresh
+          </button>
         }
       />
 
-      <div className="mes-metric-grid">
-        <MetricCard label="Open cards" value={kpis.open} hint="READY / RUNNING / OVERDUE" />
-        <MetricCard
-          label="Yield"
-          value={`${Math.round(kpis.good)}/${Math.round(kpis.goal)}`}
-          hint="Good vs day goal"
-          tone="info"
-        />
-        <MetricCard label="Overdue" value={kpis.overdue} tone={kpis.overdue ? 'danger' : 'neutral'} />
-        <MetricCard
-          label="Unassigned"
-          value={kpis.unassigned}
-          tone={kpis.unassigned ? 'amber' : 'neutral'}
-        />
-      </div>
-
-      {kpis.overdue > 0 || kpis.unassigned > 0 ? (
-        <AlertBanner
-          tone="danger"
-          title="Attention required"
-          icon={AlertTriangle}
-        >
-          {kpis.overdue > 0 ? `${kpis.overdue} overdue card(s). ` : null}
-          {kpis.unassigned > 0
-            ? `${kpis.unassigned} unassigned/blocked — fill from WC Board after punches.`
-            : null}
-        </AlertBanner>
-      ) : null}
-
-      <div className="mes-filters">
+      <div className="mes-filters" style={{ marginBottom: 16 }}>
         <label>
           From
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <input
+            type="date"
+            value={filters.from}
+            onChange={(e) => handleFilterChange('from', e.target.value)}
+          />
         </label>
         <label>
           To
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          <input
+            type="date"
+            value={filters.to}
+            onChange={(e) => handleFilterChange('to', e.target.value)}
+          />
         </label>
         <label>
-          Status
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">All</option>
-            <option value="READY">READY</option>
-            <option value="RUNNING">RUNNING</option>
-            <option value="OVERDUE">OVERDUE</option>
-            <option value="COMPLETED">COMPLETED</option>
-          </select>
-        </label>
-        <label>
-          Operator
-          <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
-            <option value="">All</option>
-            {employees.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.full_name}
+          Work center
+          <select
+            value={filters.work_center_id}
+            onChange={(e) => handleFilterChange('work_center_id', e.target.value)}
+          >
+            <option value="">All work centers</option>
+            {workCenters.map((wc) => (
+              <option key={wc.id} value={wc.id}>
+                {wc.code ? `${wc.code} â€” ` : ''}
+                {wc.name}
               </option>
             ))}
           </select>
         </label>
-        <label style={{ flex: 1, minWidth: 160 }}>
+        <label>
+          Status
+          <select value={filters.status} onChange={(e) => handleFilterChange('status', e.target.value)}>
+            <option value="">All statuses</option>
+            <option value="open">Open</option>
+            <option value="READY">Ready</option>
+            <option value="RUNNING">Running</option>
+            <option value="COMPLETED">Completed</option>
+            <option value="OVERDUE">Overdue</option>
+          </select>
+        </label>
+        <label>
           Search
           <input
             type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Card, WC, component…"
+            placeholder="Component, campaignâ€¦"
+            value={filters.search}
+            onChange={(e) => handleFilterChange('search', e.target.value)}
           />
         </label>
       </div>
 
       {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading…</p> : null}
 
-      {!loading && !filtered.length ? (
+      <div className="mes-metric-grid" style={{ marginBottom: 16 }}>
+        <MetricCard label="Open" value={metrics.open} icon={AlertCircle} tone="amber" />
+        <MetricCard label="Met" value={metrics.met} icon={CheckCircle2} tone="success" />
+        <MetricCard label="Remaining good" value={metrics.remaining} icon={Package} tone="info" />
+        <MetricCard label="Closed" value={metrics.closed} icon={XCircle} tone="neutral" />
+      </div>
+
+      {loading && !commitments.length ? (
+        <p className="muted">Loading daily cardsâ€¦</p>
+      ) : !commitments.length ? (
         <EmptyState
-          title="No production cards"
-          description="Release a delivery schedule to create daily job cards for this range."
-          actionLabel="Delivery Schedules"
-          onAction={() => navigate('/delivery-schedules')}
+          icon={Package}
+          title="No daily cards"
+          description="Release campaigns in Horizon Planner to create daily production cards for work centers."
+          actionLabel="Open Horizon Planner"
+          onAction={() => navigate('/production/horizon-planner')}
         />
       ) : (
         <div className="mes-card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div className="employees-table-wrap" style={{ margin: 0 }}>
+          <div className="data-table-wrap">
             <table className="app-table">
               <thead>
                 <tr>
-                  <th>Yield</th>
-                  <th>Card</th>
-                  <th>Due</th>
+                  <th>Date</th>
                   <th>WC</th>
-                  <th title="People on this route">Operators</th>
                   <th>Component</th>
+                  <th>Card</th>
+                  <th>Target</th>
+                  <th>Good</th>
+                  <th>Scrap</th>
+                  <th>Remaining</th>
                   <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((c) => {
-                  const goal = Number(
-                    c.day_goal ?? Number(c.target_quantity) + Number(c.overdue_quantity)
+                {commitments.map((c) => {
+                  const remaining = Math.max(
+                    0,
+                    Number(c.committed_qty || 0) - Number(c.good_qty || 0)
                   );
-                  const good = Number(c.total_good_produced || 0);
+                  const progress =
+                    c.committed_qty > 0 ? (c.good_qty / c.committed_qty) * 100 : 0;
                   return (
                     <tr
                       key={c.id}
-                      className="pc-row-clickable"
-                      style={{ cursor: 'pointer' }}
                       onClick={() => navigate(`/production/cards/${c.id}`)}
+                      style={{ cursor: 'pointer' }}
                     >
+                      <td>{c.work_date || 'â€”'}</td>
                       <td>
-                        <ProgressRing value={good} max={goal || 1} size={48} stroke={4} />
-                      </td>
-                      <td>
-                        <strong className="pc-card-link">{c.card_number}</strong>
-                        <div className="muted" style={{ fontSize: 12 }}>
-                          {c.schedule_number}
-                          {c.assignment_status && c.assignment_status !== 'assigned'
-                            ? ` · ${c.assignment_status}`
-                            : ''}
-                        </div>
-                      </td>
-                      <td>{formatDueLabel(c.schedule_due_date, c.schedule_due_weekday_label)}</td>
-                      <td>{c.current_work_center_code || c.work_center_code || '—'}</td>
-                      <td>
-                        <RouteOperatorsCell card={c} />
-                      </td>
-                      <td>
-                        <TruncatedText style={{ maxWidth: 180 }}>
-                          {c.component_label || '—'}
+                        <TruncatedText>
+                          {c.work_center_code || c.work_center_name || 'â€”'}
                         </TruncatedText>
                       </td>
                       <td>
-                        <StatusBadge status={c.status} />
+                        <TruncatedText>{c.component_label || 'â€”'}</TruncatedText>
+                      </td>
+                      <td>{c.card_number || 'â€”'}</td>
+                      <td>{c.committed_qty}</td>
+                      <td>
+                        <div style={{ minWidth: 80 }}>
+                          <ProgressBar value={progress} />
+                          <span className="muted" style={{ fontSize: 12 }}>
+                            {c.good_qty}
+                          </span>
+                        </div>
+                      </td>
+                      <td>{c.scrap_qty}</td>
+                      <td>{remaining}</td>
+                      <td>
+                        <StatusBadge status={c.card_status || c.status}>
+                          {c.card_status || c.status}
+                        </StatusBadge>
                       </td>
                     </tr>
                   );

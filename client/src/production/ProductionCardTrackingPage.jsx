@@ -4,6 +4,8 @@ import { ArrowLeft, Gauge, Hash, Package, RefreshCw, Target } from 'lucide-react
 import api from '../api/client';
 import { formatDueLabel } from '../blanketPos/scheduleLabels';
 import { useSocket } from '../socket/socketContext';
+import { useAuth } from '../auth/authContext';
+import { appAlert } from '../components/dialog';
 import {
   PageHeader,
   MetricCard,
@@ -17,9 +19,20 @@ export default function ProductionCardTrackingPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { subscribe } = useSocket();
+  const { hasAccess } = useAuth();
+  const isManager = hasAccess('SUPERVISOR');
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [splitOpen, setSplitOpen] = useState(false);
+  const [splitBusy, setSplitBusy] = useState(false);
+  const [splitForm, setSplitForm] = useState({
+    quantity: '',
+    work_date: '',
+    employee_id: '',
+  });
+  const [operators, setOperators] = useState([]);
+  const [operatorWcId, setOperatorWcId] = useState(null);
 
   const load = useCallback(
     async ({ silent = false } = {}) => {
@@ -72,20 +85,85 @@ export default function ProductionCardTrackingPage() {
 
   const card = detail?.card;
   const metrics = useMemo(() => {
-    if (!card) return { goal: 0, good: 0, remaining: 0, opsDone: 0 };
+    if (!card) {
+      return { goal: 0, good: 0, remaining: 0, opsDone: 0, overdue: 0, movable: 0 };
+    }
     const goal = Number(
       card.day_goal ?? Number(card.target_quantity) + Number(card.overdue_quantity)
     );
     const good = Number(card.total_good_produced || 0);
     const tracking = detail?.tracking || [];
     const opsDone = tracking.filter((t) => t.status === 'done').length;
+    const remaining = Math.max(0, goal - good);
+    const overdue = Number(card.overdue_quantity || 0);
+    // Rolled-over qty on this / future cards (from automatic Done carry) — not day remaining
+    const movable = Math.max(0, Number(detail?.split_available ?? overdue));
     return {
       goal,
       good,
-      remaining: Math.max(0, goal - good),
+      remaining,
+      overdue,
       opsDone,
+      movable,
     };
-  }, [card, detail?.tracking]);
+  }, [card, detail?.tracking, detail?.split_available]);
+
+  const canSplit = isManager && metrics.movable > 0;
+
+  function todayStr() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  useEffect(() => {
+    if (!splitOpen) {
+      setOperators([]);
+      return;
+    }
+    const wcId = card?.work_center_id || operatorWcId;
+    if (!wcId) {
+      // Resolve Op1 WC from first tracking schedulable node if card WC missing
+      const firstWc =
+        (detail?.tracking || []).find((t) => t.schedulable && t.work_center_id)?.work_center_id ||
+        null;
+      if (firstWc) setOperatorWcId(firstWc);
+      return;
+    }
+    api
+      .get(`/work-centers/${wcId}/operators`)
+      .then(({ data }) => setOperators(data.operators || data || []))
+      .catch(() => setOperators([]));
+  }, [splitOpen, card?.work_center_id, operatorWcId, detail?.tracking]);
+
+  async function handleSplitRemaining(e) {
+    e.preventDefault();
+    if (!splitForm.employee_id) {
+      await appAlert('Pick an employee to assign the new card.');
+      return;
+    }
+    setSplitBusy(true);
+    setError(null);
+    try {
+      const { data } = await api.post(`/production/cards/${id}/split-remaining`, {
+        quantity: splitForm.quantity !== '' ? Number(splitForm.quantity) : undefined,
+        work_date: splitForm.work_date || todayStr(),
+        employee_id: splitForm.employee_id,
+      });
+      setSplitOpen(false);
+      setSplitForm({ quantity: '', work_date: '', employee_id: '' });
+      await load();
+      if (data?.card?.id) {
+        await appAlert({
+          title: 'New card created',
+          message: `Created ${data.card.card_number} for qty ${data.quantity}.`,
+          tone: 'success',
+        });
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || 'Split remaining failed.');
+    } finally {
+      setSplitBusy(false);
+    }
+  }
 
   const handoffRows = useMemo(() => {
     const tracking = detail?.tracking || [];
@@ -178,11 +256,99 @@ export default function ProductionCardTrackingPage() {
               <RefreshCw size={16} />
               Refresh
             </button>
+            {canSplit ? (
+              <button
+                type="button"
+                className="mes-btn mes-btn-primary"
+                onClick={() => {
+                  setSplitForm({
+                    quantity: String(metrics.movable),
+                    work_date: todayStr(),
+                    employee_id: '',
+                  });
+                  setSplitOpen((o) => !o);
+                }}
+              >
+                Split remaining
+              </button>
+            ) : null}
           </>
         }
       />
 
       {error ? <p className="error-message">{error}</p> : null}
+
+      {splitOpen && canSplit ? (
+        <form className="mes-card" style={{ marginBottom: 16, padding: 16 }} onSubmit={handleSplitRemaining}>
+          <h3 style={{ margin: '0 0 8px', fontSize: '1rem' }}>Split remaining</h3>
+          <p className="muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
+            Pull up to <strong>{metrics.movable}</strong> rolled-over qty from future cards on this
+            schedule into a <strong>new JOB card</strong> and assign an employee. Automatic Done
+            rollover is unchanged.
+          </p>
+          <div className="mes-filters" style={{ marginBottom: 12 }}>
+            <label>
+              Quantity
+              <input
+                type="number"
+                min="0.0001"
+                step="any"
+                max={metrics.movable}
+                value={splitForm.quantity}
+                onChange={(e) => setSplitForm((f) => ({ ...f, quantity: e.target.value }))}
+                required
+              />
+            </label>
+            <label>
+              Work date
+              <input
+                type="date"
+                value={splitForm.work_date}
+                onChange={(e) => setSplitForm((f) => ({ ...f, work_date: e.target.value }))}
+                required
+              />
+            </label>
+            <label>
+              Assign to
+              <select
+                value={splitForm.employee_id}
+                onChange={(e) => setSplitForm((f) => ({ ...f, employee_id: e.target.value }))}
+                required
+              >
+                <option value="">Select employee…</option>
+                {operators.map((op) => (
+                  <option key={op.employee_id || op.id} value={op.employee_id || op.id}>
+                    {op.full_name || op.name}
+                    {op.employee_code ? ` (${op.employee_code})` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="submit"
+              className="mes-btn mes-btn-primary"
+              disabled={splitBusy || !operators.length}
+            >
+              {splitBusy ? 'Creating…' : 'Create card'}
+            </button>
+            <button
+              type="button"
+              className="mes-btn mes-btn-secondary"
+              disabled={splitBusy}
+              onClick={() => setSplitOpen(false)}
+            >
+              Cancel
+            </button>
+          </div>
+          {!operators.length ? (
+            <p className="muted" style={{ margin: '10px 0 0', fontSize: 12 }}>
+              No operators linked to this work center.
+            </p>
+          ) : null}
+        </form>
+      ) : null}
 
       <div className="mes-metric-grid">
         <MetricCard

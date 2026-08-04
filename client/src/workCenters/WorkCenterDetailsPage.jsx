@@ -73,6 +73,8 @@ export default function WorkCenterDetailsPage() {
   const [savingOperators, setSavingOperators] = useState(false);
   const [operatorError, setOperatorError] = useState(null);
   const [operatorSearch, setOperatorSearch] = useState('');
+  const [selectedManagerId, setSelectedManagerId] = useState('');
+  const [savingManager, setSavingManager] = useState(false);
 
   useEffect(() => {
     if (location.pathname.endsWith('/edit')) {
@@ -146,6 +148,7 @@ export default function WorkCenterDetailsPage() {
         const { data } = await api.get(`/work-centers/${id}`);
         if (!mounted) return;
         const wc = data.work_center || null;
+        console.log(wc)
         setWorkCenter(wc);
         if (wc) {
           setFormData({
@@ -157,6 +160,7 @@ export default function WorkCenterDetailsPage() {
             efficiency: String(wc.efficiency ?? 100),
             is_active: wc.is_active ? 'true' : 'false',
           });
+          setSelectedManagerId(wc.manager_employee_id || '');
         }
       } catch (err) {
         console.error('Failed to load work center:', err);
@@ -294,6 +298,21 @@ export default function WorkCenterDetailsPage() {
     }
   };
 
+  const handleSaveManager = async () => {
+    setSavingManager(true);
+    setOperatorError(null);
+    try {
+      const { data } = await api.patch(`/work-centers/${id}`, {
+        manager_employee_id: selectedManagerId || null,
+      });
+      setWorkCenter(data.work_center);
+    } catch (err) {
+      setOperatorError(err.response?.data?.error || 'Unable to save manager.');
+    } finally {
+      setSavingManager(false);
+    }
+  };
+
   const machines = workCenter?.machines || [];
 
   const savedIdSet = useMemo(
@@ -418,11 +437,11 @@ export default function WorkCenterDetailsPage() {
         ) : tab === 'operators' ? (
           <>
             <div style={{ marginBottom: 16 }}>
-              <h2 style={{ margin: '0 0 4px', fontSize: 18 }}>Operators</h2>
-              <p className="muted" style={{ margin: 0, maxWidth: '56ch' }}>
+              <h2 style={{ margin: '0 0 4px', fontSize: 24 }}>Operators</h2>
+              {/* <p className="muted" style={{ margin: 0, maxWidth: '56ch' }}>
                 People eligible for auto-assignment at this work center when they are present.
                 First selected member is treated as primary.
-              </p>
+              </p> */}
             </div>
 
             <div className="mes-metric-grid" style={{ marginBottom: 16 }}>
@@ -434,17 +453,26 @@ export default function WorkCenterDetailsPage() {
                 tone={isDirty ? 'amber' : 'info'}
               />
               <MetricCard
-                label="Primary"
-                value={selectedMembers[0]?.full_name?.split(' ')[0] || '—'}
-                hint={selectedMembers[0]?.employee_code || 'Set by first in list'}
+                label="WC Manager"
+                value={
+                  workCenter?.manager_employee_id
+                    ? allEmployees.find((e) => e.id === workCenter.manager_employee_id)?.full_name?.split(' ')[0] || '—'
+                    : '—'
+                  
+                }
+                hint={
+                  workCenter?.manager_employee_id
+                    ? allEmployees.find((e) => e.id === workCenter.manager_employee_id)?.employee_code || 'No code'
+                    : 'Not assigned'
+                }
                 icon={Star}
               />
-              <MetricCard
+              {/* <MetricCard
                 label="Directory"
                 value={allEmployees.length}
                 hint="Active employees"
                 icon={Search}
-              />
+              /> */}
             </div>
 
             {operatorError ? <p className="error-message">{operatorError}</p> : null}
@@ -454,9 +482,9 @@ export default function WorkCenterDetailsPage() {
                 <div className="wc-ops-panel-head">
                   <div>
                     <h3>Current roster</h3>
-                    <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                    {/* <p className="muted" style={{ margin: 0, fontSize: 13 }}>
                       Remove anyone who should no longer receive cards here.
-                    </p>
+                    </p> */}
                   </div>
                   <StatusBadge status={isDirty ? 'pending' : 'assigned'}>
                     {isDirty ? 'Unsaved' : 'Saved'}
@@ -474,7 +502,7 @@ export default function WorkCenterDetailsPage() {
                     {selectedMembers.map((m) => (
                       <div
                         key={m.employee_id}
-                        className={`wc-ops-member${m.is_primary ? ' is-primary' : ''}`}
+                        className={`wc-ops-member`}
                       >
                         <span className="mes-avatar" title={m.full_name}>
                           {initials(m.full_name)}
@@ -489,6 +517,29 @@ export default function WorkCenterDetailsPage() {
                             {!m.is_saved ? ' · New' : ''}
                           </span>
                         </div>
+                        <button
+                          type="button"
+                          className="mes-btn mes-btn-secondary"
+                          style={{
+                            padding: '8px 10px',
+                            color: selectedManagerId === m.employee_id ? '#eab308' : undefined,
+                            borderColor: selectedManagerId === m.employee_id ? '#eab308' : undefined,
+                          }}
+                          disabled={savingManager}
+                          onClick={() => {
+                            const next = selectedManagerId === m.employee_id ? '' : m.employee_id;
+                            setSelectedManagerId(next);
+                            setSavingManager(true);
+                            api.patch(`/work-centers/${id}`, { manager_employee_id: next || null })
+                              .then(({ data }) => setWorkCenter(data.work_center))
+                              .catch((err) => setOperatorError(err.response?.data?.error || 'Unable to save manager.'))
+                              .finally(() => setSavingManager(false));
+                          }}
+                          title={selectedManagerId === m.employee_id ? 'Remove as WC Manager' : 'Set as WC Manager'}
+                          aria-label={`${selectedManagerId === m.employee_id ? 'Remove' : 'Set'} ${m.full_name} as manager`}
+                        >
+                          <Star size={15} fill={selectedManagerId === m.employee_id ? '#eab308' : 'none'} />
+                        </button>
                         <button
                           type="button"
                           className="mes-btn mes-btn-secondary"
@@ -510,14 +561,14 @@ export default function WorkCenterDetailsPage() {
                 <div className="wc-ops-panel-head">
                   <div>
                     <h3>Add from directory</h3>
-                    <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                    {/* <p className="muted" style={{ margin: 0, fontSize: 13 }}>
                       Search and toggle employees onto this work center.
-                    </p>
+                    </p> */}
                   </div>
                 </div>
 
                 <label style={{ display: 'block', marginBottom: 0 }}>
-                  <span className="mes-detail-label">Search</span>
+                  {/* <span className="mes-detail-label">Search</span> */}
                   <div style={{ position: 'relative' }}>
                     <Search
                       size={15}
@@ -612,6 +663,15 @@ export default function WorkCenterDetailsPage() {
               <div className="employee-detail-grid">
                 <DetailItem label="Name" value={workCenter.name} />
                 <DetailItem label="Code" value={workCenter.code} />
+                <DetailItem
+                  label="WC Manager"
+                  value={
+                    workCenter.manager_employee_id
+                      ? allEmployees.find((e) => e.id === workCenter.manager_employee_id)?.full_name ||
+                        'Assigned (name loading)'
+                      : 'None'
+                  }
+                />
                 <DetailItem label="Department" value={workCenter.department} />
                 <DetailItem
                   label="Overhead hourly rate"

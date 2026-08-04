@@ -125,6 +125,32 @@ function buildWorkCenterPayload(body, { partial = false } = {}) {
       body.is_active === '1';
   }
 
+  if (body.manager_employee_id !== undefined) {
+    const mgrId = cleanText(body.manager_employee_id);
+    if (mgrId && !isValidUUID(mgrId)) return { error: 'Invalid manager_employee_id' };
+    payload.manager_employee_id = mgrId || null;
+  }
+
+  if (body.hours_per_day !== undefined) {
+    try {
+      payload.hours_per_day = parseNumber(body.hours_per_day, { min: 8, max: 10, field: 'hours_per_day' });
+    } catch (err) {
+      return { error: err.message };
+    }
+  }
+
+  if (body.horizon_months_default !== undefined) {
+    try {
+      payload.horizon_months_default = parseNumber(body.horizon_months_default, {
+        min: 4,
+        max: 6,
+        field: 'horizon_months_default',
+      });
+    } catch (err) {
+      return { error: err.message };
+    }
+  }
+
   if (!partial) {
     if (!payload.name) return { error: 'name is required' };
     if (!payload.code) return { error: 'code is required' };
@@ -217,7 +243,17 @@ router.get(
   verifyEmployeeAuth,
   wrap(async (req, res) => {
     const workCenter = await getWorkCenterById(req.params.id);
-    return res.json({ work_center: workCenter });
+    const { SCHEDULABLE_TYPES } = require('../config/activityFlowTypes');
+    const { data: nodes, error: nErr } = await supabase
+      .from('activity_flow_nodes')
+      .select(
+        'id, label, activity_type, run_time_per_unit_minutes, setup_time_minutes, flow_version_id, sequence'
+      )
+      .eq('work_center_id', req.params.id)
+      .order('sequence', { ascending: true });
+    if (nErr) throw nErr;
+    const schedulable_nodes = (nodes || []).filter((n) => SCHEDULABLE_TYPES.has(n.activity_type));
+    return res.json({ work_center: { ...workCenter, schedulable_nodes } });
   })
 );
 

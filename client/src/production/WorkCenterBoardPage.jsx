@@ -605,8 +605,23 @@ export default function WorkCenterBoardPage() {
         subtitle={`Station view for ${formatDueLabel(date)}. Right-click a job to reassign.`}
         actions={
           <>
-            <button type="button" className="mes-btn mes-btn-secondary" onClick={() => navigate('/production')}>
-              Production
+            <button
+              type="button"
+              className="mes-btn mes-btn-secondary"
+              onClick={() => navigate('/production/horizon-planner')}
+            >
+              Horizon Planner
+            </button>
+            <button
+              type="button"
+              className="mes-btn mes-btn-secondary"
+              onClick={() => {
+                const wcId = Object.keys(boards)[0];
+                if (wcId) navigate(`/production/today?wc=${wcId}`);
+                else appAlert('Select a work center on the board first.');
+              }}
+            >
+              My Today
             </button>
             <button
               type="button"
