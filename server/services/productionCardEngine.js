@@ -1225,6 +1225,32 @@ async function getCardTrackingDetail(cardId) {
     })
   );
 
+  // Follow merge successors so secondary cards track the live traveler (not a false "dispatch passed")
+  const successorIds = [
+    ...new Set(
+      (lots || [])
+        .filter((l) => String(l.status) === 'merged' && l.merged_into_lot_id)
+        .map((l) => l.merged_into_lot_id)
+    ),
+  ];
+  let successorLots = [];
+  if (successorIds.length) {
+    const { data: succRows, error: succErr } = await supabase
+      .from('production_lots')
+      .select('*')
+      .in('id', successorIds);
+    if (succErr) throw succErr;
+    successorLots = await Promise.all(
+      (succRows || []).map(async (l) => {
+        const base = { ...l, quantity: toNumber(l.quantity), _merged_successor: true };
+        if (base.status !== 'ready_for_dispatch') return base;
+        const healed = await healFalseReadyForDispatch(base);
+        return { ...base, ...healed, quantity: toNumber(healed.quantity ?? base.quantity) };
+      })
+    );
+  }
+  const successorById = Object.fromEntries(successorLots.map((l) => [l.id, l]));
+
   let flow = { nodes: [], edges: [] };
   if (card.activity_flow_version_id && card.master_record_id) {
     const version = await getVersionById(card.activity_flow_version_id, card.master_record_id);
@@ -1246,13 +1272,16 @@ async function getCardTrackingDetail(cardId) {
   const nodeById = Object.fromEntries(flowNodes.map((n) => [n.id, n]));
 
   // Merge schedule-card + lot op completions (lot traveler is source of truth mid/late route)
-  const lotIds = (lots || []).map((l) => l.id).filter(Boolean);
+  const lotIds = [
+    ...(lots || []).map((l) => l.id).filter(Boolean),
+    ...successorLots.map((l) => l.id).filter(Boolean),
+  ];
   let lotCompletions = [];
   if (lotIds.length) {
     const { data: locRows, error: locErr } = await supabase
       .from('production_lot_op_completions')
       .select('*')
-      .in('production_lot_id', lotIds)
+      .in('production_lot_id', [...new Set(lotIds)])
       .order('completed_at', { ascending: true });
     if (locErr) throw locErr;
     lotCompletions = locRows || [];
@@ -1304,11 +1333,18 @@ async function getCardTrackingDetail(cardId) {
     }
   }
 
-  const activeLots = (lots || []).filter((l) =>
-    ['in_process', 'received', 'staged', 'at_supplier', 'ready_for_dispatch', 'quarantine'].includes(
-      String(l.status || '')
-    )
-  );
+  const ACTIVE_LOT_STATUSES = [
+    'in_process',
+    'received',
+    'staged',
+    'at_supplier',
+    'ready_for_dispatch',
+    'quarantine',
+  ];
+  const activeLots = [
+    ...(lots || []).filter((l) => ACTIVE_LOT_STATUSES.includes(String(l.status || ''))),
+    ...successorLots.filter((l) => ACTIVE_LOT_STATUSES.includes(String(l.status || ''))),
+  ];
   const hasOpenLots = activeLots.length > 0;
 
   // Pointer: when open lots exist, use furthest lot current ONLY (ignore schedule Op1 seed)
@@ -1343,9 +1379,16 @@ async function getCardTrackingDetail(cardId) {
           : null;
   }
 
+  // Follow merge targets when judging "fully dispatched" — never treat `merged` alone as terminal
+  const resolutionLots = (lots || []).map((l) => {
+    if (String(l.status) === 'merged' && l.merged_into_lot_id && successorById[l.merged_into_lot_id]) {
+      return successorById[l.merged_into_lot_id];
+    }
+    return l;
+  });
   const anyFullyDispatched =
-    (lots || []).length > 0 &&
-    (lots || []).every((l) => ['dispatched', 'merged', 'consumed'].includes(String(l.status)));
+    resolutionLots.length > 0 &&
+    resolutionLots.every((l) => ['dispatched', 'consumed'].includes(String(l.status)));
 
   let opCards = [];
   try {
@@ -1369,7 +1412,8 @@ async function getCardTrackingDetail(cardId) {
 
     if (!pathOp || isDispatch) {
       status = 'info';
-      const pastByPointer = pointerSeq != null && seq < pointerSeq;
+      // Never mark Dispatch "passed" only because pointer is elsewhere — require real RFD/dispatch
+      const pastByPointer = !isDispatch && pointerSeq != null && seq < pointerSeq;
       const dispatchPassed =
         isDispatch &&
         (atDispatchNode ||
@@ -1494,9 +1538,22 @@ async function getCardTrackingDetail(cardId) {
 
   const { available: splitAvailable } = await sumRolloverSplitAvailable(card);
 
+  const lotsOut = (lots || []).map((l) => {
+    if (String(l.status) !== 'merged' || !l.merged_into_lot_id) return l;
+    const succ = successorById[l.merged_into_lot_id];
+    if (!succ) return l;
+    return {
+      ...l,
+      merged_into_lot_number: succ.lot_number || null,
+      merged_into_status: succ.status || null,
+      merged_into_current_node_id: succ.current_activity_flow_node_id || null,
+    };
+  });
+
   return {
     card,
-    lots,
+    lots: lotsOut,
+    successor_lots: successorLots,
     op_cards: opCards,
     nodes,
     shipments,

@@ -38,6 +38,7 @@ import BlanketPoDetailsPage from './blanketPos/BlanketPoDetailsPage';
 import DeliverySchedulesPage from './blanketPos/DeliverySchedulesPage';
 import HorizonPlannerPage from './production/HorizonPlannerPage';
 import MyTodayPage from './production/MyTodayPage';
+import CampaignReviewPage from './production/CampaignReviewPage';
 import ProductionBoardPage from './production/ProductionBoardPage';
 import WorkCenterBoardPage from './production/WorkCenterBoardPage';
 import ProductionCardTrackingPage from './production/ProductionCardTrackingPage';
@@ -140,6 +141,7 @@ export default function App() {
             <Route path="/delivery-schedules" element={<DeliverySchedulesPage />} />
             <Route path="/production/today" element={<MyTodayPage />} />
             <Route path="/production/horizon-planner" element={<HorizonPlannerPage />} />
+            <Route path="/production/campaigns" element={<CampaignReviewPage />} />
             <Route path="/production/wc-command/:id" element={<WCCommandRedirect />} />
             <Route path="/production/work-centers" element={<WorkCenterBoardPage />} />
             <Route path="/production/dispatch" element={<ReadyForDispatchPage />} />

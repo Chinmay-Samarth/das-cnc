@@ -33,6 +33,8 @@ function toNumber(value) {
 
 /**
  * Completions for a lot: lot ledger + Op1 card ledger for the parent schedule card.
+ * Also inherit merge-source lot/card completions so a merged traveler cannot skip
+ * ops that were only recorded on contributing lots.
  */
 async function completedNodeIdsForLot(lot) {
   const done = new Set();
@@ -47,17 +49,51 @@ async function completedNodeIdsForLot(lot) {
     if (c.activity_flow_node_id) done.add(c.activity_flow_node_id);
   }
 
-  if (lot.production_card_id) {
+  const cardIds = new Set();
+  if (lot.production_card_id) cardIds.add(lot.production_card_id);
+  // Create-site node (Op1) counts as done once lot was minted from it
+  if (lot.activity_flow_node_id) done.add(lot.activity_flow_node_id);
+
+  const { data: merges, error: mErr } = await supabase
+    .from('production_lot_merges')
+    .select('source_lot_id')
+    .eq('result_lot_id', lot.id);
+  if (mErr) throw mErr;
+
+  if (merges?.length) {
+    const sourceIds = merges.map((m) => m.source_lot_id).filter(Boolean);
+    if (sourceIds.length) {
+      const [{ data: srcComps, error: scErr }, { data: srcLots, error: slErr }] = await Promise.all([
+        supabase
+          .from('production_lot_op_completions')
+          .select('activity_flow_node_id')
+          .in('production_lot_id', sourceIds),
+        supabase
+          .from('production_lots')
+          .select('id, production_card_id, activity_flow_node_id')
+          .in('id', sourceIds),
+      ]);
+      if (scErr) throw scErr;
+      if (slErr) throw slErr;
+      for (const c of srcComps || []) {
+        if (c.activity_flow_node_id) done.add(c.activity_flow_node_id);
+      }
+      for (const src of srcLots || []) {
+        if (src.production_card_id) cardIds.add(src.production_card_id);
+        if (src.activity_flow_node_id) done.add(src.activity_flow_node_id);
+      }
+    }
+  }
+
+  if (cardIds.size) {
     const { data: cardComps, error: ccErr } = await supabase
       .from('production_card_op_completions')
       .select('activity_flow_node_id')
-      .eq('production_card_id', lot.production_card_id);
+      .in('production_card_id', [...cardIds]);
     if (ccErr) throw ccErr;
     for (const c of cardComps || []) {
       if (c.activity_flow_node_id) done.add(c.activity_flow_node_id);
     }
-    // Create-site node (Op1) counts as done once lot was minted from it
-    if (lot.activity_flow_node_id) done.add(lot.activity_flow_node_id);
   }
 
   return done;
@@ -66,12 +102,18 @@ async function completedNodeIdsForLot(lot) {
 /**
  * If intending to place on dispatch, ensure every prior schedulable on the
  * primary path is complete. Otherwise redirect to the first incomplete node.
+ * Fail closed when AF version cannot be resolved — never skip the prior check.
  */
 async function gateDispatchOrRedirect(lot, intendedNode, activityFlowVersionId) {
   if (!intendedNode || !TERMINAL_DISPATCH_TYPES.has(intendedNode.activity_type)) {
     return intendedNode;
   }
-  if (!activityFlowVersionId) return intendedNode;
+  if (!activityFlowVersionId) {
+    throw httpError(
+      'Cannot move lot to dispatch — activity flow version unresolved; complete routing first',
+      409
+    );
+  }
 
   const { nodes, edges } = await loadFlowGraph(activityFlowVersionId);
   const priors = priorSchedulableOnPath(nodes, edges, intendedNode.id);
@@ -94,10 +136,20 @@ async function getAfVersionIdForLot(lot) {
   if (!lot?.production_card_id) return null;
   const { data: card, error } = await supabase
     .from('production_cards')
-    .select('id, delivery_schedule_id')
+    .select('id, delivery_schedule_id, activity_flow_version_id, campaign_id')
     .eq('id', lot.production_card_id)
     .maybeSingle();
   if (error) throw error;
+  if (card?.activity_flow_version_id) return card.activity_flow_version_id;
+  if (card?.campaign_id && !lot.campaign_id) {
+    const { data: camp, error: campErr } = await supabase
+      .from('production_campaigns')
+      .select('activity_flow_version_id')
+      .eq('id', card.campaign_id)
+      .maybeSingle();
+    if (campErr) throw campErr;
+    if (camp?.activity_flow_version_id) return camp.activity_flow_version_id;
+  }
   if (!card?.delivery_schedule_id) return null;
   const { data: schedule, error: sErr } = await supabase
     .from('delivery_schedules')
@@ -161,18 +213,31 @@ async function healFalseReadyForDispatch(lot) {
   const currentType = await getActivityTypeForNode(lot.current_activity_flow_node_id);
   if (currentType && TERMINAL_DISPATCH_TYPES.has(currentType)) {
     const afVersionId = await getAfVersionIdForLot(lot);
-    if (afVersionId) {
-      const { nodes, edges } = await loadFlowGraph(afVersionId);
-      const dispatchNode = (nodes || []).find((n) => n.id === lot.current_activity_flow_node_id);
-      const priors = priorSchedulableOnPath(nodes, edges, dispatchNode?.id);
-      const done = await completedNodeIdsForLot(lot);
-      const missing = priors.find((n) => !done.has(n.id));
-      if (missing) {
-        // Redirect onto first incomplete op instead of RFD
-        const workDate = null;
-        const placed = await assignLotToNode(lot.id, missing, workDate, { afVersionId, skipGate: true });
-        return placed.lot;
-      }
+    if (!afVersionId) {
+      // Cannot verify priors — demote out of Ready for Dispatch
+      const { data: demoted, error } = await supabase
+        .from('production_lots')
+        .update({
+          status: 'in_process',
+          assignment_status: lot.assigned_employee_id ? 'assigned' : 'unassigned',
+        })
+        .eq('id', lot.id)
+        .eq('status', 'ready_for_dispatch')
+        .select('*')
+        .single();
+      if (error) throw error;
+      return demoted || lot;
+    }
+    const { nodes, edges } = await loadFlowGraph(afVersionId);
+    const dispatchNode = (nodes || []).find((n) => n.id === lot.current_activity_flow_node_id);
+    const priors = priorSchedulableOnPath(nodes, edges, dispatchNode?.id);
+    const done = await completedNodeIdsForLot(lot);
+    const missing = priors.find((n) => !done.has(n.id));
+    if (missing) {
+      // Redirect onto first incomplete op instead of RFD
+      const workDate = null;
+      const placed = await assignLotToNode(lot.id, missing, workDate, { afVersionId, skipGate: true });
+      return placed.lot;
     }
     return lot; // legitimate RFD at dispatch
   }

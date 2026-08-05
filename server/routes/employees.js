@@ -195,6 +195,109 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
   }
 });
 
+/** Work-center membership + worker_efficiency_entries for employee details Efficiency tab */
+router.get('/:id/efficiency', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const employeeId = req.params.id;
+    if (!employeeId) {
+      return res.status(400).json({ error: 'Employee id is required' });
+    }
+
+    const { data: employee, error: empErr } = await supabase
+      .from('employees')
+      .select('id, full_name, employee_code')
+      .eq('id', employeeId)
+      .maybeSingle();
+    if (empErr) throw empErr;
+    if (!employee) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+
+    const [{ data: memberships, error: memErr }, { data: managed, error: mgErr }, { data: entries, error: effErr }] =
+      await Promise.all([
+        supabase
+          .from('employee_work_centers')
+          .select('work_center_id, is_primary, work_centers(id, name, code)')
+          .eq('employee_id', employeeId),
+        supabase
+          .from('work_centers')
+          .select('id, name, code')
+          .eq('manager_employee_id', employeeId)
+          .order('name'),
+        supabase
+          .from('worker_efficiency_entries')
+          .select(
+            'id, work_date, efficiency_pct, notes, work_center_id, created_at, production_card_id, work_centers(id, name, code)'
+          )
+          .eq('employee_id', employeeId)
+          .order('work_date', { ascending: false })
+          .limit(120),
+      ]);
+    if (memErr) throw memErr;
+    if (mgErr) throw mgErr;
+    if (effErr) throw effErr;
+
+    const workCenters = (memberships || []).map((row) => ({
+      id: row.work_centers?.id || row.work_center_id,
+      name: row.work_centers?.name || null,
+      code: row.work_centers?.code || null,
+      is_primary: !!row.is_primary,
+      is_manager: false,
+    }));
+
+    const memberIds = new Set(workCenters.map((wc) => wc.id));
+    for (const wc of managed || []) {
+      if (memberIds.has(wc.id)) {
+        const existing = workCenters.find((w) => w.id === wc.id);
+        if (existing) existing.is_manager = true;
+      } else {
+        workCenters.push({
+          id: wc.id,
+          name: wc.name,
+          code: wc.code,
+          is_primary: false,
+          is_manager: true,
+        });
+      }
+    }
+
+    const efficiencyEntries = (entries || []).map((e) => ({
+      id: e.id,
+      work_date: e.work_date,
+      efficiency_pct: e.efficiency_pct != null ? Number(e.efficiency_pct) : null,
+      notes: e.notes || null,
+      work_center_id: e.work_center_id,
+      work_center_name: e.work_centers?.name || null,
+      work_center_code: e.work_centers?.code || null,
+      production_card_id: e.production_card_id || null,
+      created_at: e.created_at,
+    }));
+
+    const pcts = efficiencyEntries
+      .map((e) => e.efficiency_pct)
+      .filter((n) => Number.isFinite(n));
+    const avg =
+      pcts.length > 0 ? Math.round((pcts.reduce((s, n) => s + n, 0) / pcts.length) * 10) / 10 : null;
+    const latest = efficiencyEntries[0] || null;
+
+    return res.json({
+      employee,
+      work_centers: workCenters,
+      entries: efficiencyEntries,
+      summary: {
+        entry_count: efficiencyEntries.length,
+        average_pct: avg,
+        latest_pct: latest?.efficiency_pct ?? null,
+        latest_date: latest?.work_date ?? null,
+        work_center_count: workCenters.length,
+      },
+    });
+  } catch (err) {
+    console.error('Employee efficiency error:', err);
+    return res.status(500).json({ error: 'Unable to load employee efficiency' });
+  }
+});
+
 router.post('/', verifyEmployeeAuth, upload.fields([
   {name: 'photo', maxCount: 1},
   {name: 'aadhar', maxCount: 1},

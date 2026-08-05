@@ -401,7 +401,7 @@ export default function AttendancePage() {
               {absentees.length > ABSENTEES_PREVIEW ? (
                 <button
                   type="button"
-                  className="absentees-view-all"
+                  className=""
                   onClick={() => setShowAllAbsentees((prev) => !prev)}
                 >
                   {showAllAbsentees ? 'SHOW LESS' : 'VIEW ALL'}

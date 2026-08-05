@@ -244,6 +244,8 @@ async function listWorkCenters() {
     overhead_hourly_rate: Number(wc.overhead_hourly_rate),
     speed: Number(wc.speed),
     efficiency: Number(wc.efficiency),
+    hours_per_day: wc.hours_per_day != null ? Number(wc.hours_per_day) : null,
+    horizon_months_default: wc.horizon_months_default != null ? Number(wc.horizon_months_default) : null,
     is_active: wc.is_active,
     created_at: wc.created_at,
     updated_at: wc.updated_at,

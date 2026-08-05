@@ -28,6 +28,7 @@ export default function StockDetailPage() {
       const { data } = await api.get(`/inventory/stock/${id}`);
       setStock(data.stock);
       setLedger(data.ledger || []);
+      
     } catch (err) {
       setError(err.response?.data?.error || 'Unable to load stock detail.');
     } finally {
@@ -135,7 +136,9 @@ export default function StockDetailPage() {
                             {entry.girn_number || entry.reference_id.slice(0, 8)}
                           </Link>
                         ) : entry.reason === 'backflush' ? (
-                          entry.production_card_number || entry.note || 'Backflush'
+                          <Link to={`/production/cards/${entry.reference_id}`}>
+                          {entry.production_card_number || entry.note || 'Backflush'}
+                          </Link>
                         ) : (
                           entry.note || '—'
                         )}

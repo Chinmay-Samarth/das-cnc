@@ -19,6 +19,7 @@ const {
 const {
   rankHorizonDemand,
   finalizeCampaignPriorityScores,
+  computeRunOutDays,
   SAFETY_BUFFER_DAYS,
 } = require('./campaignRankingEngine');
 
@@ -1363,7 +1364,7 @@ async function listManagedWorkCenters(employeeId) {
   if (!isValidUUID(employeeId)) return [];
   const { data, error } = await supabase
     .from('work_centers')
-    .select('id, name, code, manager_employee_id, hours_per_day')
+    .select('id, name, code, manager_employee_id, hours_per_day, horizon_months_default')
     .eq('manager_employee_id', employeeId)
     .order('name');
   if (error) throw error;
@@ -1724,6 +1725,316 @@ async function mintLotFromCommitment(
   throw httpError('Daily commitments retired — mint from production cards', 410);
 }
 
+/**
+ * Campaign Review: current (or specified) horizon wave with ranked campaigns,
+ * schedule coverage rollup, daily card rope, and wave KPIs.
+ */
+async function attachLiveStock(campaigns, wave) {
+  if (!campaigns?.length || !wave) return campaigns || [];
+  const workingDays = Math.max(1, listWorkingDays(wave.horizon_start, wave.horizon_end).length || 1);
+  const out = [];
+  for (const c of campaigns) {
+    const remaining = Math.max(0, toNumber(c.target_quantity) - toNumber(c.good_quantity));
+    const demandQty =
+      remaining > 0 ? remaining : toNumber(c.horizon_demand_qty || c.target_quantity);
+    const stock = c.master_record_id
+      ? await computeRunOutDays({
+          masterRecordId: c.master_record_id,
+          demandQty,
+          horizonWorkingDays: workingDays,
+        })
+      : { run_out_days: null, fg_stock: 0, wip_stock: 0, avg_daily_demand: 0 };
+    const runOut = Number.isFinite(stock.run_out_days) ? stock.run_out_days : null;
+    out.push({
+      ...c,
+      remaining_qty: remaining,
+      run_out_days: runOut,
+      fg_stock: toNumber(stock.fg_stock),
+      wip_stock: toNumber(stock.wip_stock),
+      avg_daily_demand: toNumber(stock.avg_daily_demand),
+    });
+  }
+  return out;
+}
+
+async function persistCampaignRunOut(campaigns) {
+  for (const c of campaigns || []) {
+    if (!c?.id) continue;
+    const { error } = await supabase
+      .from('production_campaigns')
+      .update({ run_out_days: c.run_out_days })
+      .eq('id', c.id);
+    if (error) throw error;
+  }
+}
+
+async function getWaveReview(workCenterId, { waveId, includeLiveStock = true } = {}) {
+  if (!isValidUUID(workCenterId)) throw httpError('Invalid work center id');
+
+  const { data: wc, error: wcErr } = await supabase
+    .from('work_centers')
+    .select('id, name, code, hours_per_day, horizon_months_default')
+    .eq('id', workCenterId)
+    .maybeSingle();
+  if (wcErr) throw wcErr;
+  if (!wc) throw httpError('Work center not found', 404);
+
+  let wave = null;
+  if (waveId && isValidUUID(waveId)) {
+    const { data, error } = await supabase
+      .from('production_horizon_waves')
+      .select('*')
+      .eq('id', waveId)
+      .eq('work_center_id', workCenterId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw httpError('Horizon wave not found', 404);
+    wave = data;
+  } else {
+    const { data: waves, error } = await supabase
+      .from('production_horizon_waves')
+      .select('*')
+      .eq('work_center_id', workCenterId)
+      .order('horizon_index', { ascending: false });
+    if (error) throw error;
+    const list = waves || [];
+    wave =
+      list.find((w) => w.status === 'in_progress') ||
+      list.find((w) => w.status === 'locked') ||
+      list[0] ||
+      null;
+  }
+
+  if (!wave) {
+    return {
+      work_center: wc,
+      wave: null,
+      campaigns: [],
+      kpis: {
+        days_remaining: null,
+        demand_total: 0,
+        good_total: 0,
+        scrap_total: 0,
+        pct_complete: 0,
+        active_count: 0,
+        queued_count: 0,
+        completed_count: 0,
+        campaign_count: 0,
+      },
+    };
+  }
+
+  const { data: campRows, error: campErr } = await supabase
+    .from('production_campaigns')
+    .select('*')
+    .eq('horizon_wave_id', wave.id)
+    .order('demand_rank', { ascending: true })
+    .order('queue_sequence', { ascending: true });
+  if (campErr) throw campErr;
+
+  const enriched = await enrichCampaigns(campRows || []);
+  const campaignIds = enriched.map((c) => c.id).filter(Boolean);
+
+  const [{ data: coverageRows, error: covErr }, { data: cardRows, error: cardErr }] = await Promise.all([
+    campaignIds.length
+      ? supabase
+          .from('campaign_schedule_coverage')
+          .select(
+            'id, campaign_id, delivery_schedule_id, schedule_qty, covered_qty, delivery_schedules(id, schedule_number, due_date, quantity, status)'
+          )
+          .in('campaign_id', campaignIds)
+      : Promise.resolve({ data: [], error: null }),
+    campaignIds.length
+      ? supabase
+          .from('production_cards')
+          .select(
+            'id, campaign_id, day_index, work_date, target_quantity, total_good_produced, total_scrap_produced, status, lot_minted_at, card_number'
+          )
+          .in('campaign_id', campaignIds)
+          .order('day_index', { ascending: true })
+          .order('work_date', { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (covErr) throw covErr;
+  if (cardErr) throw cardErr;
+
+  const coverageByCamp = new Map();
+  for (const row of coverageRows || []) {
+    if (!coverageByCamp.has(row.campaign_id)) coverageByCamp.set(row.campaign_id, []);
+    coverageByCamp.get(row.campaign_id).push(row);
+  }
+  const cardsByCamp = new Map();
+  for (const row of cardRows || []) {
+    if (!cardsByCamp.has(row.campaign_id)) cardsByCamp.set(row.campaign_id, []);
+    cardsByCamp.get(row.campaign_id).push(row);
+  }
+
+  const today = todayDateString();
+  const daysRemaining =
+    wave.horizon_end && wave.horizon_end >= today
+      ? listWorkingDays(today, wave.horizon_end).length
+      : wave.horizon_end
+        ? 0
+        : null;
+
+  let campaigns = enriched.map((c) => {
+    const target = toNumber(c.target_quantity);
+    const good = toNumber(c.good_quantity);
+    const scrap = toNumber(c.scrap_quantity);
+    const cov = coverageByCamp.get(c.id) || [];
+    const scheduleQty = cov.reduce((s, r) => s + toNumber(r.schedule_qty), 0);
+    const coveredQty = cov.reduce((s, r) => s + toNumber(r.covered_qty), 0);
+    const schedules = cov
+      .map((r) => {
+        const sched = r.delivery_schedules || {};
+        const sq = toNumber(r.schedule_qty);
+        const cq = toNumber(r.covered_qty);
+        return {
+          id: r.id,
+          delivery_schedule_id: r.delivery_schedule_id,
+          schedule_number: sched.schedule_number || null,
+          due_date: sched.due_date || null,
+          schedule_qty: sq,
+          covered_qty: cq,
+          remaining_qty: Math.max(0, sq - cq),
+          status: sched.status || null,
+          at_risk: !!sched.due_date && sched.due_date <= today && cq < sq,
+        };
+      })
+      .sort((a, b) => String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')));
+
+    const cards = (cardsByCamp.get(c.id) || []).map((card) => ({
+      id: card.id,
+      card_number: card.card_number || null,
+      day_index: card.day_index,
+      work_date: card.work_date,
+      target_quantity: toNumber(card.target_quantity),
+      total_good_produced: toNumber(card.total_good_produced),
+      total_scrap_produced: toNumber(card.total_scrap_produced),
+      status: card.status,
+      lot_minted_at: card.lot_minted_at || null,
+    }));
+    const openCards = cards.filter((card) => card.status !== 'COMPLETED');
+    const lastCard = cards.length ? cards[cards.length - 1] : null;
+    const nextOpen = openCards[0] || null;
+
+    return {
+      ...c,
+      pct_complete: target > 0 ? Math.round((good / target) * 1000) / 10 : 0,
+      coverage: {
+        schedule_count: schedules.length,
+        schedule_qty: scheduleQty,
+        covered_qty: coveredQty,
+        pct_covered: scheduleQty > 0 ? Math.round((coveredQty / scheduleQty) * 1000) / 10 : 0,
+        schedules,
+      },
+      cards,
+      rope_end_date: lastCard?.work_date || null,
+      next_card_date: nextOpen?.work_date || null,
+      open_card_count: openCards.length,
+      card_count: cards.length,
+      estimated_hours: c.estimated_hours != null ? toNumber(c.estimated_hours) : null,
+      production_days: c.production_days != null ? toNumber(c.production_days) : null,
+      run_time_per_unit_minutes:
+        c.run_time_per_unit_minutes != null ? toNumber(c.run_time_per_unit_minutes) : null,
+      setup_time_minutes: c.setup_time_minutes != null ? toNumber(c.setup_time_minutes) : null,
+      started_at: c.started_at || null,
+      completed_at: c.completed_at || null,
+    };
+  });
+
+  if (includeLiveStock) {
+    campaigns = await attachLiveStock(campaigns, wave);
+  }
+
+  const demandTotal = campaigns.reduce(
+    (s, c) => s + toNumber(c.horizon_demand_qty || c.target_quantity),
+    0
+  );
+  const goodTotal = campaigns.reduce((s, c) => s + toNumber(c.good_quantity), 0);
+  const scrapTotal = campaigns.reduce((s, c) => s + toNumber(c.scrap_quantity), 0);
+  const targetTotal = campaigns.reduce((s, c) => s + toNumber(c.target_quantity), 0);
+
+  return {
+    work_center: wc,
+    wave: {
+      ...wave,
+      days_remaining: daysRemaining,
+    },
+    campaigns,
+    kpis: {
+      days_remaining: daysRemaining,
+      demand_total: demandTotal,
+      good_total: goodTotal,
+      scrap_total: scrapTotal,
+      target_total: targetTotal,
+      pct_complete: targetTotal > 0 ? Math.round((goodTotal / targetTotal) * 1000) / 10 : 0,
+      active_count: campaigns.filter((c) => c.status === 'active').length,
+      queued_count: campaigns.filter((c) => c.status === 'queued').length,
+      completed_count: campaigns.filter((c) => c.status === 'completed').length,
+      campaign_count: campaigns.length,
+    },
+  };
+}
+
+/** Recompute FG/WIP + run-out for wave campaigns; persist run_out_days. Does not change ranks. */
+async function refreshWaveStock(workCenterId, { waveId } = {}) {
+  const review = await getWaveReview(workCenterId, { waveId, includeLiveStock: true });
+  if (!review.wave) return review;
+  await persistCampaignRunOut(review.campaigns);
+  return review;
+}
+
+/**
+ * Refresh stock then re-sequence queued campaigns only.
+ * Active campaign stays active with its current demand_rank / queue_sequence.
+ */
+async function rerankWaveQueue(workCenterId, { waveId } = {}) {
+  const review = await refreshWaveStock(workCenterId, { waveId });
+  if (!review.wave) return review;
+
+  const campaigns = review.campaigns || [];
+  const active = campaigns.filter((c) => c.status === 'active');
+  const queued = campaigns.filter((c) => c.status === 'queued');
+  if (!queued.length) {
+    return { ...review, reranked: false, message: 'No queued campaigns to re-rank' };
+  }
+
+  const scored = finalizeCampaignPriorityScores(
+    queued.map((c) => ({
+      ...c,
+      demand_qty:
+        toNumber(c.remaining_qty) > 0
+          ? toNumber(c.remaining_qty)
+          : toNumber(c.horizon_demand_qty || c.target_quantity),
+      production_days: c.production_days,
+      run_out_days: c.run_out_days,
+    }))
+  );
+
+  let nextRank = active.reduce((m, a) => Math.max(m, Number(a.demand_rank) || 0), 0) + 1;
+  if (!(nextRank >= 1)) nextRank = 1;
+  let nextSeq = active.reduce((m, a) => Math.max(m, Number(a.queue_sequence) || 0), 0) + 1;
+  if (!(nextSeq >= 1)) nextSeq = 1;
+
+  for (const c of scored) {
+    const { error } = await supabase
+      .from('production_campaigns')
+      .update({
+        demand_rank: nextRank++,
+        queue_sequence: nextSeq++,
+        priority_score: c.priority_score,
+        run_out_days: Number.isFinite(Number(c.run_out_days)) ? Number(c.run_out_days) : null,
+      })
+      .eq('id', c.id)
+      .eq('status', 'queued');
+    if (error) throw error;
+  }
+
+  const refreshed = await getWaveReview(workCenterId, { waveId, includeLiveStock: true });
+  return { ...refreshed, reranked: true };
+}
+
 module.exports = {
   previewHorizonWave,
   lockHorizonWave,
@@ -1748,4 +2059,7 @@ module.exports = {
   mintLotFromCommitment,
   bulkReleaseSchedules,
   generateCampaignDailyCards,
+  getWaveReview,
+  refreshWaveStock,
+  rerankWaveQueue,
 };

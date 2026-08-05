@@ -5,12 +5,22 @@ import { toDisplayTime, toISODateString } from '../attendance/useDailyAttendance
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 import ImageLightbox from '../components/shared/ImageLightBox';
 import AttendanceGauge from '../components/shared/Attendancegauge';
-import StatTile from '../components/shared/StatTile'
-import {ArrowLeft, ChevronLeft, ChevronRight, Pencil} from "lucide-react"
-
+import StatTile from '../components/shared/StatTile';
+import { ArrowLeft, ChevronLeft, ChevronRight, Factory, Pencil, TrendingUp } from 'lucide-react';
+import { EmptyState, MetricCard, StatusBadge, TruncatedText } from '../components/mes';
 
 const PLACEHOLDER_AVATAR =
   'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect fill="%23E5E7EB" width="100%25" height="100%25"/><text x="50%25" y="54%25" dominant-baseline="middle" text-anchor="middle" font-size="48" fill="%23717A83" font-family="system-ui, sans-serif">?</text></svg>';
+
+const LOCAL_TABS = ['details', 'attendance', 'documents', 'address', 'commercials', 'efficiency', 'edit'];
+
+function efficiencyTone(pct) {
+  if (pct == null || !Number.isFinite(Number(pct))) return 'pending';
+  const n = Number(pct);
+  if (n >= 80) return 'completed';
+  if (n >= 50) return 'ready';
+  return 'overdue';
+}
 
 // ─── pure helpers (unchanged) ─────────────────────────────────────────────────
 
@@ -174,6 +184,9 @@ export default function EmployeeDetailsPage() {
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [attendanceLoading, setAttendanceLoading] = useState(true);
   const [attendanceError, setAttendanceError] = useState(null);
+  const [efficiencyData, setEfficiencyData] = useState(null);
+  const [efficiencyLoading, setEfficiencyLoading] = useState(false);
+  const [efficiencyError, setEfficiencyError] = useState(null);
   const [tab, setTab] = useState('details');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -185,8 +198,7 @@ export default function EmployeeDetailsPage() {
   useEffect(() => {
     if (location.pathname.endsWith('/edit')) {
       setTab('edit');
-    } else if (!['details', 'attendance', 'documents', 'address', 'commercials', 'edit'].includes(tab)) {
-      // only reset to details if we're not on one of the local tabs
+    } else if (!LOCAL_TABS.includes(tab)) {
       setTab('details');
     }
   }, [location.pathname, tab]);
@@ -274,6 +286,31 @@ export default function EmployeeDetailsPage() {
     else { setAttendanceRecords([]); setAttendanceLoading(false); }
     return () => { mounted = false; };
   }, [id, selectedMonth]);
+
+  // ── load efficiency (work centers + worker_efficiency_entries) ─────────────
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadEfficiency() {
+      try {
+        setEfficiencyLoading(true);
+        setEfficiencyError(null);
+        const { data } = await api.get(`/employees/${id}/efficiency`);
+        if (!mounted) return;
+        setEfficiencyData(data || null);
+      } catch (err) {
+        console.error('Failed to load employee efficiency:', err);
+        if (!mounted) return;
+        setEfficiencyError(err.response?.data?.error || 'Unable to load efficiency.');
+        setEfficiencyData(null);
+      } finally {
+        if (!mounted) return;
+        setEfficiencyLoading(false);
+      }
+    }
+    if (id && tab === 'efficiency') loadEfficiency();
+    return () => { mounted = false; };
+  }, [id, tab]);
 
   // ── derived values ────────────────────────────────────────────────────────
 
@@ -444,24 +481,15 @@ export default function EmployeeDetailsPage() {
           >
             Commercials
           </button>
-          
-          {/* <button
-            type="button"
-            onClick={() => navigate(`/employees/${id}/edit`)}
-            className={`pill-tab ${tab === 'documents' ? 'pill-tab-active' : ''}`}
-            aria-selected = {tab === 'documents'}
-            role = 'tab'
-          >
-            Edit
-          </button>
           <button
             type="button"
-            className="secondary-button"
-            onClick={() => navigate('/employees')}
-            disabled={submitting}
+            onClick={() => setTab('efficiency')}
+            className={`pill-tab ${tab === 'efficiency' ? 'pill-tab-active' : ''}`}
+            aria-selected={tab === 'efficiency'}
+            role="tab"
           >
-            Back to employees
-          </button> */}
+            Efficiency
+          </button>
         </div>
       </header>
 
@@ -676,6 +704,147 @@ export default function EmployeeDetailsPage() {
                     ))}
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* ── EFFICIENCY tab ────────────────────────────────────────── */}
+            {tab === 'efficiency' && (
+              <div className="emp-efficiency" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {efficiencyLoading ? (
+                  <p className="muted">Loading efficiency…</p>
+                ) : efficiencyError ? (
+                  <p className="error-message">{efficiencyError}</p>
+                ) : (
+                  <>
+                    <div className="mes-metric-grid" style={{ marginBottom: 0 }}>
+                      <MetricCard
+                        label="Average"
+                        value={
+                          efficiencyData?.summary?.average_pct != null
+                            ? `${efficiencyData.summary.average_pct}%`
+                            : '—'
+                        }
+                        hint="Across recorded entries"
+                        icon={TrendingUp}
+                        tone={
+                          efficiencyData?.summary?.average_pct == null
+                            ? 'neutral'
+                            : efficiencyData.summary.average_pct >= 80
+                              ? 'success'
+                              : efficiencyData.summary.average_pct < 50
+                                ? 'danger'
+                                : 'amber'
+                        }
+                      />
+                      <MetricCard
+                        label="Latest"
+                        value={
+                          efficiencyData?.summary?.latest_pct != null
+                            ? `${efficiencyData.summary.latest_pct}%`
+                            : '—'
+                        }
+                        hint={
+                          efficiencyData?.summary?.latest_date
+                            ? formatDisplayDate(efficiencyData.summary.latest_date)
+                            : 'No entries yet'
+                        }
+                        icon={TrendingUp}
+                      />
+                      <MetricCard
+                        label="Entries"
+                        value={String(efficiencyData?.summary?.entry_count ?? 0)}
+                        hint="Last 120 records"
+                      />
+                      <MetricCard
+                        label="Work centers"
+                        value={String(efficiencyData?.summary?.work_center_count ?? 0)}
+                        hint="Assigned + managed"
+                        icon={Factory}
+                      />
+                    </div>
+
+                    <section className="mes-card" style={{ padding: 16 }} aria-label="Work centers">
+                      <h3 className="mes-section-title" style={{ marginTop: 0, marginBottom: 12, fontSize: 15 }}>
+                        Work centers
+                      </h3>
+                      {!efficiencyData?.work_centers?.length ? (
+                        <EmptyState
+                          icon={Factory}
+                          title="No work center assigned"
+                          description="This employee is not linked to a work center yet."
+                        />
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {[...(efficiencyData.work_centers || [])]
+                            .sort((a, b) => {
+                              if (a.is_primary !== b.is_primary) return a.is_primary ? -1 : 1;
+                              if (a.is_manager !== b.is_manager) return a.is_manager ? -1 : 1;
+                              return String(a.name || '').localeCompare(String(b.name || ''));
+                            })
+                            .map((wc) => (
+                              <div key={wc.id} className="mes-list-item" style={{ cursor: 'default' }}>
+                                <div className="mes-list-item-top">
+                                  <p className="mes-list-item-title">
+                                    <TruncatedText>{wc.name || 'Work center'}</TruncatedText>
+                                  </p>
+                                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                                    {wc.is_primary ? <StatusBadge status="active">Primary</StatusBadge> : null}
+                                    {wc.is_manager ? <StatusBadge status="assigned">Manager</StatusBadge> : null}
+                                    {!wc.is_primary && !wc.is_manager ? (
+                                      <StatusBadge status="assigned">Member</StatusBadge>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                <p className="mes-list-item-meta" style={{ marginBottom: 0 }}>
+                                  {wc.code || '—'}
+                                </p>
+                              </div>
+                            ))}
+                        </div>
+                      )}
+                    </section>
+
+                    <section className="mes-card" style={{ padding: 16 }} aria-label="Efficiency history">
+                      <h3 className="mes-section-title" style={{ marginTop: 0, marginBottom: 12, fontSize: 15 }}>
+                        Efficiency history
+                      </h3>
+                      {!efficiencyData?.entries?.length ? (
+                        <EmptyState
+                          icon={TrendingUp}
+                          title="No efficiency recorded"
+                          description="Entries appear here after the work-center manager saves team efficiency on My Today."
+                        />
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {efficiencyData.entries.map((row) => (
+                            <div key={row.id} className="mes-list-item" style={{ cursor: 'default' }}>
+                              <div className="mes-list-item-top">
+                                <span className="mes-list-item-title" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                                  {formatDisplayDate(row.work_date)}
+                                </span>
+                                <StatusBadge status={efficiencyTone(row.efficiency_pct)}>
+                                  {row.efficiency_pct != null ? `${row.efficiency_pct}%` : '—'}
+                                </StatusBadge>
+                              </div>
+                              <p className="mes-list-item-sub" style={{ marginBottom: 0 }}>
+                                <TruncatedText>
+                                  {[row.work_center_name, row.work_center_code]
+                                    .filter(Boolean)
+                                    .join(' · ') || 'Work center'}
+                                </TruncatedText>
+                              </p>
+                              {row.notes ? (
+                                <p className="mes-list-item-meta" style={{ marginTop: 6, marginBottom: 0 }}>
+                                  <TruncatedText>{row.notes}</TruncatedText>
+                                </p>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  </>
+                )}
               </div>
             )}
 

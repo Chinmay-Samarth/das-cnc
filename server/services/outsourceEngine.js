@@ -365,13 +365,20 @@ async function sendOutsource(payload, actorEmployeeId, opts = {}) {
     if (lots.length < 2) throw httpError('Merge requires at least two lots');
     const sumQty = lots.reduce((s, l) => s + toNumber(l.quantity), 0);
     const lotNumber = await generateComponentLotNumber(lots[0].master_record_id);
+    // Preserve create-site from a source mint node — never treat outsource as Op1.
+    const createSiteNodeId =
+      lots.map((l) => l.activity_flow_node_id).find((id) => id && id !== node.id) ||
+      lots[0].activity_flow_node_id ||
+      null;
+    const campaignId = lots.map((l) => l.campaign_id).find(Boolean) || null;
     const { data: mergedLot, error: mErr } = await supabase
       .from('production_lots')
       .insert({
         lot_number: lotNumber,
         master_record_id: lots[0].master_record_id,
         production_card_id: primaryCardId,
-        activity_flow_node_id: node.id,
+        campaign_id: campaignId,
+        activity_flow_node_id: createSiteNodeId,
         current_activity_flow_node_id: node.id,
         work_center_id: null,
         quantity: sumQty,
@@ -381,6 +388,29 @@ async function sendOutsource(payload, actorEmployeeId, opts = {}) {
       .select('*')
       .single();
     if (mErr) throw mErr;
+
+    // Inherit op completions from all sources so dispatch gate sees full history
+    const sourceIds = lots.map((l) => l.id);
+    const { data: srcComps, error: scErr } = await supabase
+      .from('production_lot_op_completions')
+      .select('activity_flow_node_id, work_center_id, employee_id, good_qty, scrap_qty, completed_at')
+      .in('production_lot_id', sourceIds);
+    if (scErr) throw scErr;
+    const seenNodes = new Set();
+    for (const c of srcComps || []) {
+      if (!c.activity_flow_node_id || seenNodes.has(c.activity_flow_node_id)) continue;
+      seenNodes.add(c.activity_flow_node_id);
+      const { error: ciErr } = await supabase.from('production_lot_op_completions').insert({
+        production_lot_id: mergedLot.id,
+        activity_flow_node_id: c.activity_flow_node_id,
+        work_center_id: c.work_center_id || null,
+        employee_id: c.employee_id || null,
+        good_qty: toNumber(c.good_qty),
+        scrap_qty: toNumber(c.scrap_qty),
+        completed_at: c.completed_at || new Date().toISOString(),
+      });
+      if (ciErr) throw ciErr;
+    }
 
     for (const src of lots) {
       const { error: uErr } = await supabase

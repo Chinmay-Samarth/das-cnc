@@ -1,6 +1,6 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../auth/authContext';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from '../../api/client';
 import {
   LogOut,
@@ -20,29 +20,28 @@ import {
   Wrench,
   PackageCheck,
   Send,
+  ChevronDown,
+  Database,
+  Layers,
 } from 'lucide-react';
+
+const STORAGE_KEY = 'das-sidebar-open-sections';
 
 const NAV_SECTIONS = [
   {
-    id: 'home',
-    label: null,
-    items: [{ to: '/home', label: 'Home', icon: Home, end: true }],
-  },
-  {
     id: 'sourcing',
     label: 'Sourcing',
-    items: [{ to: '/blanket-pos', label: 'Blanket POs', icon: FileText }],
-  },
-  {
-    id: 'logistics',
-    label: 'Logistics',
-    items: [{ to: '/delivery-schedules', label: 'Delivery Schedules', icon: Truck }],
+    items: [
+      { to: '/blanket-pos', label: 'Blanket POs', icon: FileText },
+      { to: '/delivery-schedules', label: 'Delivery Schedules', icon: Truck },
+    ],
   },
   {
     id: 'shopfloor',
     label: 'Shop floor',
     items: [
       { to: '/production/horizon-planner', label: 'Horizon Planner', icon: Factory },
+      { to: '/production/campaigns', label: 'Campaigns', icon: Layers },
       { to: '/production/today', label: 'My Today', icon: UserCheck, managerOnly: true },
       { to: '/production', label: 'Production', icon: Factory, end: true },
       { to: '/production/work-centers', label: 'WC Board', icon: LayoutGrid },
@@ -72,10 +71,70 @@ const NAV_SECTIONS = [
   },
 ];
 
+function readStoredOpen() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isPathActive(pathname, to, end = false) {
+  if (end) return pathname === to;
+  return pathname === to || pathname.startsWith(`${to}/`);
+}
+
+function sectionHasActive(pathname, items) {
+  return items.some((item) => isPathActive(pathname, item.to, item.end));
+}
+
+function NavItem({ item, onNavigate }) {
+  const Icon = item.icon;
+  return (
+    <NavLink
+      to={item.to}
+      end={item.end || false}
+      className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
+      onClick={onNavigate}
+    >
+      {Icon ? <Icon size={16} className="sidebar-link-icon" aria-hidden /> : null}
+      <span className="sidebar-link-label">{item.label}</span>
+    </NavLink>
+  );
+}
+
+function CollapsibleSection({ id, label, items, open, onToggle, onNavigate }) {
+  const panelId = `sidebar-section-${id}`;
+  return (
+    <div className={`sidebar-section${open ? ' is-open' : ''}`}>
+      <button
+        type="button"
+        className="sidebar-section-toggle"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => onToggle(id)}
+      >
+        <span className="sidebar-section-label">{label}</span>
+        <ChevronDown size={14} className="sidebar-section-chevron" aria-hidden />
+      </button>
+      <div id={panelId} className="sidebar-section-body" hidden={!open}>
+        {items.map((item) => (
+          <NavItem key={item.to} item={item} onNavigate={onNavigate} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Sidebar({ onNavigate }) {
   const { user, logout } = useAuth();
+  const location = useLocation();
   const [masters, setMasters] = useState([]);
   const [managesWorkCenter, setManagesWorkCenter] = useState(false);
+  const [openSections, setOpenSections] = useState(() => readStoredOpen() || {});
 
   useEffect(() => {
     api.get('/masters/sidebar').then((res) => {
@@ -92,63 +151,102 @@ export default function Sidebar({ onNavigate }) {
       .catch(() => setManagesWorkCenter(false));
   }, []);
 
+  const sections = useMemo(() => {
+    return NAV_SECTIONS.map((section) => ({
+      ...section,
+      items: section.items.filter((item) => !item.managerOnly || managesWorkCenter),
+    })).filter((section) => section.items.length > 0);
+  }, [managesWorkCenter]);
+
+  const masterItems = useMemo(
+    () =>
+      masters.map((m) => ({
+        to: `/masters/${m.slug}`,
+        label: m.name.replace(/\s*Master$/i, ''),
+        icon: Database,
+      })),
+    [masters]
+  );
+
+  // Auto-open the section that owns the current route
+  useEffect(() => {
+    setOpenSections((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const section of sections) {
+        if (sectionHasActive(location.pathname, section.items) && !next[section.id]) {
+          next[section.id] = true;
+          changed = true;
+        }
+      }
+      if (masterItems.length && sectionHasActive(location.pathname, masterItems) && !next.masters) {
+        next.masters = true;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [location.pathname, sections, masterItems]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(openSections));
+    } catch {
+      /* ignore */
+    }
+  }, [openSections]);
+
+  function toggleSection(id) {
+    setOpenSections((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+
+  const initials =
+    user?.name
+      ?.split(' ')
+      .map((n) => n[0])
+      .slice(0, 2)
+      .join('')
+      .toUpperCase() || '?';
+
   return (
     <>
       <div className="sidebar-brand">
         <img src="/dascnclogo1.png" alt="DAS CNC" className="brand-logo sidebar-logo" />
       </div>
 
-      <nav className="sidebar-nav">
-        {NAV_SECTIONS.map((section) => {
-          const items = section.items.filter((item) => !item.managerOnly || managesWorkCenter);
-          if (!items.length) return null;
-          return (
-            <div key={section.id} className="sidebar-domain">
-              {section.label ? <p className="sidebar-section-label">{section.label}</p> : null}
-              {items.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    end={item.end || false}
-                    className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
-                    onClick={onNavigate}
-                  >
-                    {Icon ? <Icon size={16} className="sidebar-link-icon" aria-hidden /> : null}
-                    <span>{item.label}</span>
-                  </NavLink>
-                );
-              })}
-            </div>
-          );
-        })}
+      <nav className="sidebar-nav" aria-label="Main">
+        <div className="sidebar-pin">
+          <NavItem item={{ to: '/home', label: 'Home', icon: Home, end: true }} onNavigate={onNavigate} />
+        </div>
 
-        {masters.length ? (
-          <div className="sidebar-domain">
-            <p className="sidebar-section-label">Masters</p>
-            {masters.map((m) => (
-              <NavLink
-                key={m.slug}
-                to={`/masters/${m.slug}`}
-                className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
-                onClick={onNavigate}
-              >
-                <span>{m.name.replace(/\s*Master$/i, '')}</span>
-              </NavLink>
-            ))}
-          </div>
-        ) : null}
+        <div className="sidebar-sections">
+          {sections.map((section) => (
+            <CollapsibleSection
+              key={section.id}
+              id={section.id}
+              label={section.label}
+              items={section.items}
+              open={!!openSections[section.id]}
+              onToggle={toggleSection}
+              onNavigate={onNavigate}
+            />
+          ))}
+
+          {masterItems.length ? (
+            <CollapsibleSection
+              id="masters"
+              label="Masters"
+              items={masterItems}
+              open={!!openSections.masters}
+              onToggle={toggleSection}
+              onNavigate={onNavigate}
+            />
+          ) : null}
+        </div>
       </nav>
 
       <div className="sidebar-footer">
-        <div className="sidebar-avatar">
-          {user?.name
-            ?.split(' ')
-            .map((n) => n[0])
-            .slice(0, 2)
-            .join('')
-            .toUpperCase()}
+        <div className="sidebar-avatar" aria-hidden>
+          {initials}
         </div>
         <div className="sidebar-user-info">
           <span className="sidebar-user">{user?.name}</span>

@@ -16,6 +16,9 @@ const {
   getCommitmentDetail,
   listManagedWorkCenters,
   mintLotFromCommitment,
+  getWaveReview,
+  refreshWaveStock,
+  rerankWaveQueue,
 } = require('../services/productionCampaignEngine');
 const { broadcastProductionRealtime } = require('../socket/productionRealtime');
 
@@ -102,6 +105,37 @@ router.get(
   wrap(async (req, res) => {
     const command = await getWCCommand(req.params.id, req.query.work_date || null);
     res.json(command);
+  })
+);
+
+router.get(
+  '/work-centers/:id/wave-review',
+  wrap(async (req, res) => {
+    const review = await getWaveReview(req.params.id, {
+      waveId: req.query.wave_id || null,
+    });
+    res.json(review);
+  })
+);
+
+router.post(
+  '/work-centers/:id/wave-review/refresh-stock',
+  wrap(async (req, res) => {
+    const review = await refreshWaveStock(req.params.id, {
+      waveId: req.body?.wave_id || req.query.wave_id || null,
+    });
+    res.json(review);
+  })
+);
+
+router.post(
+  '/work-centers/:id/wave-review/rerank',
+  wrap(async (req, res) => {
+    if (!isManager(req.user)) return res.status(403).json({ error: 'Manager access required' });
+    const review = await rerankWaveQueue(req.params.id, {
+      waveId: req.body?.wave_id || req.query.wave_id || null,
+    });
+    res.json(review);
   })
 );
 
