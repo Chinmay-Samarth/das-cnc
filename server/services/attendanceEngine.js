@@ -7,6 +7,7 @@
 
 const { createClient } = require('@supabase/supabase-js');
 const { emitAttendanceUpdated } = require('../socket/emitter');
+const { isWorkforceEmployee } = require('../utils/accessLevel');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -244,16 +245,23 @@ async function processBiometricEvent(payload) {
 
     const biometricLogId = biometricLog.id;
 
-    // 2. Find employee + their assigned shift
+    // 2. Find employee + their assigned shift (inactive / admin: may use the app, but no punch)
     const { data: employee, error: empError } = await supabase
       .from('employees')
-      .select('id, shift_id, full_name')
+      .select('id, shift_id, full_name, is_active, job_description')
       .eq('employee_code', employee_code)
-      .eq('is_active', true)
       .maybeSingle();
 
     if (empError || !employee) {
       return { success: false, error: 'UNKNOWN_EMPLOYEE', biometricLogId };
+    }
+
+    if (!isWorkforceEmployee(employee)) {
+      return {
+        success: false,
+        error: employee.is_active === false ? 'INACTIVE_EMPLOYEE' : 'ADMIN_EXCLUDED',
+        biometricLogId,
+      };
     }
 
     // 3. Load this employee's shift definition
@@ -593,10 +601,12 @@ async function markAbsentees() {
 
   const { data: employees, error: empError } = await supabase
     .from('employees')
-    .select('id, shift_id')
+    .select('id, shift_id, is_active, job_description')
     .eq('is_active', true);
 
   if (empError) throw empError;
+
+  const workforce = (employees || []).filter(isWorkforceEmployee);
 
   const { data: existing, error: recError } = await supabase
     .from('attendance_records')
@@ -607,7 +617,7 @@ async function markAbsentees() {
 
   const alreadyRecorded = new Set(existing.map(r => r.employee_id));
 
-  const toInsert = employees
+  const toInsert = workforce
     .filter(e => !alreadyRecorded.has(e.id))
     .map(e => ({
       employee_id:  e.id,

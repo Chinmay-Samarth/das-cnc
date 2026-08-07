@@ -15,6 +15,7 @@ const {
   processBiometricEvent
 } = require('../services/attendanceEngine');
 const { emitAttendanceUpdated } = require('../socket/emitter');
+const { isAdminJob, isWorkforceEmployee } = require('../utils/accessLevel');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -191,13 +192,21 @@ router.post('/manual', verifyEmployeeAuth, async (req, res) => {
       error: empError
     } = await supabase
       .from('employees')
-      .select('id, shift_id')
+      .select('id, shift_id, is_active, job_description')
       .eq('id', employee_id)
       .single();
 
     if (!employee || empError) {
       return res.status(404).json({
         error: 'Employee not found'
+      });
+    }
+
+    if (!isWorkforceEmployee(employee)) {
+      return res.status(422).json({
+        error: employee.is_active === false
+          ? 'Inactive employees cannot be recorded in attendance'
+          : 'Admin accounts are excluded from attendance'
       });
     }
 
@@ -340,9 +349,11 @@ router.get('/daily', verifyEmployeeAuth, async (req, res) => {
 
     if (error) throw error;
 
+    const workforce = (data || []).filter((emp) => !isAdminJob(emp.job_description));
+
     let rows = [];
 
-    for (const emp of data) {
+    for (const emp of workforce) {
 
       const attendance =
         emp.attendance_records.find(

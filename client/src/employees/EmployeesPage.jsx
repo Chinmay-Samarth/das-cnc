@@ -30,6 +30,7 @@ function getVisiblePages(currentPage, totalPages) {
 export default function EmployeesPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('active');
   const [sortKey, setSortKey] = useState('full_name');
   const [sortAsc, setSortAsc] = useState(true);
   const [employees, setEmployees] = useState([]);
@@ -44,9 +45,12 @@ export default function EmployeesPage() {
       try {
         setLoading(true);
         setError(null);
-        const { data } = await api.get('/employees');
+        const { data } = await api.get('/employees', {
+          params: { status: statusFilter },
+        });
         if (!mounted) return;
         setEmployees(data.employees || []);
+        setRecordsPage(1);
       } catch (err) {
         console.error('Failed to load employees:', err);
         if (!mounted) return;
@@ -61,7 +65,7 @@ export default function EmployeesPage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [statusFilter]);
 
   const filteredEmployees = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -125,6 +129,22 @@ export default function EmployeesPage() {
           </div>
 
           <div className="employees-actions">
+            <div className="mes-view-toggle" role="group" aria-label="Employee status">
+              {[
+                { id: 'active', label: 'Active' },
+                { id: 'inactive', label: 'Inactive' },
+                { id: 'all', label: 'All' },
+              ].map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className={`mes-view-toggle-btn${statusFilter === opt.id ? ' is-active' : ''}`}
+                  onClick={() => setStatusFilter(opt.id)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
             <input
               type="search"
               placeholder="Search employees..."
@@ -199,7 +219,9 @@ export default function EmployeesPage() {
                   <td className="hide-mobile">{employee.department}</td>
                   <td className="hide-mobile">{employee.shift}</td>
                   <td>
-                    <span className="employee-status-chip">{employee.status}</span>
+                    <span className={`employee-status-chip${employee.is_active === false ? ' is-inactive' : ''}`}>
+                      {employee.status}
+                    </span>
                   </td>
                 </tr>
               ))}

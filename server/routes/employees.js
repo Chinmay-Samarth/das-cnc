@@ -65,7 +65,8 @@ function parseBoolean(value) {
 
 router.get('/', verifyEmployeeAuth, async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const statusFilter = String(req.query.status || 'active').toLowerCase();
+    let query = supabase
       .from('employees')
       .select(`
         id,
@@ -77,8 +78,16 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
         departments(name),
         shifts(name)
       `)
-      .eq('is_active', true)
       .order('full_name', { ascending: true });
+
+    if (statusFilter === 'active') {
+      query = query.eq('is_active', true);
+    } else if (statusFilter === 'inactive') {
+      query = query.eq('is_active', false);
+    }
+    // status=all → no is_active filter
+
+    const { data, error } = await query;
 
     if (error) {
       throw error;

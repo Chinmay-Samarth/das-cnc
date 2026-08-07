@@ -39,6 +39,7 @@ import DeliverySchedulesPage from './blanketPos/DeliverySchedulesPage';
 import HorizonPlannerPage from './production/HorizonPlannerPage';
 import MyTodayPage from './production/MyTodayPage';
 import CampaignReviewPage from './production/CampaignReviewPage';
+import NotificationsPage from './notifications/NotificationsPage';
 import ProductionBoardPage from './production/ProductionBoardPage';
 import WorkCenterBoardPage from './production/WorkCenterBoardPage';
 import ProductionCardTrackingPage from './production/ProductionCardTrackingPage';
@@ -55,6 +56,20 @@ function RequireAuth() {
 
   if (!user) {
     return <Navigate to="/auth/login" replace />;
+  }
+
+  return <Outlet />;
+}
+
+function RequireAdmin() {
+  const { loading, hasAccess } = useAuth();
+
+  if (loading) {
+    return <main className="app-shell">Loading...</main>;
+  }
+
+  if (!hasAccess('ADMIN')) {
+    return <Navigate to="/home" replace />;
   }
 
   return <Outlet />;
@@ -103,6 +118,9 @@ export default function App() {
             }
           >
             <Route path="/home" element={<HomePage />} />
+            <Route element={<RequireAdmin />}>
+              <Route path="/notifications" element={<NotificationsPage />} />
+            </Route>
             <Route path="/attendance" element={<AttendancePage />} />
             <Route path="/employees" element={<EmployeesPage />} />
             <Route path="/employees/add" element={<AddEmployeePage />} />

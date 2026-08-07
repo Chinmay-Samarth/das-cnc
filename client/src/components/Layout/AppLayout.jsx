@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import GlobalSearch from './GlobalSearch';
+import NotificationBell from './NotificationBell';
 
 export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -26,6 +27,9 @@ export default function AppLayout() {
         <strong className="mobile-brand">
           <img src="/dascnclogo1.png" alt="DAS CNC" className="brand-logo mobile-logo" />
         </strong>
+        <div className="mobile-top-actions">
+          <NotificationBell />
+        </div>
       </header>
 
       {mobileOpen ? (
@@ -45,7 +49,10 @@ export default function AppLayout() {
       </aside>
 
       <div className="app-main">
-        <GlobalSearch />
+        <div className="app-top-chrome">
+          <GlobalSearch />
+          <NotificationBell />
+        </div>
         <Outlet />
       </div>
     </div>

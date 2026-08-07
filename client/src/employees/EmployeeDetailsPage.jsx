@@ -8,6 +8,7 @@ import AttendanceGauge from '../components/shared/Attendancegauge';
 import StatTile from '../components/shared/StatTile';
 import { ArrowLeft, ChevronLeft, ChevronRight, Factory, Pencil, TrendingUp } from 'lucide-react';
 import { EmptyState, MetricCard, StatusBadge, TruncatedText } from '../components/mes';
+import { appAlert, appConfirm } from '../components/dialog';
 
 const PLACEHOLDER_AVATAR =
   'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect fill="%23E5E7EB" width="100%25" height="100%25"/><text x="50%25" y="54%25" dominant-baseline="middle" text-anchor="middle" font-size="48" fill="%23717A83" font-family="system-ui, sans-serif">?</text></svg>';
@@ -190,6 +191,7 @@ export default function EmployeeDetailsPage() {
   const [tab, setTab] = useState('details');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [statusToggling, setStatusToggling] = useState(false);
   const [error, setError] = useState(null);
   const [lightBox, setLightBox] = useState(null);
 
@@ -387,6 +389,45 @@ export default function EmployeeDetailsPage() {
     }
   };
 
+  const handleToggleActive = async () => {
+    if (!employee || statusToggling) return;
+    const nextActive = !employee.is_active;
+    if (!nextActive) {
+      const ok = await appConfirm({
+        title: 'Mark employee inactive?',
+        message: `${employee.full_name} will be treated as inactive (e.g. resigned). They can still log in, but will not appear in attendance or total workforce until reactivated.`,
+        confirmLabel: 'Mark inactive',
+      });
+      if (!ok) return;
+    }
+
+    setStatusToggling(true);
+    setError(null);
+    try {
+      const payload = new FormData();
+      payload.append('is_active', nextActive ? 'true' : 'false');
+      await api.put(`/employees/${id}`, payload);
+      const { data } = await api.get(`/employees/${id}`);
+      const emp = data.employee || null;
+      setEmployee(emp);
+      if (emp) {
+        setFormData((prev) => ({ ...prev, is_active: emp.is_active ? 'true' : 'false' }));
+      }
+      await appAlert({
+        title: nextActive ? 'Employee activated' : 'Employee deactivated',
+        message: nextActive
+          ? `${employee.full_name} is active again.`
+          : `${employee.full_name} is now inactive.`,
+        tone: 'success',
+      });
+    } catch (err) {
+      console.error('Failed to toggle employee status:', err);
+      setError(err.response?.data?.error || 'Unable to update employee status.');
+    } finally {
+      setStatusToggling(false);
+    }
+  };
+
   const getStatusChipClass = (status) => {
     switch (String(status || '').toUpperCase()) {
       case 'ABSENT':   return 'absent';
@@ -418,21 +459,44 @@ export default function EmployeeDetailsPage() {
           </div>
           <div className="">
             <h1>{employee?.full_name}</h1>
-            <div className="" style={{display: 'flex', gap: '25px'}}>
+            <div className="" style={{display: 'flex', gap: '25px', alignItems: 'center', flexWrap: 'wrap'}}>
               <p className='muted'>{employee?.job_description}</p>
               <p className='muted'>ID: {employee?.employee_code}</p>
+              {employee ? (
+                <StatusBadge status={employee.is_active ? 'active' : 'inactive'}>
+                  {employee.is_active ? 'Active' : 'Inactive'}
+                </StatusBadge>
+              ) : null}
             </div>
           </div>
           <div className="employee-top-bar">
+            {employee ? (
+              <label className="emp-active-toggle" title={employee.is_active ? 'Mark inactive (resigned)' : 'Mark active'}>
+                <span className="emp-active-toggle-label">
+                  {employee.is_active ? 'Active' : 'Inactive'}
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={!!employee.is_active}
+                  className={`emp-switch${employee.is_active ? ' is-on' : ''}`}
+                  disabled={statusToggling || submitting}
+                  onClick={handleToggleActive}
+                >
+                  <span className="emp-switch-thumb" />
+                </button>
+              </label>
+            ) : null}
             <button
-            type="button"
-            onClick={() => setTab('edit')}
-            className="neutral-button"
-            aria-selected = {tab === 'edit'}
-            role = 'tab'
-          >
-            <Pencil size={16} style={{display: 'inline', marginRight: 4}}/>Edit
-          </button>
+              type="button"
+              onClick={() => setTab('edit')}
+              className="neutral-button"
+              aria-selected={tab === 'edit'}
+              role="tab"
+            >
+              <Pencil size={16} style={{ display: 'inline', marginRight: 4 }} />
+              Edit
+            </button>
           </div>
         </div>
         <div className="pill-tabs" >
@@ -516,7 +580,27 @@ export default function EmployeeDetailsPage() {
                     <div><p className="employee-detail-label">Full Name</p><p className="employee-detail-value">{employee.full_name}</p></div>
                     <div><p className="employee-detail-label">Employee Code</p><p className="employee-detail-value">{employee.employee_code}</p></div>
                     <div><p className="employee-detail-label">Job Description</p><p className="employee-detail-value">{employee.job_description || '--'}</p></div>
-                    <div><p className="employee-detail-label">Status</p><p className="employee-detail-value">{employee.status}</p></div>
+                    <div><p className="employee-detail-label">Status</p>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4 }}>
+                        <StatusBadge status={employee.is_active ? 'active' : 'inactive'}>
+                          {employee.is_active ? 'Active' : 'Inactive'}
+                        </StatusBadge>
+                        <button
+                          type="button"
+                          className="neutral-button"
+                          style={{ padding: '4px 10px', fontSize: 13 }}
+                          disabled={statusToggling || submitting}
+                          onClick={handleToggleActive}
+                        >
+                          {statusToggling
+                            ? 'Updating…'
+                            : employee.is_active
+                              ? 'Mark inactive'
+                              : 'Mark active'}
+                        </button>
+                      </div>
+          
+                    </div>
                     <div><p className="employee-detail-label">Department</p><p className="employee-detail-value">{employee.department || 'Not assigned'}</p></div>
                     <div><p className="employee-detail-label">Shift</p><p className="employee-detail-value">{employee.shift || 'Not assigned'}</p></div>
                     <div><p className="employee-detail-label">ESI Number</p><p className="employee-detail-value">{employee.ESI_no || 'Not assigned'}</p></div>

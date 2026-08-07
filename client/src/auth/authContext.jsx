@@ -32,9 +32,9 @@ export function AuthProvider({ children }) {
           job_description: data.employee.job_description,
           shift: data.employee.shift_name,
           department: data.employee.department,
-          accessLevel: data.employee.access_level,
+          accessLevel: data.employee.job_description,
+          is_active: data.employee.is_active !== false,
         })
-        console.log(data.employee)
       } catch {
         localStorage.removeItem('dascnc_user')
         delete api.defaults.headers.common['Authorization']
@@ -62,7 +62,8 @@ export function AuthProvider({ children }) {
       department:   data.employee.department,
       token:        data.token,
       // Roles: 'ADMIN' | 'MANAGER' | 'SUPERVISOR' | 'OPERATOR'
-      accessLevel:  data.employee.access_level,
+      accessLevel:  data.employee.job_description,
+      is_active:    data.employee.is_active !== false,
     }
     setUser(userData)
     localStorage.setItem('dascnc_user', JSON.stringify(userData))

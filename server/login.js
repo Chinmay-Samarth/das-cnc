@@ -2,6 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { createClient } = require('@supabase/supabase-js');
+const { computeAccessLevel } = require('./utils/accessLevel');
 
 const router = express.Router();
 
@@ -12,19 +13,6 @@ const supabase = createClient(
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '12h';
-
-function normalizeRole(role) {
-  return String(role || '').toUpperCase();
-}
-
-function computeAccessLevel(role) {
-  const normalized = normalizeRole(role);
-
-  if (normalized.includes('ADMIN')) return 'ADMIN';
-  if (normalized.includes('MANAGER')) return 'MANAGER';
-  if (normalized.includes('SUPERVISOR')) return 'SUPERVISOR';
-  return 'OPERATOR';
-}
 
 async function verifyPassword(password, employee) {
   // Supports either hashed passwords or temporary plain-text passwords.
@@ -73,7 +61,7 @@ router.post('/login', async (req, res) => {
       .eq('employee_code', normalizedCode)
       .single();
 
-    if (error || !employee || !employee.is_active) {
+    if (error || !employee) {
       return res.status(401).json({ error: 'Invalid employee code or password' });
     }
 
@@ -92,6 +80,7 @@ router.post('/login', async (req, res) => {
         full_name: employee.full_name,
         job_description: employee.job_description,
         access_level: computeAccessLevel(employee.job_description),
+        is_active: employee.is_active !== false,
         department: employee.departments?.name || null,
         shift_name: employee.shifts?.name || null,
       },
@@ -126,7 +115,7 @@ router.get('/me', async (req, res) => {
       .eq('id', employeeId)
       .single();
 
-    if (error || !employee || !employee.is_active) {
+    if (error || !employee) {
       return res.status(401).json({ error: 'Invalid token user' });
     }
 
@@ -137,6 +126,7 @@ router.get('/me', async (req, res) => {
         full_name: employee.full_name,
         job_description: employee.job_description,
         access_level: computeAccessLevel(employee.job_description),
+        is_active: employee.is_active !== false,
         department: employee.departments?.name || null,
         shift_name: employee.shifts?.name || null,
       },

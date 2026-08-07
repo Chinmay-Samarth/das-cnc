@@ -7,8 +7,9 @@ const http = require('http');
 const express    = require('express');
 const cron       = require('node-cron');
 const { markAbsentees } = require('./services/attendanceEngine');
-const {syncBiometricData} = require('./services/biometricSync')
-const cors = require("cors")
+const { syncBiometricData } = require('./services/biometricSync');
+const { evaluateAttendanceAlerts } = require('./services/attendanceAlertEngine');
+const cors = require('cors');
 const { initSocket, attachConnectionHandlers } = require('./socket');
  
 const app = express();
@@ -44,6 +45,7 @@ app.use('/api/blanket-pos', require('./routes/blanketPos'));
 app.use('/api/delivery-schedules', require('./routes/deliverySchedules'));
 app.use('/api/production', require('./routes/production'));
 app.use('/api/campaigns', require('./routes/campaigns'));
+app.use('/api/notifications', require('./routes/notifications'));
 // app.use('/api/machines',   require('./routes/machines'));    // next module
  
 // Health check
@@ -92,17 +94,34 @@ cron.schedule('0 7 * * *', async () => {
   timezone: process.env.TIMEZONE || 'Asia/Kolkata'
 });
 
-cron.schedule('*/5 * * * *', async () =>{
+cron.schedule('*/5 * * * *', async () => {
   console.log('Fetching Biometric Data...');
-  try{
+  try {
     await syncBiometricData();
-  }catch (err){
-    console.log("Failed to Fetch Data", err)
-  } 
-})
+  } catch (err) {
+    console.log('Failed to Fetch Data', err);
+  }
+});
 
-// console.log('Biometric sync cron job scheduled to run every minute');
- 
+// Attendance alerts for Admin inbox (open punch-out / low % / consecutive absent)
+cron.schedule('*/20 * * * *', async () => {
+  console.log('Evaluating attendance alerts...');
+  try {
+    const result = await evaluateAttendanceAlerts();
+    console.log('Attendance alerts evaluated:', result.created);
+  } catch (err) {
+    console.error('Attendance alert evaluation failed:', err);
+  }
+}, {
+  timezone: process.env.TIMEZONE || 'Asia/Kolkata'
+});
+
+// Run once shortly after boot so the inbox is not empty until the first cron tick
+setTimeout(() => {
+  evaluateAttendanceAlerts()
+    .then((result) => console.log('Initial attendance alerts:', result.created))
+    .catch((err) => console.error('Initial attendance alert evaluation failed:', err));
+}, 8000);
 const PORT = process.env.PORT || 3001;
 const server = http.createServer(app);
 const io = initSocket(server);
