@@ -12,10 +12,12 @@ const TZ = process.env.TIMEZONE || 'Asia/Kolkata';
 const IST_OFFSET = '+05:30';
 
 const {
-  processBiometricEvent
+  processBiometricEvent,
+  reprocessOpenPunchOuts,
+  repairLunchFalseOuts,
 } = require('../services/attendanceEngine');
 const { emitAttendanceUpdated } = require('../socket/emitter');
-const { isAdminJob, isWorkforceEmployee } = require('../utils/accessLevel');
+const { isAdminJob, isWorkforceEmployee, computeAccessLevel } = require('../utils/accessLevel');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -132,7 +134,13 @@ router.post(
         message:
           result.event_type === 'CHECK_IN'
             ? 'Checked in successfully'
-            : 'Checked out successfully',
+            : result.event_type === 'CHECK_OUT'
+              ? 'Checked out successfully'
+              : result.event_type === 'BREAK_OUT'
+                ? 'Lunch punch-out recorded'
+                : result.event_type === 'BREAK_IN'
+                  ? 'Lunch punch-in recorded'
+                  : 'Punch processed',
 
         ...result
       });
@@ -692,5 +700,59 @@ router.get(
     }
   }
 );
+
+// ─────────────────────────────────────────────
+// POST /api/attendance/reprocess-open
+// Admin backfill: close open punch-outs using later biometric punches (last N days)
+// ─────────────────────────────────────────────
+
+router.post('/reprocess-open', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const level = computeAccessLevel(req.user?.job_description || req.user?.access_level);
+    if (level !== 'ADMIN') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const lookbackDays = Math.min(60, Math.max(1, Number(req.body?.lookbackDays) || 14));
+    const summary = await reprocessOpenPunchOuts({ lookbackDays });
+    return res.json({
+      message: `Reprocessed open punch-outs (${lookbackDays} day lookback)`,
+      ...summary,
+    });
+  } catch (err) {
+    console.error('Reprocess open punch-outs error:', err);
+    return res.status(500).json({
+      error: 'Internal server error',
+      message: err.message,
+    });
+  }
+});
+
+// ─────────────────────────────────────────────
+// POST /api/attendance/repair-lunch-false-outs
+// Admin: demote lunch-band false punched_out_at → break, then reprocess
+// ─────────────────────────────────────────────
+
+router.post('/repair-lunch-false-outs', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const level = computeAccessLevel(req.user?.job_description || req.user?.access_level);
+    if (level !== 'ADMIN') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const lookbackDays = Math.min(60, Math.max(1, Number(req.body?.lookbackDays) || 14));
+    const summary = await repairLunchFalseOuts({ lookbackDays });
+    return res.json({
+      message: `Repaired lunch-band false check-outs (${lookbackDays} day lookback)`,
+      ...summary,
+    });
+  } catch (err) {
+    console.error('Repair lunch false outs error:', err);
+    return res.status(500).json({
+      error: 'Internal server error',
+      message: err.message,
+    });
+  }
+});
 
 module.exports = router;

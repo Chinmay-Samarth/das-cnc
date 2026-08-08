@@ -5,6 +5,7 @@
 
 const { createClient } = require('@supabase/supabase-js');
 const { isWorkforceEmployee } = require('../utils/accessLevel');
+const { ensureNotification } = require('./notificationStore');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -100,44 +101,6 @@ async function updateNotificationSettings(patch, actorId = null) {
 }
 
 /**
- * Insert if dedupe_key does not already exist (any status).
- * Once dismissed, same key will not re-fire until period key changes.
- */
-async function ensureNotification(row) {
-  const { data: existing, error: exErr } = await supabase
-    .from('notifications')
-    .select('id, status')
-    .eq('dedupe_key', row.dedupe_key)
-    .maybeSingle();
-  if (exErr) throw exErr;
-  if (existing) return { created: false, id: existing.id, status: existing.status };
-
-  const { data, error } = await supabase
-    .from('notifications')
-    .insert({
-      audience: 'admin',
-      category: 'attendance',
-      severity: row.severity || 'warning',
-      type: row.type,
-      title: row.title,
-      body: row.body,
-      payload: row.payload || {},
-      employee_id: row.employee_id || null,
-      dedupe_key: row.dedupe_key,
-      status: 'unread',
-    })
-    .select('id')
-    .single();
-
-  if (error) {
-    // Race on unique dedupe_key
-    if (String(error.code) === '23505') return { created: false };
-    throw error;
-  }
-  return { created: true, id: data.id };
-}
-
-/**
  * Missing punch-out: notify the day *after* the open shift.
  * Same-day still-punched-in is not alerted; yesterday (and older lookback) open shifts are.
  */
@@ -161,8 +124,10 @@ async function evaluateOpenPunchOuts(employeesById) {
     if (!emp) continue;
     const name = emp.full_name || emp.employee_code || 'Employee';
     const result = await ensureNotification({
+      category: 'attendance',
       type: 'open_punch_out',
       severity: 'warning',
+      priority: 3,
       title: 'Missing punch-out',
       body: `${name} missed punch-out on ${row.shift_date}.`,
       employee_id: row.employee_id,
@@ -231,8 +196,10 @@ async function evaluateLowAttendance(employees, threshold) {
 
     const name = emp.full_name || emp.employee_code || 'Employee';
     const result = await ensureNotification({
+      category: 'attendance',
       type: 'low_attendance',
-      severity: score < Math.max(50, threshold - 20) ? 'critical' : 'warning',
+      severity: 'warning',
+      priority: 3,
       title: 'Low attendance',
       body: `${name} is at ${score}% this month (threshold ${threshold}%).`,
       employee_id: emp.id,
@@ -306,8 +273,10 @@ async function evaluateConsecutiveAbsent(employees) {
     const streakStart = addDaysYmd(streakEnd, -(CONSECUTIVE_ABSENT_DAYS - 1));
     const name = emp.full_name || emp.employee_code || 'Employee';
     const result = await ensureNotification({
+      category: 'attendance',
       type: 'consecutive_absent',
-      severity: 'critical',
+      severity: 'warning',
+      priority: 2,
       title: 'Consecutive absences',
       body: `${name} has been absent for ${CONSECUTIVE_ABSENT_DAYS}+ consecutive days (through ${streakEnd}).`,
       employee_id: emp.id,

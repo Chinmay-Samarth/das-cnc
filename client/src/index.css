@@ -1218,6 +1218,7 @@ button:hover:not(:disabled) {
   color: #1d4ed8;
   font-size: 12px;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .status-chip.absent {
@@ -1701,6 +1702,15 @@ button:hover:not(:disabled) {
 .notif-row.is-unread {
   border-color: var(--brand-400, #93c5fd);
   background: #f8fafc;
+}
+
+.notif-row.is-critical {
+  border-color: #fca5a5;
+  background: #fff7f7;
+}
+
+.notif-row.is-critical.is-unread {
+  border-color: #ef4444;
 }
 
 .notif-row-main {

@@ -5,6 +5,7 @@ import {
   CheckCheck,
   CalendarX2,
   LogOut,
+  PackageX,
   Percent,
   RefreshCw,
   Settings,
@@ -22,10 +23,13 @@ import { appAlert, appConfirm } from '../components/dialog';
 import { formatDisplayDateTime } from '../utils/dateFormat';
 
 const TYPE_META = {
-  open_punch_out: { icon: LogOut, label: 'Punch-out' },
-  low_attendance: { icon: Percent, label: 'Attendance %' },
-  consecutive_absent: { icon: CalendarX2, label: 'Absence streak' },
+  open_punch_out: { icon: LogOut, label: 'Punch-out', category: 'attendance' },
+  low_attendance: { icon: Percent, label: 'Attendance %', category: 'attendance' },
+  consecutive_absent: { icon: CalendarX2, label: 'Absence streak', category: 'attendance' },
+  insufficient_stock: { icon: PackageX, label: 'Stock short', category: 'inventory' },
 };
+
+const SEVERITY_RANK = { critical: 0, warning: 1, info: 2 };
 
 function relativeTime(iso) {
   if (!iso) return '';
@@ -42,16 +46,28 @@ function relativeTime(iso) {
   return formatDisplayDateTime(iso);
 }
 
+function sortNotifications(list) {
+  return [...list].sort((a, b) => {
+    const pa = Number(a.priority) || (a.category === 'inventory' ? 1 : 2);
+    const pb = Number(b.priority) || (b.category === 'inventory' ? 1 : 2);
+    if (pa !== pb) return pa - pb;
+    const sa = SEVERITY_RANK[a.severity] ?? 9;
+    const sb = SEVERITY_RANK[b.severity] ?? 9;
+    if (sa !== sb) return sa - sb;
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
+}
+
 export default function NotificationsPage() {
   const navigate = useNavigate();
   const { hasAccess } = useAuth();
   const isAdmin = hasAccess('ADMIN');
-  console.log(isAdmin)
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [statusFilter, setStatusFilter] = useState('unread');
+  const [categoryFilter, setCategoryFilter] = useState('all');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [threshold, setThreshold] = useState(80);
   const [settingsBusy, setSettingsBusy] = useState(false);
@@ -66,17 +82,18 @@ export default function NotificationsPage() {
     setLoading(true);
     setError(null);
     try {
-      const params = { category: 'attendance' };
+      const params = {};
       if (statusFilter === 'unread') params.status = 'unread';
+      if (categoryFilter !== 'all') params.category = categoryFilter;
       const { data } = await api.get('/notifications', { params });
-      setItems(data.notifications || []);
+      setItems(sortNotifications(data.notifications || []));
     } catch (err) {
       setError(err.response?.data?.error || 'Unable to load notifications');
       setItems([]);
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, statusFilter]);
+  }, [isAdmin, statusFilter, categoryFilter]);
 
   const loadSettings = useCallback(async () => {
     if (!isAdmin) return;
@@ -105,7 +122,7 @@ export default function NotificationsPage() {
     if (!isAdmin) return;
     const ok = await appConfirm({
       title: 'Mark all as read?',
-      message: 'All unread attendance alerts will be marked read.',
+      message: 'All unread alerts will be marked read.',
       confirmLabel: 'Mark all read',
     });
     if (!ok) return;
@@ -130,6 +147,8 @@ export default function NotificationsPage() {
       }
       if (n.employee_id) {
         navigate(`/employees/${n.employee_id}`);
+      } else if (n.category === 'inventory') {
+        navigate('/delivery-schedules');
       } else {
         await load();
       }
@@ -267,7 +286,7 @@ export default function NotificationsPage() {
         </form>
       ) : null}
 
-      <div className="mes-view-toggle" role="group" aria-label="Status filter" style={{ marginBottom: 16 }}>
+      <div className="mes-view-toggle" role="group" aria-label="Status filter" style={{ marginBottom: 12 }}>
         <button
           type="button"
           className={`mes-view-toggle-btn${statusFilter === 'unread' ? ' is-active' : ''}`}
@@ -284,6 +303,30 @@ export default function NotificationsPage() {
         </button>
       </div>
 
+      <div className="mes-view-toggle" role="group" aria-label="Category filter" style={{ marginBottom: 16, marginLeft: 16 }}>
+        <button
+          type="button"
+          className={`mes-view-toggle-btn${categoryFilter === 'all' ? ' is-active' : ''}`}
+          onClick={() => setCategoryFilter('all')}
+        >
+          All types
+        </button>
+        <button
+          type="button"
+          className={`mes-view-toggle-btn${categoryFilter === 'attendance' ? ' is-active' : ''}`}
+          onClick={() => setCategoryFilter('attendance')}
+        >
+          Attendance
+        </button>
+        <button
+          type="button"
+          className={`mes-view-toggle-btn${categoryFilter === 'inventory' ? ' is-active' : ''}`}
+          onClick={() => setCategoryFilter('inventory')}
+        >
+          Inventory
+        </button>
+      </div>
+
       {error ? <p className="error-message">{error}</p> : null}
       {loading ? <p className="muted">Loading notifications…</p> : null}
 
@@ -291,25 +334,26 @@ export default function NotificationsPage() {
         <EmptyState
           icon={Bell}
           title="You're all caught up"
-          description="No attendance alerts right now. Missed punch-outs (flagged next day), low attendance, and absence streaks will appear here."
+          description="Missed punch-outs, low attendance, absence streaks, and stock shortages for today's / tomorrow's deliveries will appear here."
         />
       ) : null}
 
       {!loading && items.length > 0 ? (
         <div className="mes-card notif-list" style={{ padding: 12 }}>
           <p className="muted" style={{ margin: '4px 8px 12px', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            Attendance
+            Priority 1 (inventory) first
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {items.map((n) => {
               const meta = TYPE_META[n.type] || { icon: UserX, label: n.type };
               const Icon = meta.icon;
               const unread = n.status === 'unread';
+              const priority = Number(n.priority) || (n.category === 'inventory' ? 1 : 2);
               return (
                 <button
                   key={n.id}
                   type="button"
-                  className={`mes-list-item notif-row${unread ? ' is-unread' : ''}`}
+                  className={`mes-list-item notif-row${unread ? ' is-unread' : ''}${priority === 1 ? ' is-critical' : ''}`}
                   onClick={() => handleOpen(n)}
                   disabled={busyId === n.id}
                 >
@@ -323,6 +367,9 @@ export default function NotificationsPage() {
                           <TruncatedText>{n.title}</TruncatedText>
                         </span>
                         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+                          <StatusBadge status={priority === 1 ? 'overdue' : 'ready'}>
+                            P{priority}
+                          </StatusBadge>
                           {unread ? <StatusBadge status="ready">Unread</StatusBadge> : null}
                           <StatusBadge status={n.severity === 'critical' ? 'overdue' : 'ready'}>
                             {meta.label}
@@ -335,6 +382,8 @@ export default function NotificationsPage() {
                       <p className="mes-list-item-meta" style={{ marginBottom: 0, marginTop: 4 }}>
                         {relativeTime(n.created_at)}
                         {n.payload?.employee_code ? ` · ${n.payload.employee_code}` : ''}
+                        {n.payload?.component_label ? ` · ${n.payload.component_label}` : ''}
+                        {n.payload?.due_date ? ` · due ${n.payload.due_date}` : ''}
                       </p>
                     </div>
                   </div>

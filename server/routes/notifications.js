@@ -10,6 +10,7 @@ const {
   getNotificationSettings,
   updateNotificationSettings,
 } = require('../services/attendanceAlertEngine');
+const { evaluateTomorrowDeliveryStockAlerts } = require('../services/inventoryAlertEngine');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
@@ -106,8 +107,9 @@ router.post(
     if (!isAdmin(req.user)) {
       return res.status(403).json({ error: 'Admin access required' });
     }
-    const result = await evaluateAttendanceAlerts();
-    res.json(result);
+    const attendance = await evaluateAttendanceAlerts();
+    const inventory = await evaluateTomorrowDeliveryStockAlerts();
+    res.json({ attendance, inventory });
   })
 );
 
@@ -122,6 +124,7 @@ router.get(
       .from('notifications')
       .select('*')
       .eq('audience', 'admin')
+      .order('priority', { ascending: true })
       .order('created_at', { ascending: false })
       .limit(Math.min(200, Number(req.query.limit) || 100));
 

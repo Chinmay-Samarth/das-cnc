@@ -9,6 +9,7 @@ const cron       = require('node-cron');
 const { markAbsentees } = require('./services/attendanceEngine');
 const { syncBiometricData } = require('./services/biometricSync');
 const { evaluateAttendanceAlerts } = require('./services/attendanceAlertEngine');
+const { evaluateTomorrowDeliveryStockAlerts } = require('./services/inventoryAlertEngine');
 const cors = require('cors');
 const { initSocket, attachConnectionHandlers } = require('./socket');
  
@@ -103,14 +104,20 @@ cron.schedule('*/5 * * * *', async () => {
   }
 });
 
-// Attendance alerts for Admin inbox (open punch-out / low % / consecutive absent)
+// Admin inbox alerts: attendance + tomorrow delivery stock shortages
 cron.schedule('*/20 * * * *', async () => {
-  console.log('Evaluating attendance alerts...');
+  console.log('Evaluating admin alerts...');
   try {
-    const result = await evaluateAttendanceAlerts();
-    console.log('Attendance alerts evaluated:', result.created);
+    const attendance = await evaluateAttendanceAlerts();
+    console.log('Attendance alerts evaluated:', attendance.created);
   } catch (err) {
     console.error('Attendance alert evaluation failed:', err);
+  }
+  try {
+    const inventory = await evaluateTomorrowDeliveryStockAlerts();
+    console.log('Inventory delivery alerts evaluated:', inventory.created);
+  } catch (err) {
+    console.error('Inventory delivery alert evaluation failed:', err);
   }
 }, {
   timezone: process.env.TIMEZONE || 'Asia/Kolkata'
@@ -121,6 +128,9 @@ setTimeout(() => {
   evaluateAttendanceAlerts()
     .then((result) => console.log('Initial attendance alerts:', result.created))
     .catch((err) => console.error('Initial attendance alert evaluation failed:', err));
+  evaluateTomorrowDeliveryStockAlerts()
+    .then((result) => console.log('Initial inventory delivery alerts:', result.created))
+    .catch((err) => console.error('Initial inventory delivery alert evaluation failed:', err));
 }, 8000);
 const PORT = process.env.PORT || 3001;
 const server = http.createServer(app);
