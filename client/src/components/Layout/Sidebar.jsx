@@ -130,42 +130,63 @@ function CollapsibleSection({ id, label, items, open, onToggle, onNavigate }) {
 }
 
 export default function Sidebar({ onNavigate }) {
-  const { user, logout } = useAuth();
+  const { user, logout, isFloorOnly } = useAuth();
   const location = useLocation();
   const [masters, setMasters] = useState([]);
   const [managesWorkCenter, setManagesWorkCenter] = useState(false);
   const [openSections, setOpenSections] = useState(() => readStoredOpen() || {});
+  const floorOnly = isFloorOnly();
 
   useEffect(() => {
+    if (floorOnly) {
+      setMasters([]);
+      return undefined;
+    }
     api.get('/masters/sidebar').then((res) => {
       setMasters(res.data || []);
     });
-  }, []);
+  }, [floorOnly]);
 
   useEffect(() => {
+    if (floorOnly) {
+      setManagesWorkCenter(false);
+      return undefined;
+    }
     api
       .get('/campaigns/managed-work-centers')
       .then(({ data }) => {
         setManagesWorkCenter((data.work_centers || []).length > 0);
       })
       .catch(() => setManagesWorkCenter(false));
-  }, []);
+  }, [floorOnly]);
 
   const sections = useMemo(() => {
+    if (floorOnly) {
+      return [
+        {
+          id: 'shopfloor',
+          label: 'Shop floor',
+          items: [{ to: '/production/today', label: 'My Today', icon: UserCheck }],
+        },
+      ];
+    }
+
     return NAV_SECTIONS.map((section) => ({
       ...section,
       items: section.items.filter((item) => !item.managerOnly || managesWorkCenter),
     })).filter((section) => section.items.length > 0);
-  }, [managesWorkCenter]);
+  }, [managesWorkCenter, floorOnly]);
 
   const masterItems = useMemo(
     () =>
-      masters.map((m) => ({
-        to: `/masters/${m.slug}`,
-        label: m.name.replace(/\s*Master$/i, ''),
-        icon: Database,
-      })),
-    [masters]
+      floorOnly
+        ? []
+        : masters.map((m) => ({
+            to: `/masters/${m.slug}`,
+            label: m.name.replace(/\s*Master$/i, ''),
+            icon: Database,
+          })),
+    [masters, floorOnly]
   );
 
   // Auto-open the section that owns the current route
@@ -214,33 +235,46 @@ export default function Sidebar({ onNavigate }) {
       </div>
 
       <nav className="sidebar-nav" aria-label="Main">
-        <div className="sidebar-pin">
-          <NavItem item={{ to: '/home', label: 'Home', icon: Home, end: true }} onNavigate={onNavigate} />
-        </div>
+        {floorOnly ? null : (
+          <div className="sidebar-pin">
+            <NavItem item={{ to: '/home', label: 'Home', icon: Home, end: true }} onNavigate={onNavigate} />
+          </div>
+        )}
 
         <div className="sidebar-sections">
-          {sections.map((section) => (
-            <CollapsibleSection
-              key={section.id}
-              id={section.id}
-              label={section.label}
-              items={section.items}
-              open={!!openSections[section.id]}
-              onToggle={toggleSection}
-              onNavigate={onNavigate}
-            />
-          ))}
+          {floorOnly ? (
+            <div className="sidebar-pin">
+              <NavItem
+                item={{ to: '/production/today', label: 'My Today', icon: UserCheck }}
+                onNavigate={onNavigate}
+              />
+            </div>
+          ) : (
+            <>
+              {sections.map((section) => (
+                <CollapsibleSection
+                  key={section.id}
+                  id={section.id}
+                  label={section.label}
+                  items={section.items}
+                  open={!!openSections[section.id]}
+                  onToggle={toggleSection}
+                  onNavigate={onNavigate}
+                />
+              ))}
 
-          {masterItems.length ? (
-            <CollapsibleSection
-              id="masters"
-              label="Masters"
-              items={masterItems}
-              open={!!openSections.masters}
-              onToggle={toggleSection}
-              onNavigate={onNavigate}
-            />
-          ) : null}
+              {masterItems.length ? (
+                <CollapsibleSection
+                  id="masters"
+                  label="Masters"
+                  items={masterItems}
+                  open={!!openSections.masters}
+                  onToggle={toggleSection}
+                  onNavigate={onNavigate}
+                />
+              ) : null}
+            </>
+          )}
         </div>
       </nav>
 

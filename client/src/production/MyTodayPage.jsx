@@ -1,12 +1,106 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronDown, ChevronRight, Copy, Package, RefreshCw, UserCheck, Users } from 'lucide-react';
+import {
+  CalendarDays,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Package,
+  RefreshCw,
+  UserCheck,
+  Users,
+} from 'lucide-react';
 import api from '../api/client';
+import { useAuth } from '../auth/authContext';
 import { useSocket } from '../socket/socketContext';
 import { PageHeader, EmptyState, StatusBadge, TruncatedText } from '../components/mes';
 import { appAlert } from '../components/dialog';
+import { formatDisplayDate } from '../utils/dateFormat';
 
 const DONE_CHIP_LIMIT = 8;
+const PLANT_TZ = 'Asia/Kolkata';
+
+function plantTodayStr() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: PLANT_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+function plantMonthYear() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: PLANT_TZ,
+    year: 'numeric',
+    month: '2-digit',
+  }).formatToParts(new Date());
+  const year = Number(parts.find((p) => p.type === 'year')?.value);
+  const month = Number(parts.find((p) => p.type === 'month')?.value);
+  return { year, month };
+}
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function ymd(year, month, day) {
+  return `${year}-${pad2(month)}-${pad2(day)}`;
+}
+
+/** Calendar days in month up to today (plant TZ) — same idea as Employee Details. */
+function monthDaysUpToToday(year, month, todayYmd) {
+  const lastOfMonth = new Date(year, month, 0).getDate();
+  const [ty, tm, td] = String(todayYmd).split('-').map(Number);
+  const last =
+    ty === year && tm === month ? Math.min(lastOfMonth, td) : lastOfMonth;
+  const days = [];
+  for (let d = 1; d <= last; d += 1) days.push(ymd(year, month, d));
+  return days;
+}
+
+const PRESENT_STATUSES = new Set(['PRESENT', 'COMPLETED', 'LATE', 'HALF_DAY']);
+
+/**
+ * Absent / leave days for the month: days with no PRESENT* punch
+ * (plus explicit LEAVE / ABSENT rows), matching Employee Details absences.
+ */
+function buildLeaveDays(records, year, month, todayYmd) {
+  const daysInRange = monthDaysUpToToday(year, month, todayYmd);
+  const attended = new Set();
+  const explicitLeave = new Map();
+
+  for (const row of records || []) {
+    const status = String(row.status || '').toUpperCase();
+    const date = String(row.shift_date || '').slice(0, 10);
+    if (!date) continue;
+    if (PRESENT_STATUSES.has(status)) {
+      attended.add(date);
+    } else if (status === 'LEAVE' || status === 'ABSENT') {
+      explicitLeave.set(date, {
+        shift_date: date,
+        status,
+        shift: row.shift || null,
+        supervisor_note: row.supervisor_note || null,
+      });
+    }
+  }
+
+  const leaveDays = [];
+  for (const date of daysInRange) {
+    if (attended.has(date)) continue;
+    const tagged = explicitLeave.get(date);
+    leaveDays.push(
+      tagged || {
+        shift_date: date,
+        status: 'ABSENT',
+        shift: null,
+        supervisor_note: null,
+      }
+    );
+  }
+  return leaveDays;
+}
 
 function getEfficiencyMood(efficiency, opsCompletedToday, hasActive) {
   if (efficiency >= 80 && opsCompletedToday >= 1) return 'good';
@@ -189,8 +283,13 @@ function MyTodayJobCard({
 
 /** Collapsed summary for a completed daily card */
 function CompletedCardCollapsed({ card, lotNumber, onOpenTracking }) {
+  const Tag = onOpenTracking ? 'button' : 'div';
   return (
-    <button type="button" className="mes-list-item mt-complete-item" onClick={onOpenTracking}>
+    <Tag
+      type={onOpenTracking ? 'button' : undefined}
+      className="mes-list-item mt-complete-item"
+      onClick={onOpenTracking || undefined}
+    >
       <div className="mes-list-item-top">
         <span className="mes-list-item-title mt-mono">{card.card_number || 'Card'}</span>
         <StatusBadge status="COMPLETED">Done</StatusBadge>
@@ -209,7 +308,7 @@ function CompletedCardCollapsed({ card, lotNumber, onOpenTracking }) {
           </span>
         ) : null}
       </div>
-    </button>
+    </Tag>
   );
 }
 
@@ -465,11 +564,187 @@ function EfficiencyMatrix({ team, workCenterId, workDate, initiallySaved, onSave
 }
 
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  return plantTodayStr();
+}
+
+/** OPERATOR personal view: today's worker_efficiency_entries + monthly leave days */
+function OperatorPersonalToday() {
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [todayEntries, setTodayEntries] = useState([]);
+  const [leaveRecords, setLeaveRecords] = useState([]);
+  const [monthLabel, setMonthLabel] = useState('');
+
+  const load = useCallback(async () => {
+    if (!user?.id) return;
+    setLoading(true);
+    setError(null);
+    const today = plantTodayStr();
+    const { year, month } = plantMonthYear();
+    setMonthLabel(
+      new Date(Date.UTC(year, month - 1, 1)).toLocaleString('en-IN', {
+        month: 'long',
+        year: 'numeric',
+        timeZone: 'UTC',
+      })
+    );
+
+    const errors = [];
+    try {
+      const [effSettled, attSettled] = await Promise.allSettled([
+        api.get(`/employees/${user.id}/efficiency`),
+        api.get(`/attendance/employee/${user.id}/monthly`, {
+          params: { month, year },
+        }),
+      ]);
+
+      if (effSettled.status === 'fulfilled') {
+        const entries = (effSettled.value.data?.entries || []).filter(
+          (row) => String(row.work_date).slice(0, 10) === today
+        );
+        setTodayEntries(entries);
+      } else {
+        setTodayEntries([]);
+        errors.push('efficiency');
+      }
+
+      if (attSettled.status === 'fulfilled') {
+        const records = attSettled.value.data?.records || [];
+        setLeaveRecords(buildLeaveDays(records, year, month, today));
+      } else {
+        setLeaveRecords([]);
+        errors.push('attendance');
+      }
+
+      if (errors.length === 2) {
+        setError('Unable to load your today summary');
+      } else if (errors.includes('attendance')) {
+        setError('Unable to load monthly leave days');
+      } else if (errors.includes('efficiency')) {
+        setError('Unable to load today efficiency');
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || 'Unable to load your today summary');
+      setTodayEntries([]);
+      setLeaveRecords([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const todayAvg = useMemo(() => {
+    if (!todayEntries.length) return 0;
+    const sum = todayEntries.reduce((s, r) => s + Number(r.efficiency_pct || 0), 0);
+    return Math.round(sum / todayEntries.length);
+  }, [todayEntries]);
+
+  const recorded = todayEntries.length > 0;
+
+  return (
+    <main className="mes-shell mt-page">
+      <PageHeader
+        eyebrow="Operator"
+        title="My Today"
+        actions={
+          <button
+            type="button"
+            className="mes-btn mes-btn-secondary"
+            onClick={load}
+            disabled={loading}
+          >
+            <RefreshCw size={15} />
+            Refresh
+          </button>
+        }
+      />
+
+      {error ? <p className="error-message">{error}</p> : null}
+      {loading ? <p className="muted">Loading…</p> : null}
+
+      {!loading ? (
+        <>
+          <EfficiencyHero
+            efficiency={todayAvg}
+            good={todayAvg}
+            goal={100}
+            opsCompletedToday={recorded ? todayEntries.length : 0}
+            hasActive={false}
+          />
+
+          <section className="mes-card mt-panel" aria-label="Monthly leaves" style={{ marginTop: 16 }}>
+            <header className="mt-panel-header">
+              <div>
+                <p className="mes-eyebrow">Attendance</p>
+                <h2 className="mt-panel-title">Leaves · {monthLabel}</h2>
+              </div>
+              <StatusBadge status={leaveRecords.length ? 'overdue' : 'completed'}>
+                {leaveRecords.length}
+              </StatusBadge>
+            </header>
+
+            {!leaveRecords.length ? (
+              <EmptyState
+                icon={CalendarDays}
+                title="No leave this month"
+                description="Days without attendance this month will list here."
+              />
+            ) : (
+              <div className="mt-panel-list">
+                {leaveRecords
+                  .slice()
+                  .sort((a, b) => String(a.shift_date).localeCompare(String(b.shift_date)))
+                  .map((row) => {
+                    const status = String(row.status || '').toUpperCase();
+                    const label = status === 'LEAVE' ? 'Leave' : 'Absent';
+                    return (
+                      <div key={row.shift_date} className="mes-list-item">
+                        <div className="mes-list-item-top">
+                          <span className="mes-list-item-title">
+                            {formatDisplayDate(row.shift_date)}
+                          </span>
+                          <StatusBadge status="overdue">{label}</StatusBadge>
+                        </div>
+                        {row.shift ? (
+                          <p className="mes-list-item-sub" style={{ marginBottom: 0 }}>
+                            {row.shift}
+                          </p>
+                        ) : null}
+                        {row.supervisor_note ? (
+                          <p className="mes-list-item-meta" style={{ marginBottom: 0, marginTop: 4 }}>
+                            <TruncatedText>{row.supervisor_note}</TruncatedText>
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </section>
+        </>
+      ) : null}
+    </main>
+  );
 }
 
 export default function MyTodayPage() {
   const navigate = useNavigate();
+  const { isFloorOnly, user } = useAuth();
+  const floorOnly = isFloorOnly();
+  const isOperator = user?.accessLevel === 'OPERATOR';
+
+  if (isOperator) {
+    return <OperatorPersonalToday />;
+  }
+
+  return <ManagerMyToday floorOnly={floorOnly} navigate={navigate} />;
+}
+
+function ManagerMyToday({ floorOnly, navigate }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { subscribe } = useSocket();
   const [managedWcs, setManagedWcs] = useState([]);
@@ -696,7 +971,7 @@ export default function MyTodayPage() {
           title="Work center managers only"
           description="You are not assigned as manager on any work center. Ask an admin to set you as WC Manager on the Operators tab."
           actionLabel="Back to home"
-          onAction={() => navigate('/home')}
+          onAction={() => navigate('/production/today')}
         />
       </main>
     );
@@ -804,7 +1079,11 @@ export default function MyTodayPage() {
               <CompletedCardCollapsed
                 card={collapsedCompleted}
                 lotNumber={collapsedCompleted.lot_number}
-                onOpenTracking={() => navigate(`/production/cards/${collapsedCompleted.id}`)}
+                onOpenTracking={
+                  floorOnly
+                    ? undefined
+                    : () => navigate(`/production/cards/${collapsedCompleted.id}`)
+                }
               />
             </div>
           ) : null}
@@ -823,7 +1102,9 @@ export default function MyTodayPage() {
             <DoneTodayList
               rows={closedCommitments}
               formatOpTime={formatOpTime}
-              onOpenCard={(id) => navigate(`/production/cards/${id}`)}
+              onOpenCard={
+                floorOnly ? undefined : (id) => navigate(`/production/cards/${id}`)
+              }
             />
           ) : null}
 

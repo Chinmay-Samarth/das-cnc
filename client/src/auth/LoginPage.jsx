@@ -3,10 +3,11 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './authContext';
 
 export default function LoginPage() {
-  const { user, login } = useAuth();
+  const { user, login, defaultHomePath, isFloorOnly } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = location.state?.from?.pathname || '/home';
+  const fallback = defaultHomePath?.() || '/home';
+  const from = location.state?.from?.pathname || fallback;
 
   const [employeeCode, setEmployeeCode] = useState('');
   const [password, setPassword] = useState('');
@@ -15,7 +16,12 @@ export default function LoginPage() {
   const [error, setError] = useState('');
 
   if (user) {
-    return <Navigate to="/home" replace />;
+    const home = isFloorOnly() ? '/production/today' : '/home';
+    const dest =
+      from && from !== '/auth/login' && !(isFloorOnly() && from === '/home')
+        ? from
+        : home;
+    return <Navigate to={dest} replace />;
   }
 
   async function handleSubmit(event) {
@@ -24,8 +30,13 @@ export default function LoginPage() {
     setError('');
 
     try {
-      await login(employeeCode.trim(), password);
-      navigate(from, { replace: true });
+      const loggedIn = await login(employeeCode.trim(), password);
+      const floor =
+        loggedIn.accessLevel === 'MANAGER' || loggedIn.accessLevel === 'OPERATOR';
+      const home = floor ? '/production/today' : '/home';
+      const dest =
+        from && from !== '/auth/login' && !(floor && from === '/home') ? from : home;
+      navigate(dest, { replace: true });
     } catch (err) {
       const message = err?.response?.data?.error || 'Login failed. Please try again.';
       setError(message);

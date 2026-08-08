@@ -619,38 +619,19 @@ router.get(
   '/employee/:id/monthly',
   verifyEmployeeAuth,
   async (req, res) => {
-    const today = new Date()
-    const last_dates = {
-      "1" : 31,
-      "2" : 27,
-      "3" : 31,
-      "4" : 30,
-      "5" : 31,
-      "6" : 30,
-      "7" : 31,
-      "8" : 31,
-      "9" : 30,
-      "10" : 31,
-      "11" : 30,
-      "12" : 31,
-      
-    }
-
-    
-    let month = req.query.month
-    const lastDate = last_dates[month.toString()]
-    
-    if (month <10) {
-      month = `0${month}`
-    }
-
-
-    const year = req.query.year
     try {
       const { id } = req.params;
+      const year = Number(req.query.year);
+      const monthNum = Number(req.query.month);
 
-      const to = `${year}-${month}-${lastDate}`
-      const from = `${year}-${month}-01`
+      if (!Number.isInteger(year) || !Number.isInteger(monthNum) || monthNum < 1 || monthNum > 12) {
+        return res.status(400).json({ error: 'Valid month and year are required' });
+      }
+
+      const month = String(monthNum).padStart(2, '0');
+      const lastDate = new Date(year, monthNum, 0).getDate();
+      const from = `${year}-${month}-01`;
+      const to = `${year}-${month}-${String(lastDate).padStart(2, '0')}`;
 
       const {
         data: rows,
@@ -674,7 +655,7 @@ router.get(
 
       if (error) throw error;
 
-      const formatted = rows.map((r) => ({
+      const formatted = (rows || []).map((r) => ({
         shift_date: r.shift_date,
         shift: r.shifts?.name || null,
         status: r.status,

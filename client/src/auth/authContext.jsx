@@ -1,13 +1,30 @@
-import { createContext, useContext, useState, useEffect } from 'react'
+import { createContext, useContext, useState, useEffect, useMemo } from 'react'
 import api from '../api/client'
 
 const AuthContext = createContext(null)
 
+/** Operator < Supervisor < Manager < Admin */
+const LEVELS = ['OPERATOR', 'SUPERVISOR', 'MANAGER', 'ADMIN']
+
+function normalizeAccessLevel(raw) {
+  const value = String(raw || '').toUpperCase().trim()
+  if (LEVELS.includes(value)) return value
+  if (
+    value.includes('ADMIN') ||
+    value.includes('MANAGING DIRECTOR') ||
+    value === 'MD'
+  ) {
+    return 'ADMIN'
+  }
+  if (value.includes('MANAGER')) return 'MANAGER'
+  if (value.includes('SUPERVISOR')) return 'SUPERVISOR'
+  return 'OPERATOR'
+}
+
 export function AuthProvider({ children }) {
-  const [user, setUser]       = useState(null)
+  const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  // On mount, restore session from localStorage
   useEffect(() => {
     let mounted = true
 
@@ -24,6 +41,9 @@ export function AuthProvider({ children }) {
         const { data } = await api.get('/auth/me')
 
         if (!mounted) return
+        const accessLevel = normalizeAccessLevel(
+          data.employee.access_level || data.employee.job_description
+        )
         setUser({
           ...parsed,
           id: data.employee.id,
@@ -32,7 +52,7 @@ export function AuthProvider({ children }) {
           job_description: data.employee.job_description,
           shift: data.employee.shift_name,
           department: data.employee.department,
-          accessLevel: data.employee.job_description,
+          accessLevel,
           is_active: data.employee.is_active !== false,
         })
       } catch {
@@ -53,17 +73,19 @@ export function AuthProvider({ children }) {
 
   async function login(employeeCode, password) {
     const { data } = await api.post('/auth/login', { employeeCode, password })
+    const accessLevel = normalizeAccessLevel(
+      data.employee.access_level || data.employee.job_description
+    )
     const userData = {
-      id:           data.employee.id,
-      name:         data.employee.full_name,
-      code:         data.employee.employee_code,
-      job_description:         data.employee.job_description,
-      shift:        data.employee.shift_name,
-      department:   data.employee.department,
-      token:        data.token,
-      // Roles: 'ADMIN' | 'MANAGER' | 'SUPERVISOR' | 'OPERATOR'
-      accessLevel:  data.employee.job_description,
-      is_active:    data.employee.is_active !== false,
+      id: data.employee.id,
+      name: data.employee.full_name,
+      code: data.employee.employee_code,
+      job_description: data.employee.job_description,
+      shift: data.employee.shift_name,
+      department: data.employee.department,
+      token: data.token,
+      accessLevel,
+      is_active: data.employee.is_active !== false,
     }
     setUser(userData)
     localStorage.setItem('dascnc_user', JSON.stringify(userData))
@@ -77,16 +99,28 @@ export function AuthProvider({ children }) {
     delete api.defaults.headers.common['Authorization']
   }
 
-  // Helper: check if user has at least this access level
-  // OPERATOR < SUPERVISOR < MANAGER < ADMIN
-  const levels = ['OPERATOR', 'SUPERVISOR', 'MANAGER', 'ADMIN']
   function hasAccess(required) {
     if (!user) return false
-    return levels.indexOf(user.accessLevel) >= levels.indexOf(required)
+    return LEVELS.indexOf(user.accessLevel) >= LEVELS.indexOf(required)
   }
 
+  /** MANAGER + OPERATOR: shop-floor shell (My Today only). ADMIN + SUPERVISOR: full app. */
+  function isFloorOnly() {
+    if (!user) return false
+    return user.accessLevel === 'MANAGER' || user.accessLevel === 'OPERATOR'
+  }
+
+  function defaultHomePath() {
+    return isFloorOnly() ? '/production/today' : '/home'
+  }
+
+  const value = useMemo(
+    () => ({ user, loading, login, logout, hasAccess, isFloorOnly, defaultHomePath }),
+    [user, loading]
+  )
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, hasAccess }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   )
@@ -99,3 +133,5 @@ export function useAuth() {
   }
   return context
 }
+
+export { normalizeAccessLevel }

@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
+import { useAuth } from '../../auth/authContext';
 import Sidebar from './Sidebar';
 import GlobalSearch from './GlobalSearch';
 import NotificationBell from './NotificationBell';
 
 export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { isFloorOnly } = useAuth();
+  const floorOnly = isFloorOnly();
 
   function closeMobileNav() {
     setMobileOpen(false);
@@ -28,7 +31,7 @@ export default function AppLayout() {
           <img src="/dascnclogo1.png" alt="DAS CNC" className="brand-logo mobile-logo" />
         </strong>
         <div className="mobile-top-actions">
-          <NotificationBell />
+          {floorOnly ? null : <NotificationBell />}
         </div>
       </header>
 
@@ -45,14 +48,16 @@ export default function AppLayout() {
             Close
           </button>
         </div>
-        <Sidebar onNavigate={closeMobileNav}  />
+        <Sidebar onNavigate={closeMobileNav} />
       </aside>
 
       <div className="app-main">
-        <div className="app-top-chrome">
-          <GlobalSearch />
-          <NotificationBell />
-        </div>
+        {floorOnly ? null : (
+          <div className="app-top-chrome">
+            <GlobalSearch />
+            <NotificationBell />
+          </div>
+        )}
         <Outlet />
       </div>
     </div>

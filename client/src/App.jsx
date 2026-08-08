@@ -62,31 +62,51 @@ function RequireAuth() {
 }
 
 function RequireAdmin() {
-  const { loading, hasAccess } = useAuth();
+  const { loading, hasAccess, defaultHomePath } = useAuth();
 
   if (loading) {
     return <main className="app-shell">Loading...</main>;
   }
 
   if (!hasAccess('ADMIN')) {
-    return <Navigate to="/home" replace />;
+    return <Navigate to={defaultHomePath()} replace />;
+  }
+
+  return <Outlet />;
+}
+
+/** Full ERP shell — ADMIN & SUPERVISOR. MANAGER/OPERATOR → My Today only. */
+function RequireFullApp() {
+  const { loading, isFloorOnly } = useAuth();
+
+  if (loading) {
+    return <main className="app-shell">Loading...</main>;
+  }
+
+  if (isFloorOnly()) {
+    return <Navigate to="/production/today" replace />;
   }
 
   return <Outlet />;
 }
 
 function PublicOnly() {
-  const { user, loading } = useAuth();
+  const { user, loading, defaultHomePath } = useAuth();
 
   if (loading) {
     return <main className="app-shell">Loading...</main>;
   }
 
   if (user) {
-    return <Navigate to="/home" replace />;
+    return <Navigate to={defaultHomePath()} replace />;
   }
 
   return <Outlet />;
+}
+
+function HomeRedirect() {
+  const { defaultHomePath } = useAuth();
+  return <Navigate to={defaultHomePath()} replace />;
 }
 
 function WCCommandRedirect() {
@@ -117,61 +137,65 @@ export default function App() {
               </MastersNavProvider>
             }
           >
-            <Route path="/home" element={<HomePage />} />
-            <Route element={<RequireAdmin />}>
-              <Route path="/notifications" element={<NotificationsPage />} />
+            <Route element={<RequireFullApp />}>
+              <Route path="/home" element={<HomePage />} />
+              <Route element={<RequireAdmin />}>
+                <Route path="/notifications" element={<NotificationsPage />} />
+              </Route>
+              <Route path="/attendance" element={<AttendancePage />} />
+              <Route path="/employees" element={<EmployeesPage />} />
+              <Route path="/employees/add" element={<AddEmployeePage />} />
+              <Route path="/employees/:id" element={<EmployeeDetailsPage />} />
+              <Route path="/employees/:id/edit" element={<EmployeeDetailsPage />} />
+              <Route path="/suppliers" element={<SuppliersPage />} />
+              <Route path="/suppliers/add" element={<AddSupplierPage />} />
+              <Route path="/suppliers/:id" element={<SupplierDetailsPage />} />
+              <Route path="/suppliers/:id/invoices" element={<SupplierDetailsPage />} />
+              <Route path="/suppliers/:id/edit" element={<SupplierDetailsPage />} />
+              <Route path="/components" element={<ComponentsPage />} />
+              <Route path="/components/:id" element={<ComponentDetailPage />} />
+              <Route path="/invoices" element={<InvoicesPage />} />
+              <Route path="/invoices/:id" element={<InvoiceDetails />} />
+              <Route path="/customers" element={<CustomersPage />} />
+              <Route path="/customers/:id" element={<CustomerDetailsPage />} />
+              <Route path="/customers/add" element={<AddCustomerPage />} />
+              <Route path="/customers/:id/edit" element={<CustomerDetailsPage />} />
+              <Route path="/masters/:slug/records/:id/edit" element={<MasterRecordEditPage />} />
+              <Route path="/masters/:slug/records/:id" element={<MasterRecordDetailPage />} />
+              <Route path="/masters/:slug" element={<MasterPage />} />
+              <Route path="/masters/config/new" element={<MasterBuilderPage />} />
+              <Route path="/masters/config/:id" element={<MasterBuilderPage />} />
+              <Route path="/girn" element={<GIRNListPage />} />
+              <Route path="/girn/create" element={<CreateGIRNPage />} />
+              <Route path="/girn/:id" element={<GIRNDetailPage />} />
+              <Route path="/stock" element={<StockListPage />} />
+              <Route path="/stock/:id" element={<StockDetailPage />} />
+              <Route path="/work-centers" element={<WorkCentersPage />} />
+              <Route path="/work-centers/add" element={<AddWorkCenterPage />} />
+              <Route path="/work-centers/:id" element={<WorkCenterDetailsPage />} />
+              <Route path="/work-centers/:id/edit" element={<WorkCenterDetailsPage />} />
+              <Route path="/blanket-pos" element={<BlanketPosPage />} />
+              <Route path="/blanket-pos/add" element={<AddBlanketPoPage />} />
+              <Route path="/blanket-pos/:id" element={<BlanketPoDetailsPage />} />
+              <Route path="/delivery-schedules" element={<DeliverySchedulesPage />} />
+              <Route path="/production/horizon-planner" element={<HorizonPlannerPage />} />
+              <Route path="/production/campaigns" element={<CampaignReviewPage />} />
+              <Route path="/production/work-centers" element={<WorkCenterBoardPage />} />
+              <Route path="/production/dispatch" element={<ReadyForDispatchPage />} />
+              <Route path="/production/outsource" element={<OutsourcingPage />} />
+              <Route path="/production" element={<ProductionBoardPage />} />
+              <Route path="/production/cards/:id" element={<ProductionCardTrackingPage />} />
+              <Route path="/production/commitments/:id" element={<CommitmentToCardRedirect />} />
             </Route>
-            <Route path="/attendance" element={<AttendancePage />} />
-            <Route path="/employees" element={<EmployeesPage />} />
-            <Route path="/employees/add" element={<AddEmployeePage />} />
-            <Route path="/employees/:id" element={<EmployeeDetailsPage />} />
-            <Route path="/employees/:id/edit" element={<EmployeeDetailsPage />} />
-            <Route path="/suppliers" element={<SuppliersPage />} />
-            <Route path="/suppliers/add" element={<AddSupplierPage />} />
-            <Route path="/suppliers/:id" element={<SupplierDetailsPage />} />
-            <Route path="/suppliers/:id/invoices" element={<SupplierDetailsPage />} />
-            <Route path="/suppliers/:id/edit" element={<SupplierDetailsPage />} />
-            <Route path="/components" element={<ComponentsPage />} />
-            <Route path="/components/:id" element={<ComponentDetailPage />} />
-            <Route path="/invoices" element={<InvoicesPage />} />
-            <Route path= "/invoices/:id" element={<InvoiceDetails/>}/>
-            <Route path="/customers" element={<CustomersPage />}/>
-            <Route path="/customers/:id" element={<CustomerDetailsPage/>}/>
-            <Route path="/customers/add" element={<AddCustomerPage/>}/>
-            <Route path="/customers/:id/edit" element={<CustomerDetailsPage/>}/>
-            <Route path="/masters/:slug/records/:id/edit" element={<MasterRecordEditPage />} />
-            <Route path="/masters/:slug/records/:id" element={<MasterRecordDetailPage />} />
-            <Route path="/masters/:slug" element={<MasterPage/>}/>
-            <Route path="/masters/config/new" element={<MasterBuilderPage/>}/>
-            <Route path='/masters/config/:id' element={<MasterBuilderPage/>}/>
-            <Route path="/girn" element={<GIRNListPage />} />
-            <Route path="/girn/create" element={<CreateGIRNPage />} />
-            <Route path="/girn/:id" element={<GIRNDetailPage />} />
-            <Route path="/stock" element={<StockListPage />} />
-            <Route path="/stock/:id" element={<StockDetailPage />} />
-            <Route path="/work-centers" element={<WorkCentersPage />} />
-            <Route path="/work-centers/add" element={<AddWorkCenterPage />} />
-            <Route path="/work-centers/:id" element={<WorkCenterDetailsPage />} />
-            <Route path="/work-centers/:id/edit" element={<WorkCenterDetailsPage />} />
-            <Route path="/blanket-pos" element={<BlanketPosPage />} />
-            <Route path="/blanket-pos/add" element={<AddBlanketPoPage />} />
-            <Route path="/blanket-pos/:id" element={<BlanketPoDetailsPage />} />
-            <Route path="/delivery-schedules" element={<DeliverySchedulesPage />} />
+
+            {/* Shop-floor only: My Today (MANAGER / OPERATOR). No card tracking. */}
             <Route path="/production/today" element={<MyTodayPage />} />
-            <Route path="/production/horizon-planner" element={<HorizonPlannerPage />} />
-            <Route path="/production/campaigns" element={<CampaignReviewPage />} />
             <Route path="/production/wc-command/:id" element={<WCCommandRedirect />} />
-            <Route path="/production/work-centers" element={<WorkCenterBoardPage />} />
-            <Route path="/production/dispatch" element={<ReadyForDispatchPage />} />
-            <Route path="/production/outsource" element={<OutsourcingPage />} />
-            <Route path="/production/cards/:id" element={<ProductionCardTrackingPage />} />
-            <Route path="/production/commitments/:id" element={<CommitmentToCardRedirect />} />
-            <Route path="/production" element={<ProductionBoardPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Route>
 
-        <Route path="/" element={<Navigate to="/home" replace />} />
+        <Route path="/" element={<HomeRedirect />} />
       </Routes>
       </SocketProvider>
     </AuthProvider>

@@ -1965,7 +1965,7 @@ button:hover:not(:disabled) {
   padding: 0 2px;
   flex: 1;
   overflow-y: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
   scrollbar-color: #2a2f3a transparent;
   min-height: 0;
 }
