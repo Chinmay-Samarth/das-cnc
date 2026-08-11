@@ -62,43 +62,23 @@ function monthDaysUpToToday(year, month, todayYmd) {
 const PRESENT_STATUSES = new Set(['PRESENT', 'COMPLETED', 'LATE', 'HALF_DAY']);
 
 /**
- * Absent / leave days for the month: days with no PRESENT* punch
- * (plus explicit LEAVE / ABSENT rows), matching Employee Details absences.
+ * Approved leave days for the month (explicit LEAVE only).
  */
-function buildLeaveDays(records, year, month, todayYmd) {
-  const daysInRange = monthDaysUpToToday(year, month, todayYmd);
-  const attended = new Set();
-  const explicitLeave = new Map();
-
+function buildLeaveDays(records) {
+  const leaveDays = [];
   for (const row of records || []) {
     const status = String(row.status || '').toUpperCase();
+    if (status !== 'LEAVE') continue;
     const date = String(row.shift_date || '').slice(0, 10);
     if (!date) continue;
-    if (PRESENT_STATUSES.has(status)) {
-      attended.add(date);
-    } else if (status === 'LEAVE' || status === 'ABSENT') {
-      explicitLeave.set(date, {
-        shift_date: date,
-        status,
-        shift: row.shift || null,
-        supervisor_note: row.supervisor_note || null,
-      });
-    }
+    leaveDays.push({
+      shift_date: date,
+      status: 'LEAVE',
+      shift: row.shift || null,
+      supervisor_note: row.supervisor_note || null,
+    });
   }
-
-  const leaveDays = [];
-  for (const date of daysInRange) {
-    if (attended.has(date)) continue;
-    const tagged = explicitLeave.get(date);
-    leaveDays.push(
-      tagged || {
-        shift_date: date,
-        status: 'ABSENT',
-        shift: null,
-        supervisor_note: null,
-      }
-    );
-  }
+  leaveDays.sort((a, b) => String(a.shift_date).localeCompare(String(b.shift_date)));
   return leaveDays;
 }
 
@@ -371,47 +351,73 @@ function DoneTodayList({ rows, formatOpTime, onOpenCard }) {
   );
 }
 
-function EfficiencyMatrix({ team, workCenterId, workDate, initiallySaved, onSave }) {
-  const [rows, setRows] = useState(() =>
-    team.map((emp) => ({
-      employee_id: emp.employee_id || emp.id,
-      full_name: emp.full_name,
-      efficiency_pct: emp.efficiency_pct ?? '',
-      notes: emp.notes || '',
-    }))
-  );
+function EfficiencyMatrix({
+  team,
+  workCenterId,
+  workDate,
+  initiallySaved,
+  onSave,
+  efficiencyIndex = 0,
+  managerEmployeeId = null,
+}) {
+  const indexPct = Number.isFinite(Number(efficiencyIndex)) ? Math.round(Number(efficiencyIndex)) : 0;
+
+  const buildRows = (list, { liveManagerIndex }) =>
+    list.map((emp) => {
+      const employeeId = emp.employee_id || emp.id;
+      const isManager =
+        emp.is_wc_manager === true ||
+        (!!managerEmployeeId && employeeId === managerEmployeeId);
+      const stored =
+        emp.efficiency_pct !== '' && emp.efficiency_pct != null
+          ? Number(emp.efficiency_pct)
+          : null;
+      return {
+        employee_id: employeeId,
+        full_name: emp.full_name,
+        is_manager: isManager,
+        efficiency_pct: isManager
+          ? liveManagerIndex
+            ? indexPct
+            : stored != null
+              ? stored
+              : indexPct
+          : emp.efficiency_pct ?? '',
+        notes: isManager
+          ? emp.notes || 'Derived from day efficiency index'
+          : emp.notes || '',
+      };
+    });
+
+  const [rows, setRows] = useState(() => buildRows(team, { liveManagerIndex: !initiallySaved }));
   const [saving, setSaving] = useState(false);
   const [savedCollapsed, setSavedCollapsed] = useState(!!initiallySaved);
   const [expanded, setExpanded] = useState(!initiallySaved);
 
   useEffect(() => {
-    setRows(
-      team.map((emp) => ({
-        employee_id: emp.employee_id || emp.id,
-        full_name: emp.full_name,
-        efficiency_pct: emp.efficiency_pct ?? '',
-        notes: emp.notes || '',
-      }))
-    );
-    if (initiallySaved) {
+    const editing = !initiallySaved || expanded;
+    setRows(buildRows(team, { liveManagerIndex: editing }));
+    if (initiallySaved && !expanded) {
       setSavedCollapsed(true);
-      setExpanded(false);
     }
-  }, [team, initiallySaved]);
+  }, [team, initiallySaved, indexPct, managerEmployeeId, expanded]);
 
   async function handleSave() {
     setSaving(true);
     try {
       for (const row of rows) {
-        if (row.efficiency_pct !== '' && row.efficiency_pct != null) {
-          await api.post('/campaigns/efficiency', {
-            work_center_id: workCenterId,
-            work_date: workDate,
-            employee_id: row.employee_id,
-            efficiency_pct: Number(row.efficiency_pct),
-            notes: row.notes || undefined,
-          });
-        }
+        const isManager = row.is_manager;
+        const pct = isManager ? indexPct : row.efficiency_pct;
+        if (pct === '' || pct == null) continue;
+        await api.post('/campaigns/efficiency', {
+          work_center_id: workCenterId,
+          work_date: workDate,
+          employee_id: row.employee_id,
+          efficiency_pct: Number(pct),
+          notes: isManager
+            ? row.notes || 'Derived from day efficiency index'
+            : row.notes || undefined,
+        });
       }
       setSavedCollapsed(true);
       setExpanded(false);
@@ -464,7 +470,10 @@ function EfficiencyMatrix({ team, workCenterId, workDate, initiallySaved, onSave
           <ul className="mt-eff-summary">
             {filled.map((row) => (
               <li key={row.employee_id} className="mt-eff-summary-row">
-                <TruncatedText className="mt-eff-name">{row.full_name}</TruncatedText>
+                <TruncatedText className="mt-eff-name">
+                  {row.full_name}
+                  {row.is_manager ? ' (manager)' : ''}
+                </TruncatedText>
                 <span className="mt-eff-pct">{Number(row.efficiency_pct)}%</span>
               </li>
             ))}
@@ -501,8 +510,8 @@ function EfficiencyMatrix({ team, workCenterId, workDate, initiallySaved, onSave
 
       <p className="mt-panel-hint">
         {savedCollapsed
-          ? 'Update values and save again if needed.'
-          : 'Optional after lot handoff — save when ready.'}
+          ? 'Update operator values and save again if needed. Manager % follows the efficiency index.'
+          : 'Optional after lot handoff — operators are entered manually; manager % is taken from the efficiency index.'}
       </p>
 
       <div className="data-table-wrap">
@@ -517,33 +526,52 @@ function EfficiencyMatrix({ team, workCenterId, workDate, initiallySaved, onSave
           <tbody>
             {rows.map((row, idx) => (
               <tr key={row.employee_id}>
-                <td>{row.full_name}</td>
                 <td>
-                  <input
-                    type="number"
-                    min="0"
-                    max="200"
-                    step="1"
-                    value={row.efficiency_pct}
-                    onChange={(e) => {
-                      const next = [...rows];
-                      next[idx].efficiency_pct = e.target.value;
-                      setRows(next);
-                    }}
-                    style={{ width: 80 }}
-                  />
+                  {row.full_name}
+                  {row.is_manager ? (
+                    <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>
+                      manager
+                    </span>
+                  ) : null}
                 </td>
                 <td>
-                  <input
-                    type="text"
-                    value={row.notes}
-                    onChange={(e) => {
-                      const next = [...rows];
-                      next[idx].notes = e.target.value;
-                      setRows(next);
-                    }}
-                    style={{ width: '100%' }}
-                  />
+                  {row.is_manager ? (
+                    <span className="mt-eff-pct" title="From efficiency index">
+                      {indexPct}%
+                    </span>
+                  ) : (
+                    <input
+                      type="number"
+                      min="0"
+                      max="200"
+                      step="1"
+                      value={row.efficiency_pct}
+                      onChange={(e) => {
+                        const next = [...rows];
+                        next[idx].efficiency_pct = e.target.value;
+                        setRows(next);
+                      }}
+                      style={{ width: 80 }}
+                    />
+                  )}
+                </td>
+                <td>
+                  {row.is_manager ? (
+                    <span className="muted" style={{ fontSize: 13 }}>
+                      From efficiency index
+                    </span>
+                  ) : (
+                    <input
+                      type="text"
+                      value={row.notes}
+                      onChange={(e) => {
+                        const next = [...rows];
+                        next[idx].notes = e.target.value;
+                        setRows(next);
+                      }}
+                      style={{ width: '100%' }}
+                    />
+                  )}
                 </td>
               </tr>
             ))}
@@ -570,6 +598,7 @@ function todayStr() {
 /** OPERATOR personal view: today's worker_efficiency_entries + monthly leave days */
 function OperatorPersonalToday() {
   const { user } = useAuth();
+  const { subscribe } = useSocket();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [todayEntries, setTodayEntries] = useState([]);
@@ -611,7 +640,7 @@ function OperatorPersonalToday() {
 
       if (attSettled.status === 'fulfilled') {
         const records = attSettled.value.data?.records || [];
-        setLeaveRecords(buildLeaveDays(records, year, month, today));
+        setLeaveRecords(buildLeaveDays(records));
       } else {
         setLeaveRecords([]);
         errors.push('attendance');
@@ -636,6 +665,19 @@ function OperatorPersonalToday() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    return subscribe('leave-requests:updated', (payload) => {
+      if (payload?.employeeId && user?.id && payload.employeeId !== user.id) return;
+      load();
+    });
+  }, [subscribe, load, user?.id]);
+
+  useEffect(() => {
+    return subscribe('attendance:updated', (payload) => {
+      if (payload?.action === 'leave_approved') load();
+    });
+  }, [subscribe, load]);
 
   const todayAvg = useMemo(() => {
     if (!todayEntries.length) return 0;
@@ -690,8 +732,8 @@ function OperatorPersonalToday() {
             {!leaveRecords.length ? (
               <EmptyState
                 icon={CalendarDays}
-                title="No leave this month"
-                description="Days without attendance this month will list here."
+                title="No approved leave this month"
+                description="Approved leave days will list here."
               />
             ) : (
               <div className="mt-panel-list">
@@ -699,25 +741,16 @@ function OperatorPersonalToday() {
                   .slice()
                   .sort((a, b) => String(a.shift_date).localeCompare(String(b.shift_date)))
                   .map((row) => {
-                    const status = String(row.status || '').toUpperCase();
-                    const label = status === 'LEAVE' ? 'Leave' : 'Absent';
                     return (
                       <div key={row.shift_date} className="mes-list-item">
                         <div className="mes-list-item-top">
                           <span className="mes-list-item-title">
                             {formatDisplayDate(row.shift_date)}
                           </span>
-                          <StatusBadge status="overdue">{label}</StatusBadge>
+                          <StatusBadge status="READY">Leave</StatusBadge>
                         </div>
-                        {row.shift ? (
-                          <p className="mes-list-item-sub" style={{ marginBottom: 0 }}>
-                            {row.shift}
-                          </p>
-                        ) : null}
                         {row.supervisor_note ? (
-                          <p className="mes-list-item-meta" style={{ marginBottom: 0, marginTop: 4 }}>
-                            <TruncatedText>{row.supervisor_note}</TruncatedText>
-                          </p>
+                          <p className="mes-list-item-sub">{row.supervisor_note}</p>
                         ) : null}
                       </div>
                     );
@@ -758,6 +791,7 @@ function ManagerMyToday({ floorOnly, navigate }) {
   const [lotReceipt, setLotReceipt] = useState(null);
   const [efficiencyUnlocked, setEfficiencyUnlocked] = useState(false);
   const [justCompletedCard, setJustCompletedCard] = useState(null);
+  const [incomingForms, setIncomingForms] = useState({});
 
   const load = useCallback(async ({ silent = false } = {}) => {
     const wcId = searchParams.get('wc') || selectedWc;
@@ -774,7 +808,13 @@ function ManagerMyToday({ floorOnly, navigate }) {
         params: { work_date: todayStr() },
       });
       setCommand(data);
-      if (data?.efficiency_saved) setEfficiencyUnlocked(true);
+      if (
+        data?.efficiency_saved ||
+        (data?.closed_mid_route_ops || []).length > 0 ||
+        (data?.closed_cards || []).some((c) => c.efficiency_unlocked || c.kind === 'mid_route_op')
+      ) {
+        setEfficiencyUnlocked(true);
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Unable to load command');
       setCommand(null);
@@ -892,11 +932,56 @@ function ManagerMyToday({ floorOnly, navigate }) {
     }
   }
 
+  async function handleIncomingOpDone(op) {
+    if (!op?.id) return;
+    const form = incomingForms[op.id] || { good: '', scrap: '' };
+    const hasQty =
+      (form.good !== '' && Number(form.good) > 0) ||
+      (form.scrap !== '' && Number(form.scrap) > 0);
+    if (!hasQty) {
+      setError('Enter good or scrap quantity before Done.');
+      return;
+    }
+
+    setBusyId(op.id);
+    setError(null);
+    try {
+      await api.post(`/production/op-cards/${op.id}/progress`, {
+        good_qty: form.good !== '' ? Number(form.good) : undefined,
+        scrap_qty: form.scrap !== '' ? Number(form.scrap) : undefined,
+        done_for_day: true,
+      });
+      setIncomingForms((prev) => {
+        const next = { ...prev };
+        delete next[op.id];
+        return next;
+      });
+      setEfficiencyUnlocked(true);
+      setJustCompletedCard({
+        id: op.id,
+        kind: 'mid_route_op',
+        card_number: op.op_card_number || op.card_number || null,
+        component_label: op.component_label || op.lot_number || null,
+        good_qty: Number(form.good || op.good_qty || 0),
+        committed_qty: Number(op.target_quantity || 0),
+        completed_at: new Date().toISOString(),
+        lot_number: op.lot_number || null,
+        efficiency_unlocked: true,
+      });
+      await load({ silent: true });
+    } catch (err) {
+      setError(err.response?.data?.error || 'Incoming op Done failed');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   function handleWcChange(wcId) {
     setSelectedWc(wcId);
     setSearchParams(wcId ? { wc: wcId } : {});
     setJustCompletedCard(null);
     setEfficiencyUnlocked(false);
+    setIncomingForms({});
   }
 
   const camp = command?.active_campaign;
@@ -904,6 +989,8 @@ function ManagerMyToday({ floorOnly, navigate }) {
   const campaignQueue = command?.campaign_queue || [];
   const team = command?.team || [];
   const closedCommitments = command?.closed_cards || command?.closed_commitments || [];
+  const incomingOps = command?.incoming_ops || [];
+  const hasIncoming = incomingOps.length > 0;
 
   const opsCompletedToday =
     Number(command?.ops_completed_today ?? closedCommitments.length) || 0;
@@ -921,16 +1008,39 @@ function ManagerMyToday({ floorOnly, navigate }) {
       : closedCommitments.reduce((s, c) => s + Number(c.good_qty || 0), 0) +
         (commit && commit.status !== 'COMPLETED' ? Number(commit.good_qty || 0) : 0);
 
-  const efficiency = goal > 0 ? Math.round((good / goal) * 100) : 0;
+  const efficiency =
+    command?.efficiency_index_pct != null
+      ? Number(command.efficiency_index_pct)
+      : goal > 0
+        ? Math.round((good / goal) * 100)
+        : 0;
+
+  const managerEmployeeId = command?.work_center?.manager_employee_id || null;
 
   const lastClosed = closedCommitments[closedCommitments.length - 1];
+  const midRouteClosedCount = (command?.closed_mid_route_ops || []).length;
+  // Mid-route Done clears incoming but must still count as floor work (hero + matrix).
+  // Include local unlock / just-completed so panels don't flash away if the reload
+  // briefly returns an empty closed list.
+  const hasFloorActivity =
+    !!camp ||
+    hasIncoming ||
+    closedCommitments.length > 0 ||
+    midRouteClosedCount > 0 ||
+    !!command?.has_floor_activity ||
+    !!justCompletedCard ||
+    efficiencyUnlocked;
   const canShowEfficiencyMatrix =
     team.length > 0 &&
+    hasFloorActivity &&
     (efficiencyUnlocked ||
       command?.efficiency_saved ||
       lastClosed?.efficiency_unlocked ||
       lastClosed?.lot_minted_at ||
+      justCompletedCard?.efficiency_unlocked ||
+      justCompletedCard?.kind === 'mid_route_op' ||
       justCompletedCard?.lot_number ||
+      midRouteClosedCount > 0 ||
       (commit?.status === 'COMPLETED' && (commit.efficiency_unlocked || commit.lot_minted_at)));
 
   // Prefer live closed list; fall back to just-completed chip until reload lands
@@ -1018,25 +1128,80 @@ function ManagerMyToday({ floorOnly, navigate }) {
           title="Select a work center"
           description="Choose a work center to view today's daily card and post good/scrap quantities."
         />
-      ) : !camp ? (
+      ) : !camp && !hasIncoming && !hasFloorActivity ? (
         <EmptyState
           icon={UserCheck}
-          title="No active campaign"
-          description="Release a horizon wave in the planner to start production on this work center."
+          title="No work queued"
+          description="No active campaign and no incoming lots from upstream work centers. Release a horizon wave or wait for WIP from the previous operation."
           actionLabel="Open Horizon Planner"
           onAction={() => navigate('/production/horizon-planner')}
         />
       ) : (
         <>
-          <EfficiencyHero
-            efficiency={efficiency}
-            good={good}
-            goal={goal}
-            opsCompletedToday={opsCompletedToday}
-            hasActive={!!camp && commit && commit.status !== 'COMPLETED'}
-          />
+          {hasFloorActivity ? (
+            <EfficiencyHero
+              efficiency={efficiency}
+              good={good}
+              goal={goal}
+              opsCompletedToday={opsCompletedToday}
+              hasActive={
+                (!!camp && commit && commit.status !== 'COMPLETED') || hasIncoming
+              }
+            />
+          ) : null}
 
-          {commit && commit.status !== 'COMPLETED' ? (
+          {hasIncoming ? (
+            <section style={{ marginTop: hasFloorActivity ? 16 : 0 }} aria-label="Incoming lots">
+              <h3 className="mes-section-title" style={{ marginBottom: 10 }}>
+                Incoming lots
+              </h3>
+              <p className="muted" style={{ marginTop: 0, marginBottom: 12 }}>
+                WIP parked here after an upstream operation. Start/complete these before they move on.
+              </p>
+              {incomingOps.map((op) => {
+                const form = incomingForms[op.id] || { good: '', scrap: '' };
+                return (
+                  <MyTodayJobCard
+                    key={op.id}
+                    cardNumber={op.op_card_number || op.card_number}
+                    componentLabel={op.component_label || op.lot_number || 'Incoming lot'}
+                    operationLabel={
+                      op.current_node_label ||
+                      `${op.lot_number ? `Lot ${op.lot_number} · ` : ''}Mid-route op`
+                    }
+                    todayGoal={Number(op.target_quantity || 0)}
+                    goodSoFar={Number(op.good_qty || 0)}
+                    busy={busyId === op.id}
+                    goodValue={form.good}
+                    scrapValue={form.scrap}
+                    onGoodChange={(v) =>
+                      setIncomingForms((prev) => ({
+                        ...prev,
+                        [op.id]: { ...(prev[op.id] || { good: '', scrap: '' }), good: v },
+                      }))
+                    }
+                    onScrapChange={(v) =>
+                      setIncomingForms((prev) => ({
+                        ...prev,
+                        [op.id]: { ...(prev[op.id] || { good: '', scrap: '' }), scrap: v },
+                      }))
+                    }
+                    onDone={() => handleIncomingOpDone(op)}
+                    isActive
+                  >
+                    <p className="muted" style={{ margin: '8px 0 0', fontSize: 13 }}>
+                      {op.lot_number ? `Lot ${op.lot_number}` : 'Lot'}
+                      {op.parent_card_number ? ` · from ${op.parent_card_number}` : ''}
+                      {op.status ? ` · ${op.status}` : ''}
+                      {op.lot_status ? ` · lot ${op.lot_status}` : ''}
+                    </p>
+                  </MyTodayJobCard>
+                );
+              })}
+            </section>
+          ) : null}
+
+          {camp && commit && commit.status !== 'COMPLETED' ? (
             <MyTodayJobCard
               cardNumber={commit.card_number}
               componentLabel={camp.component_label || camp.master_record_id}
@@ -1055,7 +1220,7 @@ function ManagerMyToday({ floorOnly, navigate }) {
             />
           ) : null}
 
-          {!commit && command?.next_card_date ? (
+          {camp && !commit && command?.next_card_date ? (
             <div className="mes-card" style={{ padding: 16, marginTop: 12 }}>
               <StatusBadge status="READY">Day complete</StatusBadge>
               <p className="muted" style={{ margin: '8px 0 0' }}>
@@ -1065,7 +1230,7 @@ function ManagerMyToday({ floorOnly, navigate }) {
             </div>
           ) : null}
 
-          {!commit && !command?.next_card_date && closedCommitments.length > 0 ? (
+          {camp && !commit && !command?.next_card_date && closedCommitments.length > 0 ? (
             <div className="mes-card" style={{ padding: 16, marginTop: 12 }}>
               <StatusBadge status="COMPLETED">Caught up</StatusBadge>
               <p className="muted" style={{ margin: '8px 0 0' }}>
@@ -1094,6 +1259,8 @@ function ManagerMyToday({ floorOnly, navigate }) {
               workCenterId={selectedWc}
               workDate={todayStr()}
               initiallySaved={!!command?.efficiency_saved}
+              efficiencyIndex={efficiency}
+              managerEmployeeId={managerEmployeeId}
               onSave={() => load({ silent: true })}
             />
           ) : null}
@@ -1103,12 +1270,21 @@ function ManagerMyToday({ floorOnly, navigate }) {
               rows={closedCommitments}
               formatOpTime={formatOpTime}
               onOpenCard={
-                floorOnly ? undefined : (id) => navigate(`/production/cards/${id}`)
+                floorOnly
+                  ? undefined
+                  : (id) => {
+                      const row = closedCommitments.find((c) => c.id === id);
+                      const trackId =
+                        row?.kind === 'mid_route_op'
+                          ? row.parent_card_id || id
+                          : id;
+                      navigate(`/production/cards/${trackId}`);
+                    }
               }
             />
           ) : null}
 
-          {campaignQueue.length > 1 ? (
+          {camp && campaignQueue.length > 1 ? (
             <div style={{ marginTop: 20 }}>
               <h3 className="mes-section-title">Campaign queue</h3>
               {campaignQueue.slice(1).map((q) => (

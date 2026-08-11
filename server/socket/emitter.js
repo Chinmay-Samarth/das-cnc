@@ -13,6 +13,19 @@ function emitAttendanceUpdated(payload) {
   io.to('attendance').emit('attendance:updated', payload);
 }
 
+/**
+ * Leave request lifecycle fan-out (create / approve / deny).
+ * Broad room for admin list; also targets the applicant's employee room.
+ */
+function emitLeaveRequestUpdated(payload) {
+  if (!io) return;
+  io.to('leave-requests').emit('leave-requests:updated', payload);
+  io.to('attendance').emit('leave-requests:updated', payload);
+  if (payload?.employeeId) {
+    emitToEmployee(payload.employeeId, 'leave-requests:updated', payload);
+  }
+}
+
 function emitGirnUpdated(payload) {
   if (!io) return;
   const { girnId } = payload;
@@ -194,6 +207,7 @@ module.exports = {
   setIo,
   getIo,
   emitAttendanceUpdated,
+  emitLeaveRequestUpdated,
   emitGirnUpdated,
   emitBomUpdated,
   emitProductionUpdated,

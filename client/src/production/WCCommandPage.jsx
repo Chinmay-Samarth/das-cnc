@@ -90,13 +90,19 @@ export default function WCCommandPage() {
   async function handleEfficiency(e) {
     e.preventDefault();
     if (!effForm.employee_id) return;
+    const managerId = command?.work_center?.manager_employee_id;
+    const isManager = !!managerId && effForm.employee_id === managerId;
     try {
       await api.post('/campaigns/efficiency', {
         work_center_id: workCenterId,
         work_date: workDate,
         employee_id: effForm.employee_id,
-        efficiency_pct: Number(effForm.efficiency_pct),
-        notes: effForm.notes || undefined,
+        efficiency_pct: isManager
+          ? Number(command?.efficiency_index_pct ?? 0)
+          : Number(effForm.efficiency_pct),
+        notes: isManager
+          ? 'Derived from day efficiency index'
+          : effForm.notes || undefined,
       });
       setEffForm({ employee_id: '', efficiency_pct: '', notes: '' });
       await load();
@@ -204,17 +210,39 @@ export default function WCCommandPage() {
 
           <form className="mes-card" style={{ padding: 16, marginBottom: 16 }} onSubmit={handleEfficiency}>
             <h3 style={{ margin: '0 0 12px' }}>Worker efficiency (manager)</h3>
+            <p className="muted" style={{ marginTop: 0, marginBottom: 12, fontSize: 13 }}>
+              Selecting the WC manager auto-fills % from today’s efficiency index
+              {command?.efficiency_index_pct != null
+                ? ` (${command.efficiency_index_pct}%)`
+                : ''}
+              .
+            </p>
             <div className="mes-filters">
               <label>
                 Employee
                 <select
                   value={effForm.employee_id}
-                  onChange={(e) => setEffForm((f) => ({ ...f, employee_id: e.target.value }))}
+                  onChange={(e) => {
+                    const employeeId = e.target.value;
+                    const managerId = command?.work_center?.manager_employee_id;
+                    const isManager = !!managerId && employeeId === managerId;
+                    setEffForm((f) => ({
+                      ...f,
+                      employee_id: employeeId,
+                      efficiency_pct: isManager
+                        ? String(command?.efficiency_index_pct ?? 0)
+                        : f.efficiency_pct,
+                      notes: isManager ? 'Derived from day efficiency index' : f.notes,
+                    }));
+                  }}
                 >
                   <option value="">Select…</option>
                   {(command?.team || []).map((emp) => (
                     <option key={emp.id} value={emp.id}>
                       {emp.full_name}
+                      {emp.is_wc_manager || emp.id === command?.work_center?.manager_employee_id
+                        ? ' (manager)'
+                        : ''}
                     </option>
                   ))}
                 </select>
@@ -225,9 +253,18 @@ export default function WCCommandPage() {
                   type="number"
                   min="0"
                   max="200"
-                  value={effForm.efficiency_pct}
+                  value={
+                    effForm.employee_id &&
+                    effForm.employee_id === command?.work_center?.manager_employee_id
+                      ? String(command?.efficiency_index_pct ?? 0)
+                      : effForm.efficiency_pct
+                  }
                   onChange={(e) => setEffForm((f) => ({ ...f, efficiency_pct: e.target.value }))}
                   required
+                  readOnly={
+                    !!effForm.employee_id &&
+                    effForm.employee_id === command?.work_center?.manager_employee_id
+                  }
                 />
               </label>
               <label>
@@ -236,6 +273,10 @@ export default function WCCommandPage() {
                   type="text"
                   value={effForm.notes}
                   onChange={(e) => setEffForm((f) => ({ ...f, notes: e.target.value }))}
+                  readOnly={
+                    !!effForm.employee_id &&
+                    effForm.employee_id === command?.work_center?.manager_employee_id
+                  }
                 />
               </label>
             </div>

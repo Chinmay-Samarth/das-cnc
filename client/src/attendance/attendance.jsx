@@ -26,6 +26,12 @@ function formatRecordStatus(status) {
       return { label: 'LATE', className: 'late' };
     case 'COMPLETED':
       return { label: 'COMPLETED', className: 'completed' };
+    case 'LEAVE':
+      return { label: 'LEAVE', className: 'leave' };
+    case 'HALF_DAY':
+      return { label: 'HALF DAY', className: 'half_day' };
+    case 'ABSENT':
+      return { label: 'ABSENT', className: 'absent' };
     default:
       return { label: status || '--', className: '' };
   }
@@ -52,8 +58,21 @@ export default function AttendancePage() {
   const [syncing, setSyncing] = useState(false);
   const [recordsPage, setRecordsPage] = useState(1);
   const [showAllAbsentees, setShowAllAbsentees] = useState(false);
-  const { daily, loading, error, absentees, latestRecords, presentCount, absentCount, totalCount, setDate, refresh, lateArrivals } =
-    useDailyAttendance();
+  const {
+    daily,
+    loading,
+    error,
+    absentees,
+    onLeave,
+    latestRecords,
+    presentCount,
+    absentCount,
+    onLeaveCount,
+    totalCount,
+    setDate,
+    refresh,
+    lateArrivals,
+  } = useDailyAttendance();
 
 
   // local selectedDate mirrors the current query date shown in the date input
@@ -266,7 +285,10 @@ export default function AttendancePage() {
           <StatTile value={presentCount} label="On Duty" accent="#059669" className="attendance-stat"/>
         </div>
         <div className="summary-metric">
-          <StatTile value={absentCount} label="On Leave" accent="#dc2626" />
+          <StatTile value={absentCount} label="Absent" accent="#dc2626" />
+        </div>
+        <div className="summary-metric">
+          <StatTile value={onLeaveCount} label="On Leave" accent="#ea580c" />
         </div>
         <div className="summary-metric">
           <StatTile value={lateArrivals} label="Late Arrivals" accent="#f5a114" />
@@ -440,6 +462,53 @@ export default function AttendancePage() {
                       <span>{row.shift || 'No shift'}</span>
                     </div>
                     <span className="absentee-status">ABSENT</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
+
+          <section className="card absentees-card" style={{ marginTop: 16 }}>
+            <div className="absentees-header">
+              <div className="absentees-title-group">
+                <h2>On leave</h2>
+                <span className="absentees-count-badge" style={{ background: '#ffedd5', color: '#c2410c' }}>
+                  {onLeave.length}
+                </span>
+              </div>
+            </div>
+            {!loading && !error && onLeave.length === 0 ? (
+              <p className="muted">No approved leave today.</p>
+            ) : null}
+            {!loading && !error && onLeave.length > 0 ? (
+              <ul className="absentees-grid">
+                {onLeave.map((row) => (
+                  <li
+                    key={`leave-${row.employee_code || row.id}`}
+                    className="absentee-item"
+                    onClick={() => navigate(`/employees/${row.id}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        navigate(`/employees/${row.id}`);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <div className="absentee-avatar">
+                      {row?.full_name
+                        ?.split(' ')
+                        .map((n) => n[0])
+                        .slice(0, 2)
+                        .join('')
+                        .toUpperCase()}
+                    </div>
+                    <div className="absentee-info">
+                      <strong>{row.full_name}</strong>
+                      <span>{row.shift || 'No shift'}</span>
+                    </div>
+                    <span className="absentee-status leave-status">LEAVE</span>
                   </li>
                 ))}
               </ul>

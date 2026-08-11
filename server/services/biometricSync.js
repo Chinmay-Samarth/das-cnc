@@ -43,6 +43,17 @@ function nextSyncCursor(lastRecord, results) {
   return String(cursor);
 }
 
+async function stampBiometricSyncSuccess() {
+  const { error } = await supabase.from('sync_state').upsert({
+    key: 'biometric_last_success_at',
+    value: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+  if (error) {
+    console.error('Failed to stamp biometric_last_success_at:', error.message);
+  }
+}
+
 async function syncBiometricData() {
   try {
     const result = {
@@ -58,6 +69,8 @@ async function syncBiometricData() {
       .select('value')
       .eq('key', 'last_record')
       .single();
+
+    console.log("State - ",state)
 
     if (stateError && stateError.code !== 'PGRST116') {
       throw stateError;
@@ -81,6 +94,7 @@ async function syncBiometricData() {
     if (!PunchData?.length) {
       result.success = true;
       result.message = 'No new Punches';
+      await stampBiometricSyncSuccess();
       return result;
     }
 
@@ -95,27 +109,33 @@ async function syncBiometricData() {
     result.punchCount = Array.isArray(processedResults) ? processedResults.length : 0;
     result.processedRecords = processedResults;
 
-    const newCursor = nextSyncCursor(lastRecord, processedResults);
+    const newCursor = MaxRecord;
     const lastNum = punchIdNumber(lastRecord) ?? 0;
     const newNum = punchIdNumber(newCursor) ?? 0;
 
-    if (newNum > lastNum) {
-      const { error: syncError } = await supabase.from('sync_state').upsert({
-        key: 'last_record',
-        value: newCursor,
-      });
-      if (syncError) {
-        console.error('sync_state update failed', syncError);
-        throw syncError;
-      }
-      result.cursorAdvancedTo = newCursor;
+    console.log("New Cursor - ",newCursor)
+    
+    const { error: syncError } = await supabase
+    .from('sync_state')
+    .upsert({
+      key: 'last_record',
+      value: newCursor,
+    });
+    if (syncError) {
+      console.error('sync_state update failed', syncError);
+      throw syncError;
     }
+    result.cursorAdvancedTo = String(newCursor);
+    
 
-    const failed = (processedResults || []).filter((r) => !r.success && !r.terminal && !isTerminalError(r.error));
+    const failed = (processedResults || []).filter(
+      (r) => !r.success && !r.terminal && !isTerminalError(r.error)
+    );
     result.success = true;
     result.message = failed.length
       ? `Biometric sync partially completed; ${failed.length} retriable failure(s); cursor=${result.cursorAdvancedTo || lastRecord}; apiMax=${MaxRecord}`
       : `Biometric sync completed successfully; cursor=${result.cursorAdvancedTo || lastRecord}`;
+    await stampBiometricSyncSuccess();
     return result;
   } catch (err) {
     console.error('Sync Failed', err?.message ?? err, err?.stack ? err.stack : '');
@@ -123,4 +143,4 @@ async function syncBiometricData() {
   }
 }
 
-module.exports = { syncBiometricData, nextSyncCursor };
+module.exports = { syncBiometricData, nextSyncCursor, stampBiometricSyncSuccess };

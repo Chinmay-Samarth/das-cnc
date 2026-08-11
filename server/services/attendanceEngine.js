@@ -30,8 +30,11 @@ const OPEN_SESSION_LOOKBACK_DAYS = 2;
 /** Plant-local lunch / phase bands (minutes from midnight). */
 const LUNCH_START_MINUTES = 12 * 60; // 12:00
 const LUNCH_END_MINUTES = 15 * 60 + 30; // 15:30
+/** Day CHECK_OUT only from this clock time onward (lunch band must never close the day). */
 const EVENING_OUT_START_MINUTES = 16 * 60; // 16:00
 const MAX_SHORT_BREAK_GAP_MINUTES = 180; // incomplete lunch return vs evening out
+/** Ignore near-instant second punch after lunch OUT (device double-tap → fake BREAK_IN). */
+const MIN_BREAK_DURATION_MINUTES = 8;
 
 /** Permanent (non-retriable) error codes — sync may advance past these punch ids. */
 const TERMINAL_ERRORS = new Set([
@@ -41,6 +44,8 @@ const TERMINAL_ERRORS = new Set([
   'SESSION_ALREADY_CLOSED',
   'DUPLICATE_APPLIED',
   'DUPLICATE_CHECK_IN',
+  'DUPLICATE_BREAK_OUT',
+  'MIDDAY_AFTER_LUNCH',
   'OUT_BEFORE_IN',
 ]);
 
@@ -273,7 +278,8 @@ function isInLunchBand(punchMinutes) {
 /**
  * Decide action from shift type + session state + plant time bands.
  * Night: IN → OUT only.
- * Day: IN → lunch BREAK_OUT/IN → evening CHECK_OUT.
+ * Day: IN → lunch BREAK_OUT/IN → evening CHECK_OUT (≥ 16:00 only).
+ * Lunch-band punches must never become CHECK_OUT.
  */
 function classifyPunchForSession(shift, existingRecord, punchTime) {
   const punchMinutes = punchClockMinutes(punchTime);
@@ -304,10 +310,14 @@ function classifyPunchForSession(shift, existingRecord, punchTime) {
   }
 
   if (existingRecord.break_punch_out && !existingRecord.break_punch_in) {
+    const gap = minutesBetween(existingRecord.break_punch_out, punchTime);
+    // Device double-tap seconds after lunch OUT — do not fake a completed break
+    if (gap >= 0 && gap < MIN_BREAK_DURATION_MINUTES) {
+      return 'DUPLICATE_BREAK_OUT';
+    }
     if (punchMinutes < EVENING_OUT_START_MINUTES) {
       return 'BREAK_IN';
     }
-    const gap = minutesBetween(existingRecord.break_punch_out, punchTime);
     if (gap >= 0 && gap < MAX_SHORT_BREAK_GAP_MINUTES) {
       return 'BREAK_IN';
     }
@@ -315,7 +325,10 @@ function classifyPunchForSession(shift, existingRecord, punchTime) {
     return 'CHECK_OUT';
   }
 
-  // Lunch completed (or break_in filled) — evening/late close
+  // Lunch completed — only evening/late punches may close the day
+  if (punchMinutes < EVENING_OUT_START_MINUTES) {
+    return 'MIDDAY_AFTER_LUNCH';
+  }
   return 'CHECK_OUT';
 }
 
@@ -480,6 +493,10 @@ async function applyBreakIn({ existingRecord, punchTime }) {
   }
 
   const breakMinutes = Math.max(0, minutesBetween(existingRecord.break_punch_out, punchTime));
+  if (breakMinutes < MIN_BREAK_DURATION_MINUTES) {
+    return { applied: false, reason: 'DUPLICATE_BREAK_OUT', event_type: 'BREAK_IN' };
+  }
+
   const { error } = await supabase
     .from('attendance_records')
     .update({
@@ -506,6 +523,18 @@ async function applyCheckOut({ employee, shift, shift_date, punchTime, biometric
     };
   }
 
+  // Hard gate: day shifts cannot check out during / before the evening band
+  if (!isCrossesMidnightShift(shift)) {
+    const punchMinutes = punchClockMinutes(punchTime);
+    if (punchMinutes < EVENING_OUT_START_MINUTES) {
+      return {
+        applied: false,
+        reason: 'LUNCH_BAND_NOT_CHECK_OUT',
+        event_type: 'CHECK_OUT',
+      };
+    }
+  }
+
   const rawMinutes = minutesBetween(existingRecord.punched_in_at, punchTime);
   if (rawMinutes < 0) {
     return { applied: false, reason: 'OUT_BEFORE_IN', terminal: true, event_type: 'CHECK_OUT' };
@@ -513,9 +542,12 @@ async function applyCheckOut({ employee, shift, shift_date, punchTime, biometric
 
   let breakMinutes = 0;
   if (existingRecord.break_punch_out && existingRecord.break_punch_in) {
-    breakMinutes =
-      existingRecord.break_minutes ??
-      Math.max(0, minutesBetween(existingRecord.break_punch_out, existingRecord.break_punch_in));
+    const span = minutesBetween(existingRecord.break_punch_out, existingRecord.break_punch_in);
+    // Zero-length / fake break pairs do not count as a completed lunch
+    if (span >= MIN_BREAK_DURATION_MINUTES) {
+      breakMinutes =
+        existingRecord.break_minutes ?? Math.max(0, span);
+    }
   }
 
   const minutesWorked = Math.max(0, rawMinutes - breakMinutes);
@@ -713,8 +745,10 @@ async function processBiometricEvent(payload, options = {}) {
     }
 
     let action = classifyPunchForSession(shift, existingRecord, punchTime);
+    const punchMinutes = punchClockMinutes(punchTime);
+    const nightShift = isCrossesMidnightShift(shift);
 
-    // Soft device hint only when day session is open and lunch is done / night open
+    // Soft device hint — never override lunch-band punches into CHECK_OUT on day shifts
     const hint = String(softHint || raw_payload?.EventType || raw_payload?.M_Flag || '')
       .toUpperCase();
     if (
@@ -722,10 +756,30 @@ async function processBiometricEvent(payload, options = {}) {
       existingRecord?.punched_in_at &&
       !existingRecord?.punched_out_at
     ) {
-      if (isCrossesMidnightShift(shift)) {
+      if (nightShift) {
         action = 'CHECK_OUT';
-      } else if (existingRecord.break_punch_in || punchClockMinutes(punchTime) >= EVENING_OUT_START_MINUTES) {
+      } else if (
+        punchMinutes >= EVENING_OUT_START_MINUTES &&
+        (existingRecord.break_punch_in || !existingRecord.break_punch_out)
+      ) {
+        // Evening OUT hint only after lunch is done, or skipped-lunch evening leave
         action = 'CHECK_OUT';
+      }
+      // Lunch-band OUT hints keep classifier (BREAK_OUT / BREAK_IN) — never CHECK_OUT
+    }
+
+    // Safety net: day CHECK_OUT before 16:00 is always remapped
+    if (!nightShift && action === 'CHECK_OUT' && punchMinutes < EVENING_OUT_START_MINUTES) {
+      if (!existingRecord?.break_punch_out && isInLunchBand(punchMinutes)) {
+        action = 'BREAK_OUT';
+      } else if (existingRecord?.break_punch_out && !existingRecord?.break_punch_in) {
+        const gap = minutesBetween(existingRecord.break_punch_out, punchTime);
+        action =
+          gap >= 0 && gap < MIN_BREAK_DURATION_MINUTES
+            ? 'DUPLICATE_BREAK_OUT'
+            : 'BREAK_IN';
+      } else {
+        action = 'MIDDAY_AFTER_LUNCH';
       }
     }
 
@@ -742,17 +796,17 @@ async function processBiometricEvent(payload, options = {}) {
       });
     }
 
-    if (action === 'DUPLICATE_CHECK_IN') {
+    if (action === 'DUPLICATE_CHECK_IN' || action === 'DUPLICATE_BREAK_OUT' || action === 'MIDDAY_AFTER_LUNCH') {
       await markLogOutcome(biometricLogId, {
         matched: true,
-        process_error: 'DUPLICATE_CHECK_IN',
+        process_error: action,
       });
-      return failResult('DUPLICATE_CHECK_IN', {
+      return failResult(action, {
         punch_id,
         biometricLogId,
         shift_date,
         employee_name: employee.full_name,
-        event_type: 'CHECK_IN',
+        event_type: action === 'DUPLICATE_BREAK_OUT' ? 'BREAK_OUT' : 'CHECK_IN',
       });
     }
 
@@ -827,7 +881,7 @@ async function processBiometricEvent(payload, options = {}) {
       minutes_worked: applyResult.minutes_worked,
     };
   } catch (err) {
-    console.error('[DasCNC] processBiometricEvent error:', err);
+    // console.error('[DasCNC] processBiometricEvent error:', err);
     if (biometricLogId) {
       try {
         await markLogOutcome(biometricLogId, {
@@ -910,12 +964,24 @@ async function reprocessOpenPunchOuts({ lookbackDays = 14 } = {}) {
 }
 
 /**
- * Demote false end-of-day outs that landed in the lunch band back to break_out,
- * then force-reprocess later punches (break-in + real evening out).
+ * Demote false end-of-day outs that landed before the evening band (incl. lunch)
+ * back to open sessions, repair fake instant break_in pairs, then reprocess later punches.
  */
 async function repairLunchFalseOuts({ lookbackDays = 14 } = {}) {
-  const today = parseLocalTimestamp(new Date()).dateStr;
-  const fromDate = addDaysYmd(today, -Math.max(1, Number(lookbackDays) || 14));
+  const machineToday = parseLocalTimestamp(new Date()).dateStr;
+  const { data: latestRow } = await supabase
+    .from('attendance_records')
+    .select('shift_date')
+    .order('shift_date', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const plantLatest = latestRow?.shift_date || machineToday;
+  const toDate = plantLatest > machineToday ? plantLatest : machineToday;
+  const lookback = Math.max(1, Number(lookbackDays) || 14);
+  // Cover both server-clock "today" and plant punch calendar (device clocks can drift ahead)
+  const fromA = addDaysYmd(machineToday, -lookback);
+  const fromB = addDaysYmd(toDate, -lookback);
+  const fromDate = fromA < fromB ? fromA : fromB;
 
   const { data: rows, error } = await supabase
     .from('attendance_records')
@@ -929,6 +995,7 @@ async function repairLunchFalseOuts({ lookbackDays = 14 } = {}) {
       punched_out_at,
       break_punch_out,
       break_punch_in,
+      break_minutes,
       status,
       employees!attendance_records_employee_id_fkey(employee_code),
       shifts!attendance_records_shift_id_fkey(id, crosses_midnight, start_time, end_time)
@@ -937,29 +1004,68 @@ async function repairLunchFalseOuts({ lookbackDays = 14 } = {}) {
     .not('punched_in_at', 'is', null)
     .not('punched_out_at', 'is', null)
     .gte('shift_date', fromDate)
-    .lte('shift_date', today);
+    .lte('shift_date', toDate)
+    .order('shift_date', { ascending: false })
+    .limit(5000);
   if (error) throw error;
 
   const summary = {
     scanned: (rows || []).length,
+    fromDate,
+    toDate,
     repaired: 0,
     attempted: 0,
     closed: 0,
+    skippedEvening: 0,
+    skippedNight: 0,
+    skippedNoCode: 0,
     results: [],
   };
 
   for (const row of rows || []) {
     const shift = row.shifts;
-    if (!shift || isCrossesMidnightShift(shift)) continue;
+    if (!shift || isCrossesMidnightShift(shift)) {
+      summary.skippedNight += 1;
+      continue;
+    }
 
     const outMins = punchClockMinutes(row.punched_out_at);
-    if (!isInLunchBand(outMins)) continue;
-
-    // Already has a real lunch break different from the false out — skip
-    if (row.break_punch_out && row.break_punch_out !== row.punched_out_at) continue;
+    // False closes are anything before the evening band (16:00)
+    if (!(outMins < EVENING_OUT_START_MINUTES)) {
+      summary.skippedEvening += 1;
+      continue;
+    }
 
     const employeeCode = row.employees?.employee_code;
-    if (!employeeCode) continue;
+    if (!employeeCode) {
+      summary.skippedNoCode += 1;
+      continue;
+    }
+
+    let breakOut = row.break_punch_out;
+    let breakIn = row.break_punch_in;
+
+    // If out was the lunch leave punch itself, promote it to break_out
+    if (!breakOut || breakOut === row.punched_out_at) {
+      breakOut = row.punched_out_at;
+      breakIn = null;
+    } else if (breakOut && breakIn) {
+      const span = minutesBetween(breakOut, breakIn);
+      // Fake zero-length break (double-tap) — clear break_in and reopen
+      if (span < MIN_BREAK_DURATION_MINUTES) {
+        breakIn = null;
+      }
+      // Lunch return incorrectly mirrored onto punched_out — clear out, keep break pair if valid
+      if (breakIn && breakIn === row.punched_out_at && span >= MIN_BREAK_DURATION_MINUTES) {
+        // keep breakOut/breakIn; just clear punched_out below
+      }
+    }
+
+    // Prefer earliest lunch-band punch as break_out when out itself is in lunch band
+    if (!row.break_punch_out && isInLunchBand(outMins)) {
+      breakOut = row.punched_out_at;
+      breakIn = null;
+    }
 
     const previousStatus =
       row.status === 'LATE' || row.status === 'PRESENT' || row.status === 'ABSENT'
@@ -969,15 +1075,21 @@ async function repairLunchFalseOuts({ lookbackDays = 14 } = {}) {
     const { error: updErr } = await supabase
       .from('attendance_records')
       .update({
-        break_punch_out: row.punched_out_at,
-        break_punch_in: null,
-        break_minutes: null,
+        break_punch_out: breakOut,
+        break_punch_in: breakIn,
+        break_minutes:
+          breakOut && breakIn
+            ? Math.max(0, minutesBetween(breakOut, breakIn))
+            : null,
         punched_out_at: null,
         minutes_worked: 0,
         overtime_minutes: 0,
         early_minutes: 0,
         biometric_out_id: null,
-        status: previousStatus === 'HALF_DAY' || previousStatus === 'COMPLETED' ? 'PRESENT' : previousStatus,
+        status:
+          previousStatus === 'HALF_DAY' || previousStatus === 'COMPLETED'
+            ? 'PRESENT'
+            : previousStatus,
         updated_at: new Date().toISOString(),
       })
       .eq('id', row.id);
@@ -985,11 +1097,13 @@ async function repairLunchFalseOuts({ lookbackDays = 14 } = {}) {
 
     summary.repaired += 1;
 
+    // Re-feed punches after the original morning in (covers lunch return + evening out)
+    const afterTime = row.punched_in_at;
     const { data: logs, error: logErr } = await supabase
       .from('biometric_logs')
       .select('employee_code, punch_id, captured_at, raw_payload')
       .eq('employee_code', employeeCode)
-      .gt('captured_at', row.punched_out_at)
+      .gt('captured_at', afterTime)
       .order('punch_id', { ascending: true });
     if (logErr) throw logErr;
 

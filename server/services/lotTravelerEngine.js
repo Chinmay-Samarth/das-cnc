@@ -825,12 +825,12 @@ async function listMyTodayLots(employeeId) {
 
 async function listLotsForWorkCenter(workCenterId, _date) {
   if (!isValidUUID(workCenterId)) throw httpError('Invalid work center id');
-  // Traveler lots span days — show all open WIP at this WC (not filtered by schedule card work_date)
+  // Traveler lots span days — include parked (staged) WIP waiting to start at this WC
   const { data, error } = await supabase
     .from('production_lots')
     .select('*')
     .eq('work_center_id', workCenterId)
-    .in('status', ['in_process', 'received'])
+    .in('status', ['in_process', 'received', 'staged'])
     .order('created_at', { ascending: true });
   if (error) throw error;
   return enrichLots(data || []);
@@ -853,7 +853,17 @@ async function listReadyForDispatch() {
       trueRfd.push(healed);
     }
   }
-  return enrichLots(trueRfd);
+  const enriched = await enrichLots(trueRfd);
+  const { invoiceSummariesForLots } = require('./salesInvoiceEngine');
+  const invMap = await invoiceSummariesForLots(enriched.map((l) => l.id));
+  return enriched.map((lot) => {
+    const inv = invMap[lot.id] || null;
+    return {
+      ...lot,
+      sales_invoice: inv,
+      can_dispatch: !!(inv && inv.printed && ['due', 'paid'].includes(inv.invoice_status)),
+    };
+  });
 }
 
 async function completeLotOp(lotId, payload, actorEmployeeId, { isManager = false } = {}) {
@@ -889,9 +899,8 @@ async function dispatchLot(lotId, actorEmployeeId) {
     throw httpError('Lot is not at an AF dispatch node', 409);
   }
 
-  // FUTURE (not this build): generate invoice from delivered qty (delivery schedule /
-  // campaign_schedule_coverage), push to Accounts Due, alert admin if unpaid past due.
-  // Hook: coverage qty for lot.campaign_id + schedule due dates.
+  const { assertLotPrintGate, markDispatched } = require('./salesInvoiceEngine');
+  await assertLotPrintGate(lotId);
 
   const { issueFinishedComponent } = require('./inventoryProductionEngine');
   try {
@@ -914,6 +923,12 @@ async function dispatchLot(lotId, actorEmployeeId) {
     .select('*')
     .single();
   if (error) throw error;
+
+  try {
+    await markDispatched(lotId);
+  } catch (e) {
+    console.error('Failed to stamp sales invoice dispatched_at:', e.message);
+  }
 
   await recordLotOpCompletion(updated, {
     good_qty: toNumber(updated.quantity),

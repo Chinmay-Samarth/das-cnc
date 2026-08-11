@@ -45,6 +45,11 @@ import WorkCenterBoardPage from './production/WorkCenterBoardPage';
 import ProductionCardTrackingPage from './production/ProductionCardTrackingPage';
 import ReadyForDispatchPage from './production/ReadyForDispatchPage';
 import OutsourcingPage from './production/OutsourcingPage';
+import LeaveRequestPage from './leaveRequests/LeaveRequestPage';
+import SalesInvoicesPage from './salesInvoices/SalesInvoicesPage';
+import SalesInvoiceDetailsPage from './salesInvoices/SalesInvoiceDetailsPage';
+import AddSalesInvoiceWizard from './salesInvoices/AddSalesInvoiceWizard';
+import CompanySettingsPage from './salesInvoices/CompanySettingsPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 function RequireAuth() {
@@ -156,6 +161,10 @@ export default function App() {
               <Route path="/components/:id" element={<ComponentDetailPage />} />
               <Route path="/invoices" element={<InvoicesPage />} />
               <Route path="/invoices/:id" element={<InvoiceDetails />} />
+              <Route path="/sales-invoices" element={<SalesInvoicesPage />} />
+              <Route path="/sales-invoices/new" element={<AddSalesInvoiceWizard />} />
+              <Route path="/sales-invoices/settings" element={<CompanySettingsPage />} />
+              <Route path="/sales-invoices/:id" element={<SalesInvoiceDetailsPage />} />
               <Route path="/customers" element={<CustomersPage />} />
               <Route path="/customers/:id" element={<CustomerDetailsPage />} />
               <Route path="/customers/add" element={<AddCustomerPage />} />
@@ -188,8 +197,9 @@ export default function App() {
               <Route path="/production/commitments/:id" element={<CommitmentToCardRedirect />} />
             </Route>
 
-            {/* Shop-floor only: My Today (MANAGER / OPERATOR). No card tracking. */}
+            {/* Shop-floor only: My Today + Leave (MANAGER / OPERATOR). */}
             <Route path="/production/today" element={<MyTodayPage />} />
+            <Route path="/leave-requests" element={<LeaveRequestPage />} />
             <Route path="/production/wc-command/:id" element={<WCCommandRedirect />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>

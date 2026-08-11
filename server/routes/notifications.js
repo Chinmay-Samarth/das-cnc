@@ -11,6 +11,8 @@ const {
   updateNotificationSettings,
 } = require('../services/attendanceAlertEngine');
 const { evaluateTomorrowDeliveryStockAlerts } = require('../services/inventoryAlertEngine');
+const { evaluateSalesInvoiceOverdueAlerts } = require('../services/salesInvoiceAlertEngine');
+const { evaluateProductionAlerts } = require('../services/productionAlertEngine');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
@@ -109,7 +111,9 @@ router.post(
     }
     const attendance = await evaluateAttendanceAlerts();
     const inventory = await evaluateTomorrowDeliveryStockAlerts();
-    res.json({ attendance, inventory });
+    const production = await evaluateProductionAlerts();
+    const invoices = await evaluateSalesInvoiceOverdueAlerts();
+    res.json({ attendance, inventory, production, invoices });
   })
 );
 

@@ -625,12 +625,21 @@ async function setOperatorsForWorkCenter(workCenterId, employeeIds = []) {
   return listOperatorsForWorkCenter(workCenterId);
 }
 
-/** Board visibility: today READY, or RUNNING with work_date on/before board date; never future. */
+/** Board visibility: today READY, or RUNNING with work_date on/before board date; never future.
+ * Mid-route lot ops (parked WIP) stay visible whenever work_date <= boardDate (or date missing).
+ */
 function itemVisibleOnBoard(item, boardDate) {
   const wd = item?.work_date;
+  const st = String(item.status || '').toUpperCase();
+  const midRoute = !!item?.production_lot_id || !!item?.is_mid_route;
+
+  if (midRoute) {
+    if (wd && wd > boardDate) return false;
+    return st === 'READY' || st === 'RUNNING';
+  }
+
   if (!wd) return false;
   if (wd > boardDate) return false;
-  const st = String(item.status || '').toUpperCase();
   if (st === 'RUNNING') return true;
   if (st === 'READY') return wd === boardDate;
   return false;

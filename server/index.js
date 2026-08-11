@@ -10,6 +10,8 @@ const { markAbsentees } = require('./services/attendanceEngine');
 const { syncBiometricData } = require('./services/biometricSync');
 const { evaluateAttendanceAlerts } = require('./services/attendanceAlertEngine');
 const { evaluateTomorrowDeliveryStockAlerts } = require('./services/inventoryAlertEngine');
+const { evaluateSalesInvoiceOverdueAlerts } = require('./services/salesInvoiceAlertEngine');
+const { evaluateProductionAlerts } = require('./services/productionAlertEngine');
 const cors = require('cors');
 const { initSocket, attachConnectionHandlers } = require('./socket');
  
@@ -36,6 +38,7 @@ app.use('/api/masters', require('./routes/masters/inspectionPlans'));
 app.use('/api/masters', require('./routes/masters/activityFlows'));
 app.use('/api/masters', require('./routes/masters'));
 app.use('/api/invoices', require('./routes/invoices'))
+app.use('/api/sales-invoices', require('./routes/salesInvoices'));
 app.use('/api/suppliers', require('./routes/supplier'));
 app.use('/api/customers', require('./routes/customers'))
 app.use('/api/girn', require('./routes/girn'));
@@ -47,6 +50,7 @@ app.use('/api/delivery-schedules', require('./routes/deliverySchedules'));
 app.use('/api/production', require('./routes/production'));
 app.use('/api/campaigns', require('./routes/campaigns'));
 app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/leave-requests', require('./routes/leaveRequests'));
 // app.use('/api/machines',   require('./routes/machines'));    // next module
  
 // Health check
@@ -104,20 +108,28 @@ cron.schedule('*/5 * * * *', async () => {
   }
 });
 
-// Admin inbox alerts: attendance + tomorrow delivery stock shortages
+// Admin inbox alerts: attendance + inventory + production + invoice
 cron.schedule('*/20 * * * *', async () => {
   console.log('Evaluating admin alerts...');
   try {
-    const attendance = await evaluateAttendanceAlerts();
-    console.log('Attendance alerts evaluated:', attendance.created);
+    await evaluateAttendanceAlerts();
   } catch (err) {
     console.error('Attendance alert evaluation failed:', err);
   }
   try {
-    const inventory = await evaluateTomorrowDeliveryStockAlerts();
-    console.log('Inventory delivery alerts evaluated:', inventory.created);
+    await evaluateTomorrowDeliveryStockAlerts();
   } catch (err) {
     console.error('Inventory delivery alert evaluation failed:', err);
+  }
+  try {
+    await evaluateProductionAlerts();
+  } catch (err) {
+    console.error('Production alert evaluation failed:', err);
+  }
+  try {
+    await evaluateSalesInvoiceOverdueAlerts();
+  } catch (err) {
+    console.error('Sales invoice overdue alert evaluation failed:', err);
   }
 }, {
   timezone: process.env.TIMEZONE || 'Asia/Kolkata'
@@ -126,11 +138,17 @@ cron.schedule('*/20 * * * *', async () => {
 // Run once shortly after boot so the inbox is not empty until the first cron tick
 setTimeout(() => {
   evaluateAttendanceAlerts()
-    .then((result) => console.log('Initial attendance alerts:', result.created))
+    // .then((result) => console.log('Initial attendance alerts:', result.created))
     .catch((err) => console.error('Initial attendance alert evaluation failed:', err));
   evaluateTomorrowDeliveryStockAlerts()
-    .then((result) => console.log('Initial inventory delivery alerts:', result.created))
+    // .then((result) => console.log('Initial inventory delivery alerts:', result.created))
     .catch((err) => console.error('Initial inventory delivery alert evaluation failed:', err));
+  evaluateProductionAlerts()
+    // .then((result) => console.log('Initial production alerts:', result.created))
+    .catch((err) => console.error('Initial production alert evaluation failed:', err));
+  evaluateSalesInvoiceOverdueAlerts()
+    // .then((result) => console.log('Initial sales invoice overdue alerts:', result.created))
+    .catch((err) => console.error('Initial sales invoice overdue alert evaluation failed:', err));
 }, 8000);
 const PORT = process.env.PORT || 3001;
 const server = http.createServer(app);

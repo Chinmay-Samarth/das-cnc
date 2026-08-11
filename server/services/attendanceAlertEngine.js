@@ -103,11 +103,33 @@ async function updateNotificationSettings(patch, actorId = null) {
 /**
  * Missing punch-out: notify the day *after* the open shift.
  * Same-day still-punched-in is not alerted; yesterday (and older lookback) open shifts are.
+ * Gated: requires a successful biometric sync stamped today (plant calendar).
  */
 async function evaluateOpenPunchOuts(employeesById) {
   const today = todayDateString();
   const yesterday = addDaysYmd(today, -1);
   const lookback = addDaysYmd(today, -7);
+
+  const { data: syncStamp, error: syncErr } = await supabase
+    .from('sync_state')
+    .select('value')
+    .eq('key', 'biometric_last_success_at')
+    .maybeSingle();
+  if (syncErr) throw syncErr;
+
+  const stampIso = syncStamp?.value || null;
+  const stampDay = stampIso
+    ? new Intl.DateTimeFormat('en-CA', {
+        timeZone: TZ,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date(stampIso))
+    : null;
+
+  if (!stampDay || stampDay < today) {
+    return { created: 0, skipped: 'sync_not_completed_today', sync_stamp: stampIso };
+  }
 
   const { data: rows, error } = await supabase
     .from('attendance_records')
@@ -140,11 +162,12 @@ async function evaluateOpenPunchOuts(employeesById) {
         attendance_record_id: row.id,
         status: row.status,
         notified_next_day: true,
+        sync_verified_at: stampIso,
       },
     });
     if (result.created) created += 1;
   }
-  return created;
+  return { created, skipped: null, sync_stamp: stampIso };
 }
 
 async function evaluateLowAttendance(employees, threshold) {
@@ -308,7 +331,8 @@ async function evaluateAttendanceAlerts() {
   const list = (employees || []).filter(isWorkforceEmployee);
   const employeesById = new Map(list.map((e) => [e.id, e]));
 
-  const openCreated = await evaluateOpenPunchOuts(employeesById);
+  const openResult = await evaluateOpenPunchOuts(employeesById);
+  const openCreated = Number(openResult?.created || 0);
   const lowCreated = await evaluateLowAttendance(list, threshold);
   const absentCreated = await evaluateConsecutiveAbsent(list);
 
@@ -320,6 +344,10 @@ async function evaluateAttendanceAlerts() {
       low_attendance: lowCreated,
       consecutive_absent: absentCreated,
       total: openCreated + lowCreated + absentCreated,
+    },
+    open_punch_out_meta: {
+      skipped: openResult?.skipped || null,
+      sync_stamp: openResult?.sync_stamp || null,
     },
     evaluated_at: new Date().toISOString(),
   };

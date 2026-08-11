@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PackageCheck, RefreshCw, Truck } from 'lucide-react';
+import { FileText, PackageCheck, RefreshCw, Truck } from 'lucide-react';
 import api from '../api/client';
 import { formatDueLabel } from '../blanketPos/scheduleLabels';
 import { useProductionRealtime } from '../socket/socketContext';
@@ -56,9 +56,17 @@ export default function ReadyForDispatchPage() {
       <PageHeader
         eyebrow="Shop floor"
         title="Ready for Dispatch"
-        subtitle="Lots that finished packing (or landed on a dispatch AF node). Dispatch clears them from the queue."
+        subtitle="Invoice must be issued and confirmed printed before a lot can ship."
         actions={
           <>
+            <button
+              type="button"
+              className="mes-btn mes-btn-secondary"
+              onClick={() => navigate('/sales-invoices')}
+            >
+              <FileText size={16} />
+              Sales invoices
+            </button>
             <button
               type="button"
               className="mes-btn mes-btn-secondary"
@@ -89,6 +97,8 @@ export default function ReadyForDispatchPage() {
         <div className="mes-task-queue">
           {lots.map((lot) => {
             const busy = busyId === lot.id;
+            const inv = lot.sales_invoice;
+            const canDispatch = !!lot.can_dispatch;
             return (
               <article key={lot.id} className="mes-task-card">
                 <div className="mes-task-top">
@@ -117,18 +127,60 @@ export default function ReadyForDispatchPage() {
                         : ''}
                       {lot.current_node_label ? ` · ${lot.current_node_label}` : ''}
                     </p>
+                    <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                      {!inv
+                        ? 'Invoice: not created'
+                        : inv.invoice_status === 'draft'
+                          ? 'Invoice: draft (issue required)'
+                          : inv.printed
+                            ? `Invoice: ${inv.invoice_number || inv.invoice_status} · printed`
+                            : `Invoice: ${inv.invoice_number || inv.invoice_status} · print confirmation needed`}
+                    </p>
                   </div>
                   <StatusBadge status={lot.status} />
                 </div>
-                <button
-                  type="button"
-                  className="mes-btn mes-btn-primary"
-                  style={{ width: '100%', padding: '14px', fontSize: 15, marginTop: 12 }}
-                  disabled={busy}
-                  onClick={() => dispatchOne(lot.id)}
-                >
-                  {busy ? 'Dispatching…' : 'Dispatch'}
-                </button>
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+                  {!inv ? (
+                    <button
+                      type="button"
+                      className="mes-btn mes-btn-primary"
+                      style={{ flex: 1, padding: '12px', fontSize: 14 }}
+                      onClick={() => navigate(`/sales-invoices/new?lotId=${lot.id}`)}
+                    >
+                      Create invoice
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="mes-btn mes-btn-secondary"
+                      style={{ flex: 1, padding: '12px', fontSize: 14 }}
+                      onClick={() =>
+                        inv.invoice_status === 'draft' || !inv.printed
+                          ? navigate(`/sales-invoices/new?lotId=${lot.id}`)
+                          : navigate(`/sales-invoices/${inv.invoice_id}`)
+                      }
+                    >
+                      {!inv.printed || inv.invoice_status === 'draft'
+                        ? 'Open invoice wizard'
+                        : 'View invoice'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="mes-btn mes-btn-primary"
+                    style={{ flex: 1, padding: '12px', fontSize: 14 }}
+                    disabled={busy || !canDispatch}
+                    title={
+                      canDispatch
+                        ? undefined
+                        : 'Confirm invoice print before dispatch'
+                    }
+                    onClick={() => dispatchOne(lot.id)}
+                  >
+                    {busy ? 'Dispatching…' : 'Dispatch'}
+                  </button>
+                </div>
               </article>
             );
           })}

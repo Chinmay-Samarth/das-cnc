@@ -4,12 +4,19 @@ import {
   Bell,
   CheckCheck,
   CalendarX2,
+  ClipboardCheck,
+  Factory,
+  FileText,
   LogOut,
   PackageX,
   Percent,
   RefreshCw,
   Settings,
+  Timer,
+  Truck,
   UserX,
+  Waves,
+  CalendarOff,
 } from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
@@ -21,12 +28,20 @@ import {
 } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import { formatDisplayDateTime } from '../utils/dateFormat';
+import { useSocket } from '../socket/socketContext';
 
 const TYPE_META = {
   open_punch_out: { icon: LogOut, label: 'Punch-out', category: 'attendance' },
   low_attendance: { icon: Percent, label: 'Attendance %', category: 'attendance' },
   consecutive_absent: { icon: CalendarX2, label: 'Absence streak', category: 'attendance' },
+  leave_request_pending: { icon: CalendarOff, label: 'Leave request', category: 'attendance' },
   insufficient_stock: { icon: PackageX, label: 'Stock short', category: 'inventory' },
+  girn_pending_inspection: { icon: ClipboardCheck, label: 'GIRN inspection', category: 'inventory' },
+  invoice_overdue: { icon: FileText, label: 'Invoice overdue', category: 'finance' },
+  op1_schedule_delay: { icon: Timer, label: 'Op1 delay', category: 'production' },
+  outsource_lead_delay: { icon: Truck, label: 'Outsource delay', category: 'production' },
+  horizon_wave_renewed: { icon: Waves, label: 'Wave renew', category: 'production' },
+  horizon_wave_stuck: { icon: Factory, label: 'Wave stuck', category: 'production' },
 };
 
 const SEVERITY_RANK = { critical: 0, warning: 1, info: 2 };
@@ -61,6 +76,7 @@ function sortNotifications(list) {
 export default function NotificationsPage() {
   const navigate = useNavigate();
   const { hasAccess } = useAuth();
+  const { subscribe } = useSocket();
   const isAdmin = hasAccess('ADMIN');
 
   const [items, setItems] = useState([]);
@@ -73,14 +89,16 @@ export default function NotificationsPage() {
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [busyId, setBusyId] = useState(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ silent = false } = {}) => {
     if (!isAdmin) {
       setItems([]);
       setLoading(false);
       return;
     }
-    setLoading(true);
-    setError(null);
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const params = {};
       if (statusFilter === 'unread') params.status = 'unread';
@@ -88,10 +106,12 @@ export default function NotificationsPage() {
       const { data } = await api.get('/notifications', { params });
       setItems(sortNotifications(data.notifications || []));
     } catch (err) {
-      setError(err.response?.data?.error || 'Unable to load notifications');
-      setItems([]);
+      if (!silent) {
+        setError(err.response?.data?.error || 'Unable to load notifications');
+        setItems([]);
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [isAdmin, statusFilter, categoryFilter]);
 
@@ -112,6 +132,13 @@ export default function NotificationsPage() {
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    return subscribe('leave-requests:updated', () => {
+      load({ silent: true });
+    });
+  }, [isAdmin, subscribe, load]);
 
   const unreadCount = useMemo(
     () => items.filter((n) => n.status === 'unread').length,
@@ -145,10 +172,27 @@ export default function NotificationsPage() {
       if (n.status === 'unread') {
         await api.post(`/notifications/${n.id}/read`);
       }
-      if (n.employee_id) {
+      if (n.type === 'leave_request_pending') {
+        navigate('/leave-requests?status=pending');
+      } else if (n.employee_id && n.type !== 'leave_request_pending') {
         navigate(`/employees/${n.employee_id}`);
+      } else if (n.type === 'girn_pending_inspection') {
+        const girnId = n.payload?.girn_id;
+        navigate(girnId ? `/girn/${girnId}` : '/girn');
+      } else if (n.type === 'op1_schedule_delay') {
+        const cardId = n.payload?.parent_card_id;
+        navigate(cardId ? `/production/cards/${cardId}` : '/production/horizon-planner');
+      } else if (n.type === 'outsource_lead_delay') {
+        navigate('/production/outsource');
+      } else if (n.type === 'horizon_wave_renewed' || n.type === 'horizon_wave_stuck') {
+        navigate('/production/horizon-planner');
       } else if (n.category === 'inventory') {
         navigate('/delivery-schedules');
+      } else if (n.category === 'finance' || n.type === 'invoice_overdue') {
+        const invId = n.payload?.sales_invoice_id;
+        navigate(invId ? `/sales-invoices/${invId}` : '/sales-invoices?tab=due');
+      } else if (n.category === 'production') {
+        navigate('/production/horizon-planner');
       } else {
         await load();
       }
@@ -325,6 +369,20 @@ export default function NotificationsPage() {
         >
           Inventory
         </button>
+        <button
+          type="button"
+          className={`mes-view-toggle-btn${categoryFilter === 'production' ? ' is-active' : ''}`}
+          onClick={() => setCategoryFilter('production')}
+        >
+          Production
+        </button>
+        <button
+          type="button"
+          className={`mes-view-toggle-btn${categoryFilter === 'finance' ? ' is-active' : ''}`}
+          onClick={() => setCategoryFilter('finance')}
+        >
+          Finance
+        </button>
       </div>
 
       {error ? <p className="error-message">{error}</p> : null}
@@ -334,7 +392,7 @@ export default function NotificationsPage() {
         <EmptyState
           icon={Bell}
           title="You're all caught up"
-          description="Missed punch-outs, low attendance, absence streaks, and stock shortages for today's / tomorrow's deliveries will appear here."
+          description="Missed punch-outs, attendance, stock shortages, production delays, GIRN inspection, and invoice alerts will appear here."
         />
       ) : null}
 

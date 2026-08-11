@@ -106,6 +106,31 @@ function run() {
     'mid-morning not checkout'
   );
 
+  // Device double-tap seconds after lunch OUT must NOT fake BREAK_IN
+  assert(
+    classifyPunchForSession(
+      dayShift,
+      { punched_in_at: dayIn, break_punch_out: lunchOut, punched_out_at: null },
+      '2026-01-27 13:12:00'
+    ) === 'DUPLICATE_BREAK_OUT',
+    'instant second punch after lunch out'
+  );
+
+  // After lunch complete, another midday punch must NOT checkout
+  assert(
+    classifyPunchForSession(
+      dayShift,
+      {
+        punched_in_at: dayIn,
+        break_punch_out: lunchOut,
+        break_punch_in: lunchIn,
+        punched_out_at: null,
+      },
+      '2026-01-27 14:05:00'
+    ) === 'MIDDAY_AFTER_LUNCH',
+    'post-lunch midday is not CHECK_OUT'
+  );
+
   // Skipped lunch + evening → CHECK_OUT
   assert(
     classifyPunchForSession(

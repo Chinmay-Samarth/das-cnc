@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Bell } from 'lucide-react';
 import api from '../../api/client';
 import { useAuth } from '../../auth/authContext';
+import { useSocket } from '../../socket/socketContext';
 
 function badgeLabel(count) {
   if (count <= 0) return null;
@@ -13,6 +14,7 @@ function badgeLabel(count) {
 export default function NotificationBell() {
   const navigate = useNavigate();
   const { user, hasAccess } = useAuth();
+  const { subscribe } = useSocket();
   const isAdmin = hasAccess('ADMIN');
   const [count, setCount] = useState(0);
 
@@ -41,6 +43,13 @@ export default function NotificationBell() {
       window.removeEventListener('focus', onFocus);
     };
   }, [isAdmin, loadCount, user?.id]);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    return subscribe('leave-requests:updated', () => {
+      loadCount();
+    });
+  }, [isAdmin, subscribe, loadCount]);
 
   if (!isAdmin) return null;
 

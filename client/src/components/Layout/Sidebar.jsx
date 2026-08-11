@@ -12,6 +12,7 @@ import {
   LayoutGrid,
   Users,
   CalendarCheck,
+  CalendarOff,
   Building2,
   Package,
   Warehouse,
@@ -23,6 +24,7 @@ import {
   ChevronDown,
   Database,
   Layers,
+  IndianRupee,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'das-sidebar-open-sections';
@@ -59,6 +61,7 @@ const NAV_SECTIONS = [
       { to: '/stock', label: 'Stock', icon: Warehouse },
       { to: '/girn', label: 'GIRN', icon: ClipboardList },
       { to: '/invoices', label: 'Invoices', icon: Receipt },
+      { to: '/sales-invoices', label: 'Sales Invoices', icon: IndianRupee },
     ],
   },
   {
@@ -66,6 +69,7 @@ const NAV_SECTIONS = [
     label: 'People',
     items: [
       { to: '/attendance', label: 'Attendance', icon: CalendarCheck },
+      { to: '/leave-requests', label: 'Leave Requests', icon: CalendarOff },
       { to: '/employees', label: 'Employees', icon: Users },
     ],
   },
@@ -166,7 +170,10 @@ export default function Sidebar({ onNavigate }) {
         {
           id: 'shopfloor',
           label: 'Shop floor',
-          items: [{ to: '/production/today', label: 'My Today', icon: UserCheck }],
+          items: [
+            { to: '/production/today', label: 'My Today', icon: UserCheck },
+            { to: '/leave-requests', label: 'Leave Request', icon: CalendarOff },
+          ],
         },
       ];
     }
@@ -246,6 +253,10 @@ export default function Sidebar({ onNavigate }) {
             <div className="sidebar-pin">
               <NavItem
                 item={{ to: '/production/today', label: 'My Today', icon: UserCheck }}
+                onNavigate={onNavigate}
+              />
+              <NavItem
+                item={{ to: '/leave-requests', label: 'Leave Request', icon: CalendarOff }}
                 onNavigate={onNavigate}
               />
             </div>

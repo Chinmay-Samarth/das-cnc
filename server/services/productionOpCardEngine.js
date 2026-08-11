@@ -395,7 +395,77 @@ async function listOpCardsForWorkCenter(workCenterId, boardDate = null) {
   const enriched = await enrichOpCards(data || []);
   if (!boardDate) return enriched;
   const { itemVisibleOnBoard } = require('./productionAssignEngine');
-  return enriched.filter((op) => itemVisibleOnBoard({ work_date: op.work_date, status: op.status }, boardDate));
+  return enriched.filter((op) =>
+    itemVisibleOnBoard(
+      {
+        work_date: op.work_date,
+        status: op.status,
+        production_lot_id: op.production_lot_id,
+        is_mid_route: !!op.production_lot_id,
+      },
+      boardDate
+    )
+  );
+}
+
+/**
+ * Mid-route traveler ops parked at this WC (lot-backed READY/RUNNING).
+ * Not date-filtered — WIP has already arrived from an upstream center.
+ */
+async function listIncomingOpCardsForWorkCenter(workCenterId) {
+  if (!isValidUUID(workCenterId)) throw httpError('Invalid work center id');
+  const { data, error } = await supabase
+    .from('production_op_cards')
+    .select('*')
+    .eq('work_center_id', workCenterId)
+    .not('production_lot_id', 'is', null)
+    .in('status', OPEN_STATUSES)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return enrichOpCards(data || []);
+}
+
+/**
+ * Mid-route ops completed at this WC on a plant calendar day (for Done today / efficiency).
+ */
+async function listCompletedMidRouteOpCardsForWorkCenterToday(workCenterId, workDate) {
+  if (!isValidUUID(workCenterId)) throw httpError('Invalid work center id');
+  const date = String(workDate || '').slice(0, 10);
+  if (!date) return [];
+
+  // Wide lookback so Asia/Kolkata evenings / mornings still land in-range
+  const lookback = new Date(`${date}T00:00:00.000Z`);
+  lookback.setUTCDate(lookback.getUTCDate() - 1);
+  const lookahead = new Date(`${date}T00:00:00.000Z`);
+  lookahead.setUTCDate(lookahead.getUTCDate() + 2);
+
+  const { data, error } = await supabase
+    .from('production_op_cards')
+    .select('*')
+    .eq('work_center_id', workCenterId)
+    .not('production_lot_id', 'is', null)
+    .eq('status', 'COMPLETED')
+    .gte('completed_at', lookback.toISOString())
+    .lt('completed_at', lookahead.toISOString())
+    .order('completed_at', { ascending: true });
+  if (error) throw error;
+
+  const plantDay = (iso) => {
+    if (!iso) return null;
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: process.env.TIMEZONE || 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date(iso));
+    } catch {
+      return String(iso).slice(0, 10);
+    }
+  };
+
+  const rows = (data || []).filter((r) => plantDay(r.completed_at) === date);
+  return enrichOpCards(rows);
 }
 
 async function listOpCardsForParent(parentCardId) {
@@ -718,7 +788,7 @@ async function healAndSpawnMissingOpCards(limit = 200) {
   const { data: openLots, error: oErr } = await supabase
     .from('production_lots')
     .select('*')
-    .in('status', ['in_process', 'received'])
+    .in('status', ['in_process', 'received', 'staged'])
     .not('current_activity_flow_node_id', 'is', null)
     .limit(limit);
   if (oErr) throw oErr;
@@ -782,6 +852,8 @@ module.exports = {
   enrichOpCards,
   listMyTodayOpCards,
   listOpCardsForWorkCenter,
+  listIncomingOpCardsForWorkCenter,
+  listCompletedMidRouteOpCardsForWorkCenterToday,
   listOpCardsForParent,
   startOpCard,
   reportOpCardProgress,

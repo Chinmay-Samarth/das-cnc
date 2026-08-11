@@ -22,6 +22,7 @@ const {
   computeRunOutDays,
   SAFETY_BUFFER_DAYS,
 } = require('./campaignRankingEngine');
+const { notifyHorizonWaveRenewed } = require('./productionAlertEngine');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -819,7 +820,7 @@ async function checkWaveCompletion(waveId) {
       const months = 5;
       const { data: wc } = await supabase
         .from('work_centers')
-        .select('horizon_months_default, hours_per_day')
+        .select('horizon_months_default, hours_per_day, code, name')
         .eq('id', wave.work_center_id)
         .maybeSingle();
       const horizonMonths = Math.min(6, Math.max(4, wc?.horizon_months_default || months));
@@ -877,6 +878,19 @@ async function checkWaveCompletion(waveId) {
           status: 'blocked',
           hours_per_day: wave.hours_per_day || wc?.hours_per_day || 9,
         });
+      }
+
+      try {
+        await notifyHorizonWaveRenewed({
+          workCenterId: wave.work_center_id,
+          workCenterLabel: wc?.code || wc?.name || null,
+          oldHorizonEnd: wave.horizon_end,
+          newHorizonStart: nextWindow.horizon_start,
+          newHorizonEnd: nextWindow.horizon_end,
+          newHorizonIndex: nextIndex,
+        });
+      } catch (notifyErr) {
+        console.error('Horizon wave renew notification failed:', notifyErr.message);
       }
     } catch (e) {
       console.error('Horizon auto-refresh after wave complete:', e.message);
@@ -1074,24 +1088,97 @@ async function getWCCommand(workCenterId, workDate) {
     });
   }
 
-  const teamRaw = (members || []).map((m) => m.employees).filter(Boolean);
-  const effByEmp = Object.fromEntries((efficiencies || []).map((e) => [e.employee_id, e]));
-  const team = teamRaw.map((emp) => {
-    const eff = effByEmp[emp.id];
-    return {
-      ...emp,
-      employee_id: emp.id,
-      efficiency_pct: eff?.efficiency_pct != null ? toNumber(eff.efficiency_pct) : '',
-      notes: eff?.notes || '',
-      efficiency_saved: !!eff,
-    };
-  });
-
   const goodClosed = closedList.reduce((s, c) => s + toNumber(c.good_qty), 0);
   const goalClosed = closedList.reduce((s, c) => s + toNumber(c.committed_qty), 0);
   const activeMapped = mapCardOut(actionableCard);
-  const goodToday = goodClosed + (activeMapped ? toNumber(activeMapped.good_qty) : 0);
-  const goalToday = goalClosed + (activeMapped ? toNumber(activeMapped.committed_qty) : 0);
+  let goodToday = goodClosed + (activeMapped ? toNumber(activeMapped.good_qty) : 0);
+  let goalToday = goalClosed + (activeMapped ? toNumber(activeMapped.committed_qty) : 0);
+
+  // Mid-route WIP parked at this WC after an upstream op (e.g. CUT-01 → CUT-02).
+  // Always load these — they must show even when this WC has no active campaign.
+  let incomingOps = [];
+  let completedMidRouteToday = [];
+  try {
+    const {
+      listIncomingOpCardsForWorkCenter,
+      listCompletedMidRouteOpCardsForWorkCenterToday,
+    } = require('./productionOpCardEngine');
+    incomingOps = await listIncomingOpCardsForWorkCenter(workCenterId);
+    completedMidRouteToday = await listCompletedMidRouteOpCardsForWorkCenterToday(
+      workCenterId,
+      date
+    );
+  } catch (e) {
+    console.error('incoming/completed mid-route ops for WC command:', e.message);
+  }
+
+  const mapMidRouteClosed = (op) => {
+    const target = toNumber(op.target_quantity);
+    const good = toNumber(op.good_qty);
+    return {
+      id: op.id,
+      kind: 'mid_route_op',
+      card_number: op.op_card_number || op.card_number || null,
+      committed_qty: target,
+      good_qty: good,
+      scrap_qty: toNumber(op.scrap_qty),
+      remaining: Math.max(0, target - good),
+      status: 'COMPLETED',
+      completed_at: op.completed_at || null,
+      work_date: date,
+      component_label: op.component_label || op.lot_number || null,
+      current_node_label: op.current_node_label || op.node_label || null,
+      lot_number: op.lot_number || null,
+      lot_numbers: op.lot_number ? [op.lot_number] : [],
+      efficiency_unlocked: true,
+      production_lot_id: op.production_lot_id || null,
+      parent_card_id: op.parent_production_card_id || null,
+    };
+  };
+
+  const midRouteClosedList = (completedMidRouteToday || []).map(mapMidRouteClosed);
+  // Campaign daily closes + mid-route completes for this WC today
+  closedList = [...closedList, ...midRouteClosedList];
+
+  for (const op of incomingOps || []) {
+    goodToday += toNumber(op.good_qty);
+    goalToday += toNumber(op.target_quantity);
+  }
+  for (const op of midRouteClosedList) {
+    goodToday += toNumber(op.good_qty);
+    goalToday += toNumber(op.committed_qty);
+  }
+
+  const dayEfficiencyIndex = goalToday > 0 ? Math.round((goodToday / goalToday) * 100) : 0;
+
+  const teamRaw = (members || []).map((m) => m.employees).filter(Boolean);
+  const teamById = new Map(teamRaw.map((emp) => [emp.id, emp]));
+  // Ensure WC manager appears in efficiency matrix even if not in employee_work_centers
+  if (wc?.manager_employee_id && !teamById.has(wc.manager_employee_id)) {
+    const { data: managerEmp } = await supabase
+      .from('employees')
+      .select('id, full_name, employee_code')
+      .eq('id', wc.manager_employee_id)
+      .maybeSingle();
+    if (managerEmp) teamById.set(managerEmp.id, managerEmp);
+  }
+
+  const effByEmp = Object.fromEntries((efficiencies || []).map((e) => [e.employee_id, e]));
+  const team = [...teamById.values()].map((emp) => {
+    const eff = effByEmp[emp.id];
+    const isManager = wc?.manager_employee_id === emp.id;
+    const storedPct = eff?.efficiency_pct != null ? toNumber(eff.efficiency_pct) : null;
+    return {
+      ...emp,
+      employee_id: emp.id,
+      is_wc_manager: isManager,
+      efficiency_pct:
+        storedPct != null ? storedPct : isManager ? dayEfficiencyIndex : '',
+      notes: eff?.notes || '',
+      efficiency_saved: !!eff,
+      efficiency_from_index: isManager,
+    };
+  });
 
   return {
     work_center: wc,
@@ -1103,6 +1190,7 @@ async function getWCCommand(workCenterId, workDate) {
     // Alias kept so older clients reading today_commitment still work during cutover
     today_commitment: activeMapped,
     open_cards: openCards.map(mapCardOut),
+    incoming_ops: incomingOps,
     campaign_queue: await enrichCampaigns(queue || []),
     horizon_wave: wave,
     team,
@@ -1110,10 +1198,16 @@ async function getWCCommand(workCenterId, workDate) {
     efficiency_saved: (efficiencies || []).length > 0,
     closed_cards: closedList,
     closed_commitments: closedList,
+    closed_mid_route_ops: midRouteClosedList,
     ops_completed_today: closedList.length,
     today_good_qty: goodToday,
     today_goal_qty: goalToday,
+    efficiency_index_pct: dayEfficiencyIndex,
     next_card_date: nextCardDate,
+    has_floor_activity:
+      !!enriched ||
+      (incomingOps || []).length > 0 ||
+      closedList.length > 0,
   };
 }
 
@@ -1224,12 +1318,93 @@ async function closeCommitment(commitmentId, actorId, { isSupervisor = false, fo
   throw httpError('Daily commitments retired — use campaign production cards', 410);
 }
 
+async function computeWorkCenterDayEfficiencyPct(workCenterId, workDate) {
+  const date = String(workDate || todayDateString()).slice(0, 10);
+  let good = 0;
+  let goal = 0;
+
+  const { data: activeCampaign } = await supabase
+    .from('production_campaigns')
+    .select('id')
+    .eq('work_center_id', workCenterId)
+    .eq('status', 'active')
+    .maybeSingle();
+
+  if (activeCampaign) {
+    const { data: cards, error } = await supabase
+      .from('production_cards')
+      .select('id, status, work_date, target_quantity, total_good_produced, completed_at')
+      .eq('campaign_id', activeCampaign.id);
+    if (error) throw error;
+
+    const openDue = (cards || []).filter(
+      (c) =>
+        ['READY', 'RUNNING', 'OVERDUE'].includes(c.status) &&
+        String(c.work_date || '').slice(0, 10) <= date
+    );
+    const actionable = openDue[0] || null;
+    const completedToday = (cards || []).filter(
+      (c) => c.status === 'COMPLETED' && String(c.completed_at || '').slice(0, 10) === date
+    );
+
+    for (const c of completedToday) {
+      good += toNumber(c.total_good_produced);
+      goal += toNumber(c.target_quantity);
+    }
+    if (actionable) {
+      good += toNumber(actionable.total_good_produced);
+      goal += toNumber(actionable.target_quantity);
+    }
+  }
+
+  try {
+    const {
+      listIncomingOpCardsForWorkCenter,
+      listCompletedMidRouteOpCardsForWorkCenterToday,
+    } = require('./productionOpCardEngine');
+    const [incoming, completedMid] = await Promise.all([
+      listIncomingOpCardsForWorkCenter(workCenterId),
+      listCompletedMidRouteOpCardsForWorkCenterToday(workCenterId, date),
+    ]);
+    for (const op of incoming || []) {
+      good += toNumber(op.good_qty);
+      goal += toNumber(op.target_quantity);
+    }
+    for (const op of completedMid || []) {
+      good += toNumber(op.good_qty);
+      goal += toNumber(op.target_quantity);
+    }
+  } catch (e) {
+    console.error('computeWorkCenterDayEfficiencyPct mid-route:', e.message);
+  }
+
+  return goal > 0 ? Math.round((good / goal) * 100) : 0;
+}
+
 async function upsertWorkerEfficiency(
   { work_center_id: wcId, work_date: workDate, employee_id: empId, efficiency_pct: pct, notes },
   actorId,
   { isSupervisor = false } = {}
 ) {
   await assertWCManager(wcId, actorId, { isSupervisor });
+
+  const { data: wc, error: wcErr } = await supabase
+    .from('work_centers')
+    .select('id, manager_employee_id')
+    .eq('id', wcId)
+    .maybeSingle();
+  if (wcErr) throw wcErr;
+  if (!wc) throw httpError('Work center not found', 404);
+
+  let efficiencyPct = toNumber(pct);
+  let entryNotes = notes || null;
+  if (wc.manager_employee_id && empId === wc.manager_employee_id) {
+    efficiencyPct = await computeWorkCenterDayEfficiencyPct(wcId, workDate);
+    if (!entryNotes) {
+      entryNotes = 'Derived from day efficiency index';
+    }
+  }
+
   const { data, error } = await supabase
     .from('worker_efficiency_entries')
     .upsert(
@@ -1237,8 +1412,8 @@ async function upsertWorkerEfficiency(
         work_center_id: wcId,
         work_date: workDate,
         employee_id: empId,
-        efficiency_pct: toNumber(pct),
-        notes: notes || null,
+        efficiency_pct: efficiencyPct,
+        notes: entryNotes,
         entered_by: actorId,
       },
       { onConflict: 'work_center_id,work_date,employee_id' }

@@ -70,6 +70,11 @@ export default function useDailyAttendance(initialDate = null) {
     return records.filter((row) => row.status === 'ABSENT');
   }, [daily]);
 
+  const onLeave = useMemo(() => {
+    const records = daily?.records || [];
+    return records.filter((row) => String(row.status || '').toUpperCase() === 'LEAVE');
+  }, [daily]);
+
   const latestRecords = useMemo(() => {
     const records = daily?.records || [];
     return records
@@ -89,9 +94,11 @@ export default function useDailyAttendance(initialDate = null) {
     setDate: setQueryDate,
     refresh: loadDailyAttendance,
     absentees,
+    onLeave,
     latestRecords,
     presentCount: daily?.summary?.present ?? 0,
     absentCount: daily?.summary?.absent ?? 0,
+    onLeaveCount: daily?.summary?.on_leave ?? onLeave.length,
     totalCount: daily?.summary?.total ?? 0,
     lateArrivals: daily?.summary.late ?? 0,
   };

@@ -85,6 +85,8 @@ function summarizeMonth(records, daysInRange) {
     attendedDays: presentDays,
     absent,
     absentDates,
+    leaveDates: [...leaveDates].sort(),
+    leaveDays: leaveDates.size,
     totalWorkingDays: totalDays,
     score,
   };
@@ -435,9 +437,42 @@ export default function EmployeeDetailsPage() {
       case 'PRESENT':  return 'present';
       case 'HALF_DAY': return 'half_day';
       case 'COMPLETED':return 'completed';
+      case 'LEAVE':    return 'leave';
       default:         return '';
     }
   };
+
+  const attendanceHeatmap = useMemo(() => {
+    const year = selectedMonth.getFullYear();
+    const month = selectedMonth.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const firstDow = new Date(year, month, 1).getDay(); // 0 Sun
+    const presentSet = new Set();
+    const leaveSet = new Set(attendanceSummary.leaveDates || []);
+    const absentSet = new Set(attendanceSummary.absentDates || []);
+
+    for (const row of attendanceRecords || []) {
+      const status = String(row.status || '').toUpperCase();
+      const date = toISODateString(row.shift_date);
+      if (['PRESENT', 'COMPLETED', 'LATE', 'HALF_DAY'].includes(status)) {
+        presentSet.add(date);
+      }
+    }
+
+    const cells = [];
+    for (let i = 0; i < firstDow; i += 1) {
+      cells.push({ key: `pad-${i}`, empty: true });
+    }
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const ymd = toISODateString(new Date(year, month, day));
+      let tone = 'muted';
+      if (presentSet.has(ymd)) tone = 'present';
+      else if (leaveSet.has(ymd)) tone = 'leave';
+      else if (absentSet.has(ymd)) tone = 'absent';
+      cells.push({ key: ymd, day, tone, ymd });
+    }
+    return cells;
+  }, [selectedMonth, attendanceRecords, attendanceSummary.leaveDates, attendanceSummary.absentDates]);
 
   // ── render ────────────────────────────────────────────────────────────────
 
@@ -647,7 +682,50 @@ export default function EmployeeDetailsPage() {
                           <StatTile label="Present" value={attendanceSummary.presentDays} accent="#059669" />
                           <StatTile label="Late" value={attendanceSummary.late} accent="#d97706" />
                           <StatTile label="Half Days" value={attendanceSummary.half_day} accent="#eab308" />
+                          <StatTile label="On Leave" value={attendanceSummary.leaveDays || 0} accent="#ea580c" />
                           <StatTile label="Absent" value={attendanceSummary.absent} accent="#dc2626" />
+                        </div>
+                      </div>
+
+                      <div className="emp-att-heatmap" aria-label="Attendance calendar">
+                        <h3 style={{ margin: '0 0 10px', fontSize: '1rem' }}>Month calendar</h3>
+                        <div className="emp-att-heatmap-grid">
+                          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
+                            <div key={d} className="emp-att-heatmap-dow">
+                              {d}
+                            </div>
+                          ))}
+                          {attendanceHeatmap.map((cell) =>
+                            cell.empty ? (
+                              <div key={cell.key} className="emp-att-heatmap-cell is-empty" />
+                            ) : (
+                              <div
+                                key={cell.key}
+                                className={`emp-att-heatmap-cell is-${cell.tone}`}
+                                title={`${cell.ymd} · ${cell.tone}`}
+                              >
+                                {cell.day}
+                              </div>
+                            )
+                          )}
+                        </div>
+                        <div className="emp-att-heatmap-legend">
+                          <span>
+                            <i className="emp-att-heatmap-swatch is-present" style={{ background: '#dcfce7', borderColor: '#86efac' }} />
+                            Present
+                          </span>
+                          <span>
+                            <i className="emp-att-heatmap-swatch" style={{ background: '#ffedd5', borderColor: '#fdba74' }} />
+                            Leave
+                          </span>
+                          <span>
+                            <i className="emp-att-heatmap-swatch" style={{ background: '#fee2e2', borderColor: '#fca5a5' }} />
+                            Absent
+                          </span>
+                          <span>
+                            <i className="emp-att-heatmap-swatch" style={{ background: '#f3f4f6', borderColor: '#e5e7eb' }} />
+                            Future / other
+                          </span>
                         </div>
                       </div>
 
@@ -677,6 +755,31 @@ export default function EmployeeDetailsPage() {
                           </table>
                         </div>
                       )}
+
+                      <div style={{ marginTop: '24px' }}>
+                        <h3 style={{ margin: '0 0 8px', fontSize: '1rem' }}>On leave</h3>
+                        {(attendanceSummary.leaveDates || []).length === 0 ? (
+                          <p className="muted" style={{ margin: 0 }}>No approved leave this month.</p>
+                        ) : (
+                          <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                            {attendanceSummary.leaveDates.map((date) => (
+                              <li
+                                key={`leave-${date}`}
+                                style={{
+                                  padding: '6px 10px',
+                                  borderRadius: '8px',
+                                  background: '#ffedd5',
+                                  color: '#c2410c',
+                                  fontSize: '0.875rem',
+                                  border: '1px solid #fdba74',
+                                }}
+                              >
+                                {new Date(`${date}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'long' })}, {formatDisplayDate(date)}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
 
                       <div style={{ marginTop: '24px' }}>
                         <h3 style={{ margin: '0 0 8px', fontSize: '1rem' }}>Absent days</h3>
