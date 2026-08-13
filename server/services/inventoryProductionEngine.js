@@ -235,4 +235,5 @@ module.exports = {
   receiveFinishedComponent,
   issueFinishedComponent,
   hasLotInventoryEvent,
+  recordLotInventoryEvent,
 };

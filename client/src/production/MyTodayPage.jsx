@@ -1114,11 +1114,24 @@ function ManagerMyToday({ floorOnly, navigate }) {
               <option key={wc.id} value={wc.id}>
                 {wc.code ? `${wc.code} — ` : ''}
                 {wc.name}
+                {wc.is_acting ? ' (acting)' : ''}
               </option>
             ))}
           </select>
         </label>
       </div>
+
+      {command?.contingency?.acting_employee_id &&
+      command?.contingency?.manager_unavailable ? (
+        <p className="muted" style={{ marginTop: 0, marginBottom: 12, fontSize: 13 }}>
+          Acting manager today
+          {command.contingency.pinned ? ' (pinned)' : ''}
+          {command.contingency.acting_employee?.full_name
+            ? ` — ${command.contingency.acting_employee.full_name}`
+            : ''}
+          . Regular manager is absent or on leave.
+        </p>
+      ) : null}
 
       {error ? <p className="error-message">{error}</p> : null}
 

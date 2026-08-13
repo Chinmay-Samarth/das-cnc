@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Check, Download, Printer, Truck } from 'lucide-react';
+import { ArrowLeft, Check, Printer, Truck } from 'lucide-react';
 import api from '../api/client';
 import { PageHeader } from '../components/mes';
 import { appAlert } from '../components/dialog';
-import { downloadSalesInvoicePdf, formatInr } from './downloadSalesInvoicePdf';
+import { printSalesInvoicePdf, formatInr } from './downloadSalesInvoicePdf';
 
 const STEPS = [
   { id: 1, title: 'Lot & schedule', hint: 'Confirm what you are billing' },
   { id: 2, title: 'Customer & tax', hint: 'Place of supply and GST split' },
   { id: 3, title: 'Company', hint: 'Seller details on this invoice' },
-  { id: 4, title: 'Issue & print', hint: 'Number, PDF, confirm print' },
+  { id: 4, title: 'Issue & print', hint: 'Number, print, confirm' },
 ];
 
 const STATE_HINTS = [
@@ -29,6 +29,7 @@ export default function AddSalesInvoiceWizard() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const lotId = searchParams.get('lotId');
+  const quantityParam = searchParams.get('quantity');
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -83,7 +84,12 @@ export default function AddSalesInvoiceWizard() {
           Object.keys(f).map((k) => [k, company[k] != null ? String(company[k]) : f[k]])
         ),
       }));
-      setQuantity(String(prev.data?.lot?.quantity ?? ''));
+      const qtyFromQuery = Number(quantityParam);
+      const defaultQty =
+        Number.isFinite(qtyFromQuery) && qtyFromQuery > 0
+          ? qtyFromQuery
+          : prev.data?.lot?.quantity;
+      setQuantity(String(defaultQty ?? ''));
       setUnitPrice(String(prev.data?.line?.unit_price ?? ''));
       const gstin = prev.data?.customer?.gstin || '';
       setPosCode(gstin.length >= 2 ? gstin.slice(0, 2) : company.state_code || '29');
@@ -101,7 +107,7 @@ export default function AddSalesInvoiceWizard() {
     } finally {
       setLoading(false);
     }
-  }, [lotId]);
+  }, [lotId, quantityParam]);
 
   useEffect(() => {
     bootstrap();
@@ -210,14 +216,15 @@ export default function AddSalesInvoiceWizard() {
     }
   }
 
-  async function handleDownload() {
+  async function handlePrint() {
     if (!invoice) return;
     setBusy(true);
     try {
-      await downloadSalesInvoicePdf(invoice);
+      const stored = await printSalesInvoicePdf(invoice);
+      if (stored?.id) setInvoice(stored);
       setDownloaded(true);
     } catch (err) {
-      setError(err.message || 'Download failed');
+      setError(err.message || 'Print failed');
     } finally {
       setBusy(false);
     }
@@ -466,16 +473,17 @@ export default function AddSalesInvoiceWizard() {
                       type="button"
                       className="mes-btn mes-btn-secondary"
                       disabled={busy}
-                      onClick={handleDownload}
+                      onClick={handlePrint}
                     >
-                      <Download size={15} />
-                      Download PDF
+                      <Printer size={15} />
+                      Print invoice
                     </button>
                     {!invoice.printed_at ? (
                       <button
                         type="button"
                         className="mes-btn mes-btn-primary"
                         disabled={busy || !downloaded}
+                        title={!downloaded ? 'Print the invoice first' : undefined}
                         onClick={handleConfirmPrinted}
                       >
                         <Printer size={15} />

@@ -1,4 +1,5 @@
 const express = require('express');
+const multer = require('multer');
 const jwt = require('jsonwebtoken');
 const { computeAccessLevel } = require('../utils/accessLevel');
 const {
@@ -14,7 +15,13 @@ const {
   recordPayment,
   findActiveInvoiceForLot,
   resolveLotBillingContext,
+  storeSalesInvoicePdf,
 } = require('../services/salesInvoiceEngine');
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
@@ -98,7 +105,11 @@ router.get(
         quantity: ctx.lot.quantity,
         status: ctx.lot.status,
       },
-      schedule: ctx.schedule,
+      schedule: {
+        ...ctx.schedule,
+        remaining_qty: ctx.remaining_qty,
+      },
+      remaining_qty: ctx.remaining_qty,
       line: ctx.line,
       blanket: ctx.blanket,
       customer: ctx.customer,
@@ -157,6 +168,18 @@ router.post(
   requireAdminOrSupervisor,
   wrap(async (req, res) => {
     const invoice = await confirmPrinted(req.params.id, actorId(req));
+    return res.json({ sales_invoice: invoice });
+  })
+);
+
+router.post(
+  '/:id/pdf',
+  upload.single('pdf'),
+  wrap(async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: 'PDF file is required' });
+    }
+    const invoice = await storeSalesInvoicePdf(req.params.id, req.file);
     return res.json({ sales_invoice: invoice });
   })
 );

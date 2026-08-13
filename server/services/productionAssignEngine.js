@@ -709,7 +709,23 @@ async function getWorkCenterBoard(workCenterId, date) {
       String(a.employee_code || '').localeCompare(String(b.employee_code || ''))
   );
 
-  return { cards: enriched, lots, op_cards, operator_loads: loads };
+  const { resolveActingManager } = require('./wcContingencyEngine');
+  const contingency = await resolveActingManager(workCenterId, date);
+  const canReassign = !!contingency.manager_unavailable;
+
+  return {
+    cards: enriched,
+    lots,
+    op_cards,
+    operator_loads: loads,
+    manager_unavailable: canReassign,
+    acting_employee: contingency.acting_employee || null,
+    acting_employee_id: contingency.acting_employee_id || null,
+    contingency_pinned: !!contingency.pinned,
+    can_reassign: canReassign,
+    can_pin_acting: canReassign,
+    primary_manager_id: contingency.primary_manager_id || null,
+  };
 }
 
 module.exports = {

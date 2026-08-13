@@ -49,6 +49,12 @@ const NAV_SECTIONS = [
       { to: '/production/work-centers', label: 'WC Board', icon: LayoutGrid },
       { to: '/production/outsource', label: 'Outsourcing', icon: Send },
       { to: '/production/dispatch', label: 'Ready for Dispatch', icon: PackageCheck },
+      {
+        to: '/dispatch-approvals',
+        label: 'Dispatch Approvals',
+        icon: ClipboardList,
+        adminOrSupervisorOnly: true,
+      },
     ],
   },
   {
@@ -178,11 +184,18 @@ export default function Sidebar({ onNavigate }) {
       ];
     }
 
+    const isReviewer =
+      user?.accessLevel === 'ADMIN' || user?.accessLevel === 'SUPERVISOR';
+
     return NAV_SECTIONS.map((section) => ({
       ...section,
-      items: section.items.filter((item) => !item.managerOnly || managesWorkCenter),
+      items: section.items.filter((item) => {
+        if (item.managerOnly && !managesWorkCenter) return false;
+        if (item.adminOrSupervisorOnly && !isReviewer) return false;
+        return true;
+      }),
     })).filter((section) => section.items.length > 0);
-  }, [managesWorkCenter, floorOnly]);
+  }, [managesWorkCenter, floorOnly, user?.accessLevel]);
 
   const masterItems = useMemo(
     () =>

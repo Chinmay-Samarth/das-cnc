@@ -46,6 +46,7 @@ import ProductionCardTrackingPage from './production/ProductionCardTrackingPage'
 import ReadyForDispatchPage from './production/ReadyForDispatchPage';
 import OutsourcingPage from './production/OutsourcingPage';
 import LeaveRequestPage from './leaveRequests/LeaveRequestPage';
+import DispatchShortfallApprovalsPage from './dispatchApprovals/DispatchShortfallApprovalsPage';
 import SalesInvoicesPage from './salesInvoices/SalesInvoicesPage';
 import SalesInvoiceDetailsPage from './salesInvoices/SalesInvoiceDetailsPage';
 import AddSalesInvoiceWizard from './salesInvoices/AddSalesInvoiceWizard';
@@ -191,6 +192,7 @@ export default function App() {
               <Route path="/production/campaigns" element={<CampaignReviewPage />} />
               <Route path="/production/work-centers" element={<WorkCenterBoardPage />} />
               <Route path="/production/dispatch" element={<ReadyForDispatchPage />} />
+              <Route path="/dispatch-approvals" element={<DispatchShortfallApprovalsPage />} />
               <Route path="/production/outsource" element={<OutsourcingPage />} />
               <Route path="/production" element={<ProductionBoardPage />} />
               <Route path="/production/cards/:id" element={<ProductionCardTrackingPage />} />

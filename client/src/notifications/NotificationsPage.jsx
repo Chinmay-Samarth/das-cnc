@@ -17,6 +17,7 @@ import {
   UserX,
   Waves,
   CalendarOff,
+  PackageCheck,
 } from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
@@ -35,6 +36,11 @@ const TYPE_META = {
   low_attendance: { icon: Percent, label: 'Attendance %', category: 'attendance' },
   consecutive_absent: { icon: CalendarX2, label: 'Absence streak', category: 'attendance' },
   leave_request_pending: { icon: CalendarOff, label: 'Leave request', category: 'attendance' },
+  dispatch_shortfall_pending: {
+    icon: PackageCheck,
+    label: 'Dispatch shortfall',
+    category: 'production',
+  },
   insufficient_stock: { icon: PackageX, label: 'Stock short', category: 'inventory' },
   girn_pending_inspection: { icon: ClipboardCheck, label: 'GIRN inspection', category: 'inventory' },
   invoice_overdue: { icon: FileText, label: 'Invoice overdue', category: 'finance' },
@@ -174,6 +180,8 @@ export default function NotificationsPage() {
       }
       if (n.type === 'leave_request_pending') {
         navigate('/leave-requests?status=pending');
+      } else if (n.type === 'dispatch_shortfall_pending') {
+        navigate('/dispatch-approvals?status=pending');
       } else if (n.employee_id && n.type !== 'leave_request_pending') {
         navigate(`/employees/${n.employee_id}`);
       } else if (n.type === 'girn_pending_inspection') {

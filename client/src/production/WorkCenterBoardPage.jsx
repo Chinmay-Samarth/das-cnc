@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Factory } from 'lucide-react';
 import api from '../api/client';
+import { useAuth } from '../auth/authContext';
 import { formatDueLabel } from '../blanketPos/scheduleLabels';
 import { useSocket, useProductionRealtime } from '../socket/socketContext';
 import { appAlert } from '../components/dialog';
@@ -24,6 +25,7 @@ const STRUCTURAL_WC_RELOAD = new Set([
   'lot_created',
   'lot_advanced',
   'lot_ready_for_dispatch',
+  'acting_manager_pinned',
 ]);
 
 function todayStr() {
@@ -257,12 +259,15 @@ function BoardJobCard({ item, onOpen, onContextMenu }) {
 function BoardContextMenu({
   menu,
   operators,
+  canReassign = false,
+  canPinActing = false,
   onReassign,
+  onSetActingManager,
   onOpenTracking,
   onClose,
 }) {
   const menuRef = useRef(null);
-  const [submenuOpen, setSubmenuOpen] = useState(false);
+  const [submenuOpen, setSubmenuOpen] = useState(null);
 
   useEffect(() => {
     if (!menu) return undefined;
@@ -280,6 +285,10 @@ function BoardContextMenu({
     };
   }, [menu, onClose]);
 
+  useEffect(() => {
+    setSubmenuOpen(null);
+  }, [menu]);
+
   if (!menu) return null;
 
   return createPortal(
@@ -289,42 +298,81 @@ function BoardContextMenu({
       style={{ top: menu.y, left: menu.x }}
       role="menu"
     >
-      <div
-        className="wc-context-has-submenu-wrap"
-        onMouseEnter={() => setSubmenuOpen(true)}
-        onMouseLeave={() => setSubmenuOpen(false)}
-      >
-        <button type="button" className="wc-context-menu-item wc-context-has-submenu">
-          Reassign
-          <span aria-hidden>›</span>
-        </button>
-        {submenuOpen ? (
-          <div className="wc-context-submenu" role="menu">
-            {!operators?.length ? (
-              <p className="wc-station-muted" style={{ padding: '8px 12px', margin: 0 }}>
-                No operators
-              </p>
-            ) : (
-              operators.map((op) => (
-                <button
-                  key={op.employee_id}
-                  type="button"
-                  className="wc-context-menu-item"
-                  onClick={() => onReassign(menu.item, op.employee_id)}
-                >
-                  <span className="mes-avatar" style={{ width: 22, height: 22, fontSize: 9 }}>
-                    {initials(op.full_name)}
-                  </span>
-                  <span>
-                    {op.full_name}
-                    <span className="wc-context-load"> · {Number(op.total_qty ?? 0)}</span>
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
-        ) : null}
-      </div>
+      {canReassign ? (
+        <div
+          className="wc-context-has-submenu-wrap"
+          onMouseEnter={() => setSubmenuOpen('reassign')}
+          onMouseLeave={() => setSubmenuOpen(null)}
+        >
+          <button type="button" className="wc-context-menu-item wc-context-has-submenu">
+            Reassign
+            <span aria-hidden>›</span>
+          </button>
+          {submenuOpen === 'reassign' ? (
+            <div className="wc-context-submenu" role="menu">
+              {!operators?.length ? (
+                <p className="wc-station-muted" style={{ padding: '8px 12px', margin: 0 }}>
+                  No operators
+                </p>
+              ) : (
+                operators.map((op) => (
+                  <button
+                    key={op.employee_id}
+                    type="button"
+                    className="wc-context-menu-item"
+                    onClick={() => onReassign(menu.item, op.employee_id)}
+                  >
+                    <span className="mes-avatar" style={{ width: 22, height: 22, fontSize: 9 }}>
+                      {initials(op.full_name)}
+                    </span>
+                    <span>
+                      {op.full_name}
+                      <span className="wc-context-load"> · {Number(op.total_qty ?? 0)}</span>
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {canPinActing ? (
+        <div
+          className="wc-context-has-submenu-wrap"
+          onMouseEnter={() => setSubmenuOpen('acting')}
+          onMouseLeave={() => setSubmenuOpen(null)}
+        >
+          <button type="button" className="wc-context-menu-item wc-context-has-submenu">
+            Set acting manager
+            <span aria-hidden>›</span>
+          </button>
+          {submenuOpen === 'acting' ? (
+            <div className="wc-context-submenu" role="menu">
+              {!operators?.length ? (
+                <p className="wc-station-muted" style={{ padding: '8px 12px', margin: 0 }}>
+                  No present operators
+                </p>
+              ) : (
+                operators.map((op) => (
+                  <button
+                    key={`act-${op.employee_id}`}
+                    type="button"
+                    className="wc-context-menu-item"
+                    onClick={() => onSetActingManager(op.employee_id)}
+                  >
+                    <span className="mes-avatar" style={{ width: 22, height: 22, fontSize: 9 }}>
+                      {initials(op.full_name)}
+                    </span>
+                    <span>{op.full_name}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <button
         type="button"
         className="wc-context-menu-item"
@@ -345,6 +393,8 @@ function WorkCenterStation({ wc, board, boardDate, onOpenCard, onContextMenu }) 
   const remaining = items.reduce((s, item) => s + remainingForItem(item), 0);
   const openCount = running.length + today.length;
   const completedToday = loads.reduce((s, op) => s + Number(op.completed_ops ?? 0), 0);
+  const actingName = board?.acting_employee?.full_name || null;
+  const actingPinned = !!board?.contingency_pinned;
 
   return (
     <section className="wc-station">
@@ -357,6 +407,16 @@ function WorkCenterStation({ wc, board, boardDate, onOpenCard, onContextMenu }) 
             Remaining <strong>{remaining}</strong> · {openCount} open
             {completedToday > 0 ? ` · ${completedToday} done today` : ''}
           </p>
+          {board?.manager_unavailable && actingName ? (
+            <p className="wc-station-muted" style={{ margin: '4px 0 0' }}>
+              Acting: {actingName}
+              {actingPinned ? ' · pinned' : ''}
+            </p>
+          ) : board?.manager_unavailable ? (
+            <p className="wc-station-muted" style={{ margin: '4px 0 0' }}>
+              Manager absent — no acting manager yet
+            </p>
+          ) : null}
         </div>
         <OperatorAvatarStack operators={loads} />
       </header>
@@ -398,6 +458,7 @@ function WorkCenterStation({ wc, board, boardDate, onOpenCard, onContextMenu }) 
 
 export default function WorkCenterBoardPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { joinWorkCenterRoom, leaveWorkCenterRoom } = useSocket();
   const [workCenters, setWorkCenters] = useState([]);
   const [date, setDate] = useState(todayStr());
@@ -409,6 +470,9 @@ export default function WorkCenterBoardPage() {
   const dateRef = useRef(date);
   const boardsRef = useRef(boards);
   const workCentersRef = useRef(workCenters);
+
+  const canPinActingRole =
+    user?.accessLevel === 'ADMIN' || user?.accessLevel === 'SUPERVISOR';
 
   useEffect(() => {
     dateRef.current = date;
@@ -578,14 +642,45 @@ export default function WorkCenterBoardPage() {
     setError(null);
     try {
       if (item.kind === 'op_card') {
-        await api.post(`/production/op-cards/${d.id}/reassign`, { employee_id: employeeId });
+        await api.post(`/production/op-cards/${d.id}/reassign`, {
+          employee_id: employeeId,
+          work_date: date,
+        });
       } else if (item.kind === 'lot') {
-        await api.post(`/production/lots/${d.id}/reassign`, { employee_id: employeeId });
+        await api.post(`/production/lots/${d.id}/reassign`, {
+          employee_id: employeeId,
+          work_date: date,
+        });
       } else {
-        await api.post(`/production/cards/${d.id}/reassign`, { employee_id: employeeId });
+        await api.post(`/production/cards/${d.id}/reassign`, {
+          employee_id: employeeId,
+          work_date: date,
+        });
       }
+      if (wcId) await refreshBoard(wcId);
     } catch (err) {
       const msg = err.response?.data?.error || 'Reassign failed.';
+      setError(msg);
+      await appAlert(msg);
+    } finally {
+      setAssignBusy(false);
+    }
+  }
+
+  async function handleSetActingManager(employeeId, wcId) {
+    closeContextMenu();
+    if (!employeeId || !wcId) return;
+    setAssignBusy(true);
+    setError(null);
+    try {
+      await api.post(`/production/work-centers/${wcId}/acting-manager`, {
+        employee_id: employeeId,
+        work_date: date,
+      });
+      await refreshBoard(wcId);
+      await appAlert({ title: 'Acting manager updated', tone: 'success' });
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Could not set acting manager.';
       setError(msg);
       await appAlert(msg);
     } finally {
@@ -596,13 +691,17 @@ export default function WorkCenterBoardPage() {
   const contextOperators = contextMenu?.wcId
     ? boards[contextMenu.wcId]?.operator_loads || []
     : [];
+  const contextBoard = contextMenu?.wcId ? boards[contextMenu.wcId] : null;
+  const contextCanReassign = !!contextBoard?.can_reassign;
+  const contextCanPin =
+    canPinActingRole && !!contextBoard?.can_pin_acting && !!contextBoard?.manager_unavailable;
 
   return (
     <main className="mes-shell">
       <PageHeader
         eyebrow="Shop floor"
         title="WC Board"
-        subtitle={`Station view for ${formatDueLabel(date)}. Right-click a job to reassign.`}
+        subtitle={`Station view for ${formatDueLabel(date)}. Right-click a job to reassign when the WC manager is absent.`}
         actions={
           <>
             <button
@@ -684,8 +783,13 @@ export default function WorkCenterBoardPage() {
       <BoardContextMenu
         menu={contextMenu}
         operators={contextOperators}
+        canReassign={contextCanReassign}
+        canPinActing={contextCanPin}
         onReassign={(item, employeeId) =>
           handleReassign(item, employeeId, contextMenu?.wcId)
+        }
+        onSetActingManager={(employeeId) =>
+          handleSetActingManager(employeeId, contextMenu?.wcId)
         }
         onOpenTracking={handleOpenTracking}
         onClose={closeContextMenu}

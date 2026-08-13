@@ -766,7 +766,7 @@ async function enrichLots(rows) {
   if (scheduleIds.length) {
     const { data: schedules } = await supabase
       .from('delivery_schedules')
-      .select('id, schedule_number, due_date, blanket_po_line_id')
+      .select('id, schedule_number, due_date, quantity, blanket_po_line_id')
       .in('id', scheduleIds);
     scheduleById = Object.fromEntries((schedules || []).map((s) => [s.id, s]));
   }
@@ -790,8 +790,11 @@ async function enrichLots(rows) {
       current_node_type: cur?.activity_type || null,
       card_number: card?.card_number || null,
       work_date: card?.work_date || null,
+      delivery_schedule_id: card?.delivery_schedule_id || null,
       schedule_number: sched?.schedule_number || null,
       schedule_due_date: sched?.due_date || null,
+      delivery_schedule_qty:
+        sched?.quantity != null ? toNumber(sched.quantity) : null,
       production_card_status: card?.status || null,
     };
   });
@@ -836,6 +839,108 @@ async function listLotsForWorkCenter(workCenterId, _date) {
   return enrichLots(data || []);
 }
 
+function emptyQtyGate(lotQty) {
+  return {
+    schedule_id: null,
+    schedule_qty: null,
+    schedule_original_qty: null,
+    schedule_number: null,
+    schedule_due_date: null,
+    lot_qty: lotQty,
+    mode: 'no_schedule',
+    approval: null,
+  };
+}
+
+function buildQtyGate(lot, schedule, remaining, approval) {
+  const lotQty = toNumber(lot.quantity);
+  if (!schedule) return emptyQtyGate(lotQty);
+  const originalQty = toNumber(schedule.quantity);
+  const scheduleQty = remaining != null ? toNumber(remaining) : originalQty;
+  if (!(scheduleQty > 0.0001)) {
+    return {
+      schedule_id: schedule.id,
+      schedule_qty: 0,
+      schedule_original_qty: originalQty,
+      schedule_number: schedule.schedule_number || null,
+      schedule_due_date: schedule.due_date || null,
+      lot_qty: lotQty,
+      mode: 'no_schedule',
+      approval: null,
+    };
+  }
+
+  let mode = 'match';
+  if (lotQty > scheduleQty + 0.0001) mode = 'overage';
+  else if (lotQty < scheduleQty - 0.0001) mode = 'shortfall';
+
+  return {
+    schedule_id: schedule.id,
+    schedule_qty: scheduleQty,
+    schedule_original_qty: originalQty,
+    schedule_number: schedule.schedule_number || null,
+    schedule_due_date: schedule.due_date || null,
+    lot_qty: lotQty,
+    mode,
+    approval: mode === 'shortfall' ? approval || null : null,
+  };
+}
+
+/**
+ * Cheap list-path filter: keep lots on an AF dispatch node.
+ * False RFD (wrong node) is demoted in batch. Prior-ops heal stays on getLotById / dispatch.
+ */
+async function filterTrueReadyForDispatch(lots) {
+  if (!lots?.length) return [];
+  const nodeIds = [
+    ...new Set(lots.map((l) => l.current_activity_flow_node_id).filter(Boolean)),
+  ];
+  let typeById = {};
+  if (nodeIds.length) {
+    const { data: nodes, error } = await supabase
+      .from('activity_flow_nodes')
+      .select('id, activity_type')
+      .in('id', nodeIds);
+    if (error) throw error;
+    typeById = Object.fromEntries((nodes || []).map((n) => [n.id, n.activity_type]));
+  }
+
+  const trueRfd = [];
+  const falseRfd = [];
+  for (const lot of lots) {
+    const type = typeById[lot.current_activity_flow_node_id];
+    if (type && TERMINAL_DISPATCH_TYPES.has(type)) trueRfd.push(lot);
+    else falseRfd.push(lot);
+  }
+
+  if (falseRfd.length) {
+    const assignedIds = falseRfd.filter((l) => l.assigned_employee_id).map((l) => l.id);
+    const unassignedIds = falseRfd.filter((l) => !l.assigned_employee_id).map((l) => l.id);
+    const updates = [];
+    if (assignedIds.length) {
+      updates.push(
+        supabase
+          .from('production_lots')
+          .update({ status: 'in_process', assignment_status: 'assigned' })
+          .in('id', assignedIds)
+          .eq('status', 'ready_for_dispatch')
+      );
+    }
+    if (unassignedIds.length) {
+      updates.push(
+        supabase
+          .from('production_lots')
+          .update({ status: 'in_process', assignment_status: 'unassigned' })
+          .in('id', unassignedIds)
+          .eq('status', 'ready_for_dispatch')
+      );
+    }
+    await Promise.all(updates);
+  }
+
+  return trueRfd;
+}
+
 async function listReadyForDispatch() {
   const { data, error } = await supabase
     .from('production_lots')
@@ -844,26 +949,277 @@ async function listReadyForDispatch() {
     .order('updated_at', { ascending: true });
   if (error) throw error;
 
-  const trueRfd = [];
-  for (const lot of data || []) {
-    const healed = await healFalseReadyForDispatch(lot);
-    if (healed.status !== 'ready_for_dispatch') continue;
-    const type = await getActivityTypeForNode(healed.current_activity_flow_node_id);
-    if (type && TERMINAL_DISPATCH_TYPES.has(type)) {
-      trueRfd.push(healed);
+  const trueRfd = await filterTrueReadyForDispatch(data || []);
+  if (!trueRfd.length) return [];
+
+  const enriched = await enrichLots(trueRfd);
+  const { invoiceSummariesForLots, resolveScheduleRemainingForLots } = require('./salesInvoiceEngine');
+  const { findActiveForLots } = require('./dispatchShortfallEngine');
+
+  const lotIds = enriched.map((l) => l.id);
+  const [invMap, scheduleMap] = await Promise.all([
+    invoiceSummariesForLots(lotIds),
+    resolveScheduleRemainingForLots(enriched),
+  ]);
+
+  const shortfallLotIds = [];
+  for (const lot of enriched) {
+    const ctx = scheduleMap[lot.id];
+    if (!ctx?.schedule) continue;
+    const remaining =
+      ctx.remaining_qty != null ? toNumber(ctx.remaining_qty) : toNumber(ctx.schedule.quantity);
+    if (remaining > 0.0001 && toNumber(lot.quantity) < remaining - 0.0001) {
+      shortfallLotIds.push(lot.id);
     }
   }
-  const enriched = await enrichLots(trueRfd);
-  const { invoiceSummariesForLots } = require('./salesInvoiceEngine');
-  const invMap = await invoiceSummariesForLots(enriched.map((l) => l.id));
-  return enriched.map((lot) => {
+  const shortfallMap = await findActiveForLots(shortfallLotIds);
+
+  const out = enriched.map((lot) => {
     const inv = invMap[lot.id] || null;
+    const printOk = !!(inv && inv.printed && ['due', 'paid'].includes(inv.invoice_status));
+    const ctx = scheduleMap[lot.id];
+    const gate = buildQtyGate(
+      lot,
+      ctx?.schedule || null,
+      ctx?.remaining_qty,
+      shortfallMap[lot.id] || null
+    );
+    const shortfallRequest = gate.approval || null;
+    const qtyOk =
+      gate.mode === 'match' ||
+      gate.mode === 'overage' ||
+      (gate.mode === 'shortfall' && shortfallRequest?.status === 'approved');
     return {
       ...lot,
+      delivery_schedule_id: gate.schedule_id || lot.delivery_schedule_id || null,
+      delivery_schedule_qty:
+        gate.schedule_qty != null ? gate.schedule_qty : lot.delivery_schedule_qty,
+      schedule_number: gate.schedule_number || lot.schedule_number || null,
+      schedule_due_date: gate.schedule_due_date || lot.schedule_due_date || null,
+      qty_gate: gate,
+      shortfall_request: shortfallRequest,
       sales_invoice: inv,
-      can_dispatch: !!(inv && inv.printed && ['due', 'paid'].includes(inv.invoice_status)),
+      can_dispatch: printOk && qtyOk,
     };
   });
+  return attachMergeGroups(out);
+}
+
+function byCreatedAt(a, b) {
+  return String(a.created_at || '').localeCompare(String(b.created_at || ''));
+}
+
+/**
+ * Mark 2+ same-component / same-schedule RFD lots as a merge group,
+ * whether combined qty meets remaining schedule demand or not.
+ */
+function attachMergeGroups(lots) {
+  const buckets = {};
+  for (const lot of lots) {
+    const scheduleId = lot.qty_gate?.schedule_id || lot.delivery_schedule_id;
+    const remaining = toNumber(lot.qty_gate?.schedule_qty);
+    if (!lot.master_record_id || !scheduleId) continue;
+    if (!lot.qty_gate || lot.qty_gate.mode === 'no_schedule') continue;
+    if (!(remaining > 0.0001)) continue;
+    const key = `${lot.master_record_id}:${scheduleId}`;
+    if (!buckets[key]) {
+      buckets[key] = {
+        key,
+        master_record_id: lot.master_record_id,
+        delivery_schedule_id: scheduleId,
+        schedule_qty: remaining,
+        lots: [],
+      };
+    }
+    buckets[key].lots.push(lot);
+  }
+
+  for (const bucket of Object.values(buckets)) {
+    if (bucket.lots.length < 2) continue;
+    const combined = bucket.lots.reduce((s, l) => s + toNumber(l.quantity), 0);
+    const meetsDemand = combined + 0.0001 >= bucket.schedule_qty;
+    const shipQty = Math.min(combined, bucket.schedule_qty);
+    const withPrinted = bucket.lots
+      .filter((l) => {
+        const inv = l.sales_invoice;
+        return inv && inv.printed && ['due', 'paid'].includes(inv.invoice_status);
+      })
+      .sort(byCreatedAt);
+    const issued = bucket.lots.filter((l) => {
+      const inv = l.sales_invoice;
+      return inv && ['due', 'paid'].includes(inv.invoice_status);
+    });
+    const primary = withPrinted[0] || [...bucket.lots].sort(byCreatedAt)[0];
+    const primaryInv = primary?.sales_invoice;
+    const primaryShortfall = primary?.shortfall_request || null;
+    const qtyOk = meetsDemand || primaryShortfall?.status === 'approved';
+    const canMergeDispatch =
+      issued.length === 1 &&
+      issued[0].id === primary.id &&
+      !!primaryInv?.printed &&
+      ['due', 'paid'].includes(primaryInv.invoice_status) &&
+      Math.abs(toNumber(primaryInv.quantity) - shipQty) <= 0.0001 &&
+      qtyOk;
+
+    const group = {
+      key: bucket.key,
+      primary_lot_id: primary.id,
+      lot_ids: bucket.lots.map((l) => l.id),
+      combined_qty: combined,
+      schedule_qty: bucket.schedule_qty,
+      ship_qty: shipQty,
+      meets_demand: meetsDemand,
+      shortfall_request: meetsDemand ? null : primaryShortfall,
+      can_merge_dispatch: canMergeDispatch,
+      component_label: primary.component_label || null,
+      schedule_number: primary.schedule_number || null,
+      schedule_due_date: primary.schedule_due_date || null,
+    };
+
+    for (const lot of bucket.lots) {
+      lot.dispatch_group = group;
+    }
+  }
+  return lots;
+}
+
+/**
+ * Compare lot qty to remaining shippable qty on the linked delivery schedule.
+ */
+async function getDispatchQtyGate(lot) {
+  try {
+    const { resolveLotBillingContext } = require('./salesInvoiceEngine');
+    const ctx = await resolveLotBillingContext(lot.id);
+    const remaining =
+      ctx.remaining_qty != null ? toNumber(ctx.remaining_qty) : toNumber(ctx.schedule.quantity);
+    let approval = null;
+    if (remaining > 0.0001 && toNumber(lot.quantity) < remaining - 0.0001) {
+      const { findActiveForLot } = require('./dispatchShortfallEngine');
+      approval = await findActiveForLot(lot.id);
+    }
+    return buildQtyGate(lot, ctx.schedule, remaining, approval);
+  } catch (err) {
+    if (err.status === 422 || err.status === 404) {
+      return emptyQtyGate(toNumber(lot.quantity));
+    }
+    throw err;
+  }
+}
+
+/**
+ * Keep schedule qty on the original lot; mint a sibling RFD lot for the extra.
+ * Rebalances FG stock by lot_number.
+ */
+async function splitLotRetainExtra(lotId, shipQty) {
+  if (!isValidUUID(lotId)) throw httpError('Invalid lot id');
+  const ship = toNumber(shipQty);
+  if (!(ship > 0)) throw httpError('Ship quantity must be > 0');
+
+  const { data: lot, error } = await supabase
+    .from('production_lots')
+    .select('*')
+    .eq('id', lotId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!lot) throw httpError('Production lot not found', 404);
+  if (lot.status !== 'ready_for_dispatch') {
+    throw httpError('Only ready-for-dispatch lots can be split for overage', 409);
+  }
+
+  const lotQty = toNumber(lot.quantity);
+  const retain = Math.round((lotQty - ship) * 10000) / 10000;
+  if (!(retain > 0.0001)) {
+    throw httpError('Nothing to retain — lot qty is not greater than ship qty', 409);
+  }
+  if (ship > lotQty + 0.0001) {
+    throw httpError('Ship quantity cannot exceed lot quantity', 409);
+  }
+
+  const { generateComponentLotNumber: nextLotNumber } = require('./componentLotEngine');
+  const retainLotNumber = await nextLotNumber(lot.master_record_id);
+  const now = new Date().toISOString();
+
+  const { data: shipLot, error: upErr } = await supabase
+    .from('production_lots')
+    .update({
+      quantity: ship,
+      updated_at: now,
+    })
+    .eq('id', lotId)
+    .select('*')
+    .single();
+  if (upErr) throw upErr;
+
+  const { data: retained, error: insErr } = await supabase
+    .from('production_lots')
+    .insert({
+      lot_number: retainLotNumber,
+      master_record_id: lot.master_record_id,
+      production_card_id: lot.production_card_id || null,
+      campaign_id: lot.campaign_id || null,
+      activity_flow_node_id: lot.activity_flow_node_id || null,
+      current_activity_flow_node_id: lot.current_activity_flow_node_id,
+      quantity: retain,
+      scrap_qty: 0,
+      status: 'ready_for_dispatch',
+      assignment_status: 'unassigned',
+      work_center_id: lot.work_center_id || null,
+      assigned_employee_id: null,
+      split_from_lot_id: lot.id,
+      created_at: now,
+      updated_at: now,
+    })
+    .select('*')
+    .single();
+  if (insErr) throw insErr;
+
+  const {
+    applyInventoryMove,
+    recordLotInventoryEvent,
+    hasLotInventoryEvent,
+  } = require('./inventoryProductionEngine');
+
+  // Move FG from ship lot_number → retained lot_number
+  try {
+    await applyInventoryMove({
+      itemCategory: 'component',
+      masterRecordId: lot.master_record_id,
+      lotNumber: lot.lot_number,
+      delta: -retain,
+      reason: 'production_fg_split',
+      referenceId: lot.id,
+      note: `Overage retain split → ${retainLotNumber}`,
+    });
+    await applyInventoryMove({
+      itemCategory: 'component',
+      masterRecordId: lot.master_record_id,
+      lotNumber: retainLotNumber,
+      delta: retain,
+      reason: 'production_fg_split',
+      referenceId: retained.id,
+      note: `Overage retain from ${lot.lot_number}`,
+    });
+    if (!(await hasLotInventoryEvent(retained.id, 'receive_finished', null))) {
+      await recordLotInventoryEvent(retained.id, 'receive_finished', null, null);
+    }
+  } catch (invErr) {
+    console.error('FG rebalance on overage split failed:', invErr.message);
+    throw invErr;
+  }
+
+  try {
+    const { emitProductionUpdated } = require('../socket/emitter');
+    emitProductionUpdated({
+      action: 'lot_split_retain',
+      cardId: lot.production_card_id || null,
+      workCenterId: lot.work_center_id || null,
+      status: 'ready_for_dispatch',
+    });
+  } catch (_) {
+    /* optional */
+  }
+
+  return { ship_lot: shipLot, retained_lot: retained };
 }
 
 async function completeLotOp(lotId, payload, actorEmployeeId, { isManager = false } = {}) {
@@ -889,8 +1245,206 @@ async function completeLotOp(lotId, payload, actorEmployeeId, { isManager = fals
   });
 }
 
+/**
+ * Merge same-component / same-schedule RFD lots into the primary lot, then dispatch.
+ * Primary keeps its lot_number; sources become status=merged. FG stock is rebalanced.
+ */
+async function mergeLotsForDispatch(lotIds, actorEmployeeId) {
+  const ids = [...new Set((lotIds || []).map((id) => String(id || '').trim()).filter(isValidUUID))];
+  if (ids.length < 2) {
+    throw httpError('Merge & dispatch requires at least two lots', 400);
+  }
+
+  const { data: rows, error } = await supabase
+    .from('production_lots')
+    .select('*')
+    .in('id', ids);
+  if (error) throw error;
+  const lots = rows || [];
+  if (lots.length !== ids.length) {
+    throw httpError('One or more lots were not found', 404);
+  }
+
+  for (const lot of lots) {
+    if (lot.status !== 'ready_for_dispatch') {
+      throw httpError(`Lot ${lot.lot_number} is not ready for dispatch`, 409);
+    }
+    const nodeType = await getActivityTypeForNode(lot.current_activity_flow_node_id);
+    if (!nodeType || !TERMINAL_DISPATCH_TYPES.has(nodeType)) {
+      throw httpError(`Lot ${lot.lot_number} is not at an AF dispatch node`, 409);
+    }
+  }
+
+  const masterId = lots[0].master_record_id;
+  if (!masterId || lots.some((l) => l.master_record_id !== masterId)) {
+    throw httpError('Lots must be the same component to merge', 409);
+  }
+
+  const gates = [];
+  for (const lot of lots) {
+    gates.push({ lot, gate: await getDispatchQtyGate(lot) });
+  }
+  if (gates.some((g) => !g.gate.schedule_id || g.gate.mode === 'no_schedule')) {
+    throw httpError('All lots must share an open delivery schedule to merge', 409);
+  }
+  const scheduleId = gates[0].gate.schedule_id;
+  if (gates.some((g) => g.gate.schedule_id !== scheduleId)) {
+    throw httpError('Lots must belong to the same delivery schedule to merge', 409);
+  }
+
+  const remaining = toNumber(gates[0].gate.schedule_qty);
+  const combined = lots.reduce((s, l) => s + toNumber(l.quantity), 0);
+  if (!(remaining > 0.0001)) {
+    throw httpError('Lots must share an open delivery schedule with remaining demand', 409);
+  }
+  const meetsDemand = combined + 0.0001 >= remaining;
+  const shipQty = Math.min(combined, remaining);
+
+  const {
+    findActiveInvoiceForLot,
+    cancelInvoice,
+    invoiceSummariesForLots,
+  } = require('./salesInvoiceEngine');
+  const invMap = await invoiceSummariesForLots(ids);
+
+  const withPrinted = lots
+    .filter((l) => {
+      const inv = invMap[l.id];
+      return inv && inv.printed && ['due', 'paid'].includes(inv.invoice_status);
+    })
+    .sort(byCreatedAt);
+  const issued = lots.filter((l) => {
+    const inv = invMap[l.id];
+    return inv && ['due', 'paid'].includes(inv.invoice_status);
+  });
+  if (issued.length > 1) {
+    throw httpError(
+      'Cancel extra issued invoices on absorbed lots before merge & dispatch',
+      409
+    );
+  }
+
+  const primary = withPrinted[0] || [...lots].sort(byCreatedAt)[0];
+  const primaryInv = invMap[primary.id];
+  if (
+    !primaryInv ||
+    !primaryInv.printed ||
+    !['due', 'paid'].includes(primaryInv.invoice_status)
+  ) {
+    throw httpError(
+      'Create, issue, and confirm print of a sales invoice for the schedule qty before merge & dispatch',
+      409
+    );
+  }
+  if (Math.abs(toNumber(primaryInv.quantity) - shipQty) > 0.0001) {
+    throw httpError(
+      `Invoice quantity (${toNumber(primaryInv.quantity)}) must equal schedule dispatch quantity (${shipQty})`,
+      409
+    );
+  }
+
+  if (!meetsDemand) {
+    const { getApprovedForLot } = require('./dispatchShortfallEngine');
+    const approved = await getApprovedForLot(primary.id);
+    if (!approved) {
+      throw httpError(
+        `Combined lot qty (${combined}) is less than remaining schedule demand (${remaining}). Request admin approval on the primary lot before merge & dispatch.`,
+        409
+      );
+    }
+  }
+
+  const sources = lots.filter((l) => l.id !== primary.id);
+  for (const src of sources) {
+    const existing = await findActiveInvoiceForLot(src.id);
+    if (!existing) continue;
+    if (['due', 'paid'].includes(existing.status)) {
+      throw httpError(
+        `Lot ${src.lot_number} has an issued invoice — cancel it before merge`,
+        409
+      );
+    }
+    if (existing.status === 'draft') {
+      await cancelInvoice(existing.id, actorEmployeeId, 'Absorbed into merge for dispatch');
+    }
+  }
+
+  const { applyInventoryMove } = require('./inventoryProductionEngine');
+  for (const src of sources) {
+    const qty = toNumber(src.quantity);
+    if (!(qty > 0)) continue;
+    await applyInventoryMove({
+      itemCategory: 'component',
+      masterRecordId: masterId,
+      lotNumber: src.lot_number,
+      delta: -qty,
+      reason: 'production_fg_merge',
+      referenceId: src.id,
+      note: `Merge into ${primary.lot_number}`,
+    });
+    await applyInventoryMove({
+      itemCategory: 'component',
+      masterRecordId: masterId,
+      lotNumber: primary.lot_number,
+      delta: qty,
+      reason: 'production_fg_merge',
+      referenceId: primary.id,
+      note: `Merge from ${src.lot_number}`,
+    });
+  }
+
+  const now = new Date().toISOString();
+  const newPrimaryQty = Math.round(combined * 10000) / 10000;
+  const { error: upPrimaryErr } = await supabase
+    .from('production_lots')
+    .update({ quantity: newPrimaryQty, updated_at: now })
+    .eq('id', primary.id)
+    .eq('status', 'ready_for_dispatch');
+  if (upPrimaryErr) throw upPrimaryErr;
+
+  for (const src of sources) {
+    const { error: uErr } = await supabase
+      .from('production_lots')
+      .update({
+        status: 'merged',
+        merged_into_lot_id: primary.id,
+        assigned_employee_id: null,
+        assignment_status: 'unassigned',
+        work_center_id: null,
+        updated_at: now,
+      })
+      .eq('id', src.id)
+      .eq('status', 'ready_for_dispatch');
+    if (uErr) throw uErr;
+    const { error: jErr } = await supabase.from('production_lot_merges').insert({
+      result_lot_id: primary.id,
+      source_lot_id: src.id,
+    });
+    if (jErr) throw jErr;
+  }
+
+  try {
+    const { emitProductionUpdated } = require('../socket/emitter');
+    emitProductionUpdated({
+      action: 'lot_merged_for_dispatch',
+      cardId: primary.production_card_id || null,
+      workCenterId: primary.work_center_id || null,
+      status: 'ready_for_dispatch',
+    });
+  } catch (_) {
+    /* optional */
+  }
+
+  const dispatched = await dispatchLot(primary.id, actorEmployeeId);
+  return {
+    lot: dispatched,
+    merged_lot_ids: sources.map((s) => s.id),
+    primary_lot_id: primary.id,
+  };
+}
+
 async function dispatchLot(lotId, actorEmployeeId) {
-  const lot = await getLotById(lotId);
+  let lot = await getLotById(lotId);
   if (lot.status !== 'ready_for_dispatch') {
     throw httpError('Lot is not ready for dispatch', 409);
   }
@@ -899,8 +1453,52 @@ async function dispatchLot(lotId, actorEmployeeId) {
     throw httpError('Lot is not at an AF dispatch node', 409);
   }
 
+  const gate = await getDispatchQtyGate(lot);
+  if (gate.mode === 'no_schedule') {
+    throw httpError(
+      'Lot has no delivery schedule linked — cannot dispatch without a schedule quantity gate',
+      409
+    );
+  }
+
+  let consumedShortfallId = null;
+  if (gate.mode === 'shortfall') {
+    const { getApprovedForLot, consumeShortfallRequest } = require('./dispatchShortfallEngine');
+    const approved = await getApprovedForLot(lotId);
+    if (!approved) {
+      const err = httpError(
+        `Lot qty (${gate.lot_qty}) is less than delivery schedule qty (${gate.schedule_qty}). Request admin approval before dispatch.`,
+        409
+      );
+      err.code = 'SHORTFALL_NEEDS_APPROVAL';
+      throw err;
+    }
+    consumedShortfallId = approved.id;
+  }
+
+  if (gate.mode === 'overage') {
+    await splitLotRetainExtra(lotId, gate.schedule_qty);
+    lot = await getLotById(lotId);
+    const {
+      assertOrSyncInvoiceQtyForLot,
+    } = require('./salesInvoiceEngine');
+    await assertOrSyncInvoiceQtyForLot(lotId, toNumber(lot.quantity));
+  }
+
   const { assertLotPrintGate, markDispatched } = require('./salesInvoiceEngine');
   await assertLotPrintGate(lotId);
+
+  // Issued invoices must still match shippable lot qty (esp. after split)
+  {
+    const { findActiveInvoiceForLot } = require('./salesInvoiceEngine');
+    const inv = await findActiveInvoiceForLot(lotId);
+    if (inv && Math.abs(toNumber(inv.quantity) - toNumber(lot.quantity)) > 0.0001) {
+      throw httpError(
+        `Invoice quantity (${toNumber(inv.quantity)}) must equal lot/schedule dispatch quantity (${toNumber(lot.quantity)}). Cancel and recreate the invoice.`,
+        409
+      );
+    }
+  }
 
   const { issueFinishedComponent } = require('./inventoryProductionEngine');
   try {
@@ -928,6 +1526,15 @@ async function dispatchLot(lotId, actorEmployeeId) {
     await markDispatched(lotId);
   } catch (e) {
     console.error('Failed to stamp sales invoice dispatched_at:', e.message);
+  }
+
+  if (consumedShortfallId) {
+    try {
+      const { consumeShortfallRequest } = require('./dispatchShortfallEngine');
+      await consumeShortfallRequest(consumedShortfallId);
+    } catch (e) {
+      console.error('Failed to consume shortfall approval:', e.message);
+    }
   }
 
   await recordLotOpCompletion(updated, {
@@ -1024,7 +1631,10 @@ module.exports = {
   listMyTodayLots,
   listLotsForWorkCenter,
   listReadyForDispatch,
+  getDispatchQtyGate,
+  splitLotRetainExtra,
   completeLotOp,
+  mergeLotsForDispatch,
   dispatchLot,
   reassignLot,
   listLotOpCompletions,

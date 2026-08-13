@@ -54,6 +54,7 @@ function attachConnectionHandlers(io) {
     socket.join('delivery-schedules');
     socket.join('inventory');
     socket.join('leave-requests');
+    socket.join('dispatch-shortfall');
 
     if (employeeId) {
       socket.join(`production-employee:${employeeId}`);

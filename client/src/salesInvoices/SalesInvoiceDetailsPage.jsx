@@ -2,17 +2,19 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
-  Download,
   Printer,
   Banknote,
   Ban,
   Truck,
 } from 'lucide-react';
+import { pdf } from '@react-pdf/renderer';
 import api from '../api/client';
 import { PageHeader, StatusBadge } from '../components/mes';
 import { appAlert, appConfirm, appPrompt } from '../components/dialog';
+import InvoicePdfViewer from '../components/Invoices/InvoicePdfViewer';
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
-import { downloadSalesInvoicePdf, formatInr } from './downloadSalesInvoicePdf';
+import { printSalesInvoicePdf, formatInr } from './downloadSalesInvoicePdf';
+import SalesInvoicePdfDocument from './SalesInvoicePdfDocument';
 
 function tone(status) {
   if (status === 'paid') return 'completed';
@@ -29,6 +31,8 @@ export default function SalesInvoiceDetailsPage() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
+  const [pdfFile, setPdfFile] = useState(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -48,14 +52,54 @@ export default function SalesInvoiceDetailsPage() {
     load();
   }, [load]);
 
-  async function handleDownload() {
+  useEffect(() => {
+    if (!invoice) {
+      setPdfFile(null);
+      setPdfLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    let blobUrl = null;
+    setPdfLoading(true);
+
+    async function resolvePdf() {
+      try {
+        if (invoice.file_url) {
+          if (!cancelled) {
+            setPdfFile(invoice.file_url);
+            setDownloaded(true);
+          }
+          return;
+        }
+        const blob = await pdf(<SalesInvoicePdfDocument invoice={invoice} />).toBlob();
+        if (cancelled) return;
+        blobUrl = URL.createObjectURL(blob);
+        setPdfFile(blobUrl);
+      } catch (err) {
+        console.error('Failed to preview sales invoice PDF', err);
+        if (!cancelled) setPdfFile(null);
+      } finally {
+        if (!cancelled) setPdfLoading(false);
+      }
+    }
+
+    resolvePdf();
+    return () => {
+      cancelled = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [invoice?.id, invoice?.file_url, invoice?.status, invoice?.invoice_number, invoice?.updated_at]);
+
+  async function handlePrint() {
     if (!invoice) return;
     setBusy(true);
     try {
-      await downloadSalesInvoicePdf(invoice);
+      const stored = await printSalesInvoicePdf(invoice);
+      if (stored?.id) setInvoice(stored);
       setDownloaded(true);
     } catch (err) {
-      await appAlert(err.message || 'PDF download failed');
+      await appAlert(err.message || 'Print failed');
     } finally {
       setBusy(false);
     }
@@ -172,10 +216,10 @@ export default function SalesInvoiceDetailsPage() {
           type="button"
           className="mes-btn mes-btn-secondary"
           disabled={busy}
-          onClick={handleDownload}
+          onClick={handlePrint}
         >
-          <Download size={15} />
-          Download PDF
+          <Printer size={15} />
+          Print invoice
         </button>
         {['due', 'paid'].includes(invoice.status) && !invoice.printed_at ? (
           <button
@@ -183,7 +227,7 @@ export default function SalesInvoiceDetailsPage() {
             className="mes-btn mes-btn-primary"
             disabled={busy || !downloaded}
             onClick={handleConfirmPrinted}
-            title={!downloaded ? 'Download the PDF first' : undefined}
+            title={!downloaded ? 'Print the invoice first' : undefined}
           >
             <Printer size={15} />
             Confirm printed
@@ -223,6 +267,8 @@ export default function SalesInvoiceDetailsPage() {
         ) : null}
       </div>
 
+      <div className="sales-invoice-detail-layout">
+      <div>
       <section className="mes-card" style={{ padding: 20, marginBottom: 16 }}>
         <div
           style={{
@@ -383,6 +429,21 @@ export default function SalesInvoiceDetailsPage() {
           </div>
         ) : null}
       </section>
+      </div>
+
+      <section className="mes-card sales-invoice-pdf-card">
+        {/* <h2 className="sales-invoice-pdf-card-title">Invoice PDF</h2> */}
+        <InvoicePdfViewer
+          file={pdfFile}
+          title={`Invoice ${invoice.invoice_number || 'draft'}`}
+          loading={pdfLoading}
+          emptyTitle="PDF not ready"
+          emptyDescription="Generate the tax invoice to preview it here."
+          emptyActionLabel={busy ? 'Printing…' : 'Print invoice'}
+          onEmptyAction={busy ? undefined : handlePrint}
+        />
+      </section>
+      </div>
     </main>
   );
 }

@@ -51,6 +51,7 @@ app.use('/api/production', require('./routes/production'));
 app.use('/api/campaigns', require('./routes/campaigns'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/leave-requests', require('./routes/leaveRequests'));
+app.use('/api/dispatch-shortfall-approvals', require('./routes/dispatchShortfallApprovals'));
 // app.use('/api/machines',   require('./routes/machines'));    // next module
  
 // Health check

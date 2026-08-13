@@ -1092,7 +1092,7 @@ button:hover:not(:disabled) {
 
 .summary-metrics-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 2vh;
 }
@@ -6397,6 +6397,36 @@ textarea {
   border-color: rgba(29, 78, 216, 0.35);
 }
 
+.mes-dispatch-group {
+  border-color: rgba(29, 78, 216, 0.28);
+}
+
+.mes-dispatch-group-members {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mes-dispatch-group-member {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-muted, rgba(15, 23, 42, 0.04));
+}
+
+.mes-dispatch-group-member span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .mes-task-top {
   display: flex;
   justify-content: space-between;
@@ -6446,6 +6476,54 @@ textarea {
 .mes-filters select:focus-visible {
   outline: 2px solid var(--brand-400);
   outline-offset: 1px;
+}
+
+.mes-export-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: var(--mes-space-4);
+  padding: 16px 18px;
+}
+
+.mes-export-panel-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mes-export-panel-title {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.mes-export-panel-fields {
+  margin-bottom: 0;
+}
+
+.mes-export-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding-bottom: 1px;
+}
+
+.mes-export-panel-hint {
+  margin: 0;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .mes-export-panel-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .mes-export-panel-actions .mes-btn {
+    flex: 1;
+  }
 }
 
 /* List / calendar view toggle */
@@ -8484,4 +8562,173 @@ textarea {
   padding: 0 12px 12px;
   border-top: 1px solid var(--border-default, rgba(15, 23, 42, 0.06));
   padding-top: 12px;
+}
+
+.sales-invoice-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 1.15fr);
+  gap: var(--mes-space-4);
+  align-items: start;
+}
+
+.sales-invoice-pdf-card {
+  padding: 0;
+  overflow: hidden;
+  min-height: 640px;
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 16px;
+}
+
+.sales-invoice-pdf-card-title {
+  margin: 0;
+  padding: 14px 16px 0;
+  font-size: 1rem;
+}
+
+.invoice-pdf-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 560px;
+  overflow: hidden;
+  background: #e8edf5;
+}
+
+.invoice-pdf-panel:fullscreen {
+  background: #e8edf5;
+}
+
+.invoice-pdf-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-default, #e5e7eb);
+  background: var(--bg-surface, #fff);
+  flex-shrink: 0;
+}
+
+.invoice-pdf-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.invoice-pdf-toolbar-label {
+  font-size: 12px;
+  color: var(--text-secondary, #6b7280);
+  min-width: 44px;
+  text-align: center;
+  font-weight: 500;
+}
+
+.invoice-pdf-icon-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-default, #e5e7eb);
+  border-radius: 6px;
+  background: var(--bg-surface, #fff);
+  cursor: pointer;
+  color: var(--text-primary, #374151);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.invoice-pdf-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.invoice-pdf-area {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+  position: relative;
+  user-select: none;
+}
+
+.invoice-pdf-canvas {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  padding: 24px;
+  box-sizing: border-box;
+  will-change: transform;
+}
+
+.invoice-pdf-placeholder,
+.invoice-pdf-empty {
+  padding: 48px 24px;
+  color: var(--text-secondary, #6b7280);
+  font-size: 14px;
+  text-align: center;
+}
+
+.invoice-pdf-empty-title {
+  margin: 0 0 6px;
+  font-weight: 650;
+  color: var(--text-primary, #111);
+}
+
+.invoice-pdf-empty-desc {
+  margin: 0 0 14px;
+}
+
+.invoice-pdf-floating {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: #374151;
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.invoice-pdf-floating-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  color: #fff;
+  cursor: pointer;
+  padding: 0;
+}
+
+.invoice-pdf-toast {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  background: #1f2937;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  white-space: nowrap;
+  z-index: 2;
+}
+
+@media (max-width: 960px) {
+  .sales-invoice-detail-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sales-invoice-pdf-card {
+    position: static;
+    min-height: 520px;
+  }
 }

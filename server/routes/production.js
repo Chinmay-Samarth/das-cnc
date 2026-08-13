@@ -36,6 +36,7 @@ const {
   reassignLot,
   listReadyForDispatch,
   listLotOpCompletions,
+  mergeLotsForDispatch,
 } = require('../services/lotTravelerEngine');
 const {
   getOpCardById,
@@ -88,6 +89,21 @@ function wrap(fn) {
 function isManager(user) {
   const level = String(user?.access_level || user?.accessLevel || '').toUpperCase();
   return ['SUPERVISOR', 'MANAGER', 'ADMIN'].includes(level);
+}
+
+function isAdminOrSupervisor(user) {
+  const level = String(user?.access_level || user?.accessLevel || '').toUpperCase();
+  return level === 'ADMIN' || level === 'SUPERVISOR';
+}
+
+async function assertBoardJobReassign(req, workCenterId, workDate) {
+  const { assertJobReassignAllowed } = require('../services/wcContingencyEngine');
+  return assertJobReassignAllowed(
+    workCenterId,
+    workDate || todayDateString(),
+    req.user?.sub,
+    req.user
+  );
 }
 
 function notifyProduction(action, cardOrMeta = {}, extras = {}) {
@@ -224,19 +240,48 @@ router.get(
 );
 
 router.post(
+  '/work-centers/:id/acting-manager',
+  wrap(async (req, res) => {
+    if (!isAdminOrSupervisor(req.user)) {
+      return res.status(403).json({ error: 'Admin or supervisor access required' });
+    }
+    const { pinActingManager } = require('../services/wcContingencyEngine');
+    const date = req.body?.work_date || todayDateString();
+    const contingency = await pinActingManager(
+      req.params.id,
+      date,
+      req.body?.employee_id,
+      req.user?.sub
+    );
+    emitProductionUpdated({
+      action: 'acting_manager_pinned',
+      workCenterId: req.params.id,
+      employeeId: contingency.acting_employee_id,
+    });
+    return res.json({ contingency });
+  })
+);
+
+router.post(
   '/cards/:id/reassign',
   wrap(async (req, res) => {
     if (!isManager(req.user)) {
       return res.status(403).json({ error: 'Manager access required' });
     }
-    const result = await reassignCard(req.params.id, req.body?.employee_id);
     const card = await getCardById(req.params.id);
-    notifyProduction('reassigned', card, {
+    await assertBoardJobReassign(
+      req,
+      card.work_center_id,
+      req.body?.work_date || card.work_date || todayDateString()
+    );
+    const result = await reassignCard(req.params.id, req.body?.employee_id);
+    const updated = await getCardById(req.params.id);
+    notifyProduction('reassigned', updated, {
       previousEmployeeId: result.previous_employee_id || null,
-      previousWorkCenterId: card.work_center_id,
+      previousWorkCenterId: updated.work_center_id,
       assignee: result.assignee,
     });
-    return res.json({ card, assignee: result.assignee });
+    return res.json({ card: updated, assignee: result.assignee });
   })
 );
 
@@ -467,6 +512,29 @@ router.get(
   })
 );
 
+router.post(
+  '/lots/merge-and-dispatch',
+  wrap(async (req, res) => {
+    const lotIds = Array.isArray(req.body?.lot_ids) ? req.body.lot_ids : [];
+    const result = await mergeLotsForDispatch(lotIds, req.user?.sub);
+    const lot = result.lot;
+    let card = {};
+    if (lot.production_card_id) {
+      try {
+        card = await getCardById(lot.production_card_id);
+      } catch {
+        card = { id: lot.production_card_id };
+      }
+    }
+    notifyProduction('lot_dispatched', card, {
+      operatorId: req.user?.sub,
+      quantityGood: Number(lot.quantity || 0),
+      lot,
+    });
+    return res.json(result);
+  })
+);
+
 router.get(
   '/lots/:id',
   wrap(async (req, res) => {
@@ -540,6 +608,12 @@ router.post(
     if (!isManager(req.user)) {
       return res.status(403).json({ error: 'Manager access required' });
     }
+    const existing = await getLotById(req.params.id);
+    await assertBoardJobReassign(
+      req,
+      existing.work_center_id,
+      req.body?.work_date || todayDateString()
+    );
     const result = await reassignLot(req.params.id, req.body?.employee_id);
     const [lot] = result.lot
       ? [await getLotById(result.lot.id)]
@@ -819,6 +893,12 @@ router.post(
     if (!isManager(req.user)) {
       return res.status(403).json({ error: 'Manager access required' });
     }
+    const existingOp = await getOpCardById(req.params.id);
+    await assertBoardJobReassign(
+      req,
+      existingOp.work_center_id,
+      req.body?.work_date || todayDateString()
+    );
     const result = await reassignOpCard(req.params.id, req.body?.employee_id);
     const op = result.op_card;
     let card = {};

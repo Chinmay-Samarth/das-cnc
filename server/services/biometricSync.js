@@ -70,7 +70,7 @@ async function syncBiometricData() {
       .eq('key', 'last_record')
       .single();
 
-    console.log("State - ",state)
+    // console.log("State - ",state)
 
     if (stateError && stateError.code !== 'PGRST116') {
       throw stateError;
@@ -113,7 +113,7 @@ async function syncBiometricData() {
     const lastNum = punchIdNumber(lastRecord) ?? 0;
     const newNum = punchIdNumber(newCursor) ?? 0;
 
-    console.log("New Cursor - ",newCursor)
+    // console.log("New Cursor - ",newCursor)
     
     const { error: syncError } = await supabase
     .from('sync_state')

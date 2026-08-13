@@ -256,7 +256,185 @@ function customerSnapshot(customer) {
 }
 
 /**
+ * Qty already shipped against delivery schedules (issued/paid invoices with dispatched_at).
+ */
+async function dispatchedQtyByScheduleIds(scheduleIds) {
+  const ids = [...new Set((scheduleIds || []).filter(isValidUUID))];
+  if (!ids.length) return {};
+  const { data, error } = await supabase
+    .from('sales_invoices')
+    .select('delivery_schedule_id, quantity')
+    .in('delivery_schedule_id', ids)
+    .in('status', ['due', 'paid'])
+    .not('dispatched_at', 'is', null);
+  if (error) throw error;
+  const map = {};
+  for (const row of data || []) {
+    const id = row.delivery_schedule_id;
+    if (!id) continue;
+    map[id] = (map[id] || 0) + toNumber(row.quantity);
+  }
+  return map;
+}
+
+function remainingFromShipped(scheduleQty, shipped) {
+  return Math.round((toNumber(scheduleQty) - toNumber(shipped)) * 10000) / 10000;
+}
+
+/**
+ * Earliest-due campaign coverage row that still has remaining shippable qty.
+ */
+async function pickOpenCampaignScheduleId(campaignId) {
+  if (!isValidUUID(campaignId)) return null;
+  const { data: coverage, error: covErr } = await supabase
+    .from('campaign_schedule_coverage')
+    .select('delivery_schedule_id, schedule_qty, covered_qty')
+    .eq('campaign_id', campaignId);
+  if (covErr) throw covErr;
+  if (!coverage?.length) return null;
+
+  const scheduleIds = coverage.map((c) => c.delivery_schedule_id).filter(Boolean);
+  if (!scheduleIds.length) return null;
+
+  const [{ data: schedules, error: sErr }, shippedMap] = await Promise.all([
+    supabase
+      .from('delivery_schedules')
+      .select('id, due_date, quantity, status')
+      .in('id', scheduleIds),
+    dispatchedQtyByScheduleIds(scheduleIds),
+  ]);
+  if (sErr) throw sErr;
+
+  const open = (schedules || [])
+    .filter((s) => s.status !== 'cancelled')
+    .map((s) => ({
+      ...s,
+      remaining: remainingFromShipped(s.quantity, shippedMap[s.id] || 0),
+    }))
+    .filter((s) => s.remaining > 0.0001)
+    .sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || '')));
+
+  return open[0]?.id || null;
+}
+
+async function remainingQtyForSchedule(scheduleId, scheduleQty) {
+  if (!isValidUUID(scheduleId)) return 0;
+  const shippedMap = await dispatchedQtyByScheduleIds([scheduleId]);
+  return remainingFromShipped(scheduleQty, shippedMap[scheduleId] || 0);
+}
+
+/**
+ * Batch schedule + remaining demand for many lots (Ready for Dispatch list).
+ * Same pick rules as resolveLotBillingContext, without per-lot round trips.
+ */
+async function resolveScheduleRemainingForLots(lots) {
+  const result = {};
+  if (!lots?.length) return result;
+
+  const cardIds = [...new Set(lots.map((l) => l.production_card_id).filter(isValidUUID))];
+  let cards = [];
+  if (cardIds.length) {
+    const { data, error } = await supabase
+      .from('production_cards')
+      .select('id, delivery_schedule_id, campaign_id')
+      .in('id', cardIds);
+    if (error) throw error;
+    cards = data || [];
+  }
+  const cardById = Object.fromEntries(cards.map((c) => [c.id, c]));
+
+  const campaignIds = [
+    ...new Set(
+      lots
+        .map((l) => l.campaign_id || cardById[l.production_card_id]?.campaign_id || null)
+        .filter(isValidUUID)
+    ),
+  ];
+
+  let coverage = [];
+  if (campaignIds.length) {
+    const { data, error } = await supabase
+      .from('campaign_schedule_coverage')
+      .select('campaign_id, delivery_schedule_id, schedule_qty, covered_qty')
+      .in('campaign_id', campaignIds);
+    if (error) throw error;
+    coverage = data || [];
+  }
+
+  const scheduleIds = [
+    ...new Set(
+      [
+        ...cards.map((c) => c.delivery_schedule_id),
+        ...coverage.map((c) => c.delivery_schedule_id),
+      ].filter(isValidUUID)
+    ),
+  ];
+
+  let scheduleById = {};
+  let shippedMap = {};
+  if (scheduleIds.length) {
+    const [{ data: schedules, error: sErr }, shipped] = await Promise.all([
+      supabase
+        .from('delivery_schedules')
+        .select(
+          'id, schedule_number, due_date, quantity, blanket_po_line_id, status, notes'
+        )
+        .in('id', scheduleIds),
+      dispatchedQtyByScheduleIds(scheduleIds),
+    ]);
+    if (sErr) throw sErr;
+    scheduleById = Object.fromEntries((schedules || []).map((s) => [s.id, s]));
+    shippedMap = shipped;
+  }
+
+  const openByCampaign = {};
+  for (const row of coverage) {
+    const sched = scheduleById[row.delivery_schedule_id];
+    if (!sched || sched.status === 'cancelled') continue;
+    const remaining = remainingFromShipped(sched.quantity, shippedMap[sched.id] || 0);
+    if (!(remaining > 0.0001)) continue;
+    if (!openByCampaign[row.campaign_id]) openByCampaign[row.campaign_id] = [];
+    openByCampaign[row.campaign_id].push({
+      schedule: sched,
+      remaining,
+      due_date: sched.due_date,
+    });
+  }
+  for (const arr of Object.values(openByCampaign)) {
+    arr.sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || '')));
+  }
+
+  for (const lot of lots) {
+    const card = lot.production_card_id ? cardById[lot.production_card_id] : null;
+    const campaignId = lot.campaign_id || card?.campaign_id || null;
+    let schedule = null;
+    let remaining = null;
+
+    const pinnedId = card?.delivery_schedule_id || null;
+    if (pinnedId && scheduleById[pinnedId]) {
+      const pinned = scheduleById[pinnedId];
+      const rem = remainingFromShipped(pinned.quantity, shippedMap[pinned.id] || 0);
+      if (pinned.status !== 'cancelled' && rem > 0.0001) {
+        schedule = pinned;
+        remaining = rem;
+      }
+    }
+
+    if (!schedule && campaignId && openByCampaign[campaignId]?.length) {
+      const open = openByCampaign[campaignId][0];
+      schedule = open.schedule;
+      remaining = open.remaining;
+    }
+
+    result[lot.id] = schedule ? { schedule, remaining_qty: remaining } : null;
+  }
+
+  return result;
+}
+
+/**
  * Resolve lot → delivery schedule → blanket line → customer + component label.
+ * Campaign lots attach to the earliest-due coverage row that still has remaining demand.
  */
 async function resolveLotBillingContext(lotId) {
   if (!isValidUUID(lotId)) throw httpError('lot_id is required');
@@ -270,6 +448,7 @@ async function resolveLotBillingContext(lotId) {
   if (!lot) throw httpError('Production lot not found', 404);
 
   let deliveryScheduleId = null;
+  let cardCampaignId = null;
 
   if (lot.production_card_id) {
     const { data: card, error: cErr } = await supabase
@@ -279,18 +458,30 @@ async function resolveLotBillingContext(lotId) {
       .maybeSingle();
     if (cErr) throw cErr;
     deliveryScheduleId = card?.delivery_schedule_id || null;
+    cardCampaignId = card?.campaign_id || null;
   }
 
-  if (!deliveryScheduleId && lot.campaign_id) {
-    const { data: coverage, error: covErr } = await supabase
-      .from('campaign_schedule_coverage')
-      .select('delivery_schedule_id, schedule_qty, covered_qty')
-      .eq('campaign_id', lot.campaign_id)
-      .order('delivery_schedule_id', { ascending: true });
-    if (covErr) throw covErr;
-    if (coverage?.length) {
-      deliveryScheduleId = coverage[0].delivery_schedule_id;
+  const campaignId = lot.campaign_id || cardCampaignId || null;
+
+  if (deliveryScheduleId) {
+    const { data: pinned, error: pinErr } = await supabase
+      .from('delivery_schedules')
+      .select('id, quantity, status')
+      .eq('id', deliveryScheduleId)
+      .maybeSingle();
+    if (pinErr) throw pinErr;
+    const pinnedRemaining = pinned
+      ? await remainingQtyForSchedule(pinned.id, pinned.quantity)
+      : 0;
+    if (!(pinnedRemaining > 0.0001) || pinned?.status === 'cancelled') {
+      deliveryScheduleId = campaignId
+        ? await pickOpenCampaignScheduleId(campaignId)
+        : null;
     }
+  }
+
+  if (!deliveryScheduleId && campaignId) {
+    deliveryScheduleId = await pickOpenCampaignScheduleId(campaignId);
   }
 
   if (!deliveryScheduleId) {
@@ -345,9 +536,12 @@ async function resolveLotBillingContext(lotId) {
     .maybeSingle();
   componentLabel = lookup?.label || null;
 
+  const remaining_qty = await remainingQtyForSchedule(schedule.id, schedule.quantity);
+
   return {
     lot,
     schedule,
+    remaining_qty,
     line,
     blanket,
     customer,
@@ -520,7 +714,7 @@ async function findActiveInvoiceForLot(lotId) {
   if (!isValidUUID(lotId)) return null;
   const { data, error } = await supabase
     .from('sales_invoices')
-    .select('id, status, printed_at, invoice_number')
+    .select('id, status, printed_at, invoice_number, quantity')
     .eq('lot_id', lotId)
     .in('status', ['draft', 'due', 'paid'])
     .maybeSingle();
@@ -888,12 +1082,50 @@ async function assertLotPrintGate(lotId) {
   return inv;
 }
 
+async function storeSalesInvoicePdf(invoiceId, file) {
+  if (!isValidUUID(invoiceId)) throw httpError('Invalid invoice id');
+  if (!file?.buffer?.length) throw httpError('PDF file is required', 400);
+
+  const inv = await getInvoiceById(invoiceId);
+  const original = String(file.originalname || '').trim();
+  const safeName = (inv.invoice_number || `draft-${invoiceId}`)
+    .replace(/[/\\]+/g, '-')
+    .replace(/[^\w.\-]+/g, '_');
+  const filename = original && original.toLowerCase().endsWith('.pdf')
+    ? original.replace(/[/\\]+/g, '-')
+    : `${safeName}.pdf`;
+  const storagePath = `sales-invoices/${invoiceId}/${Date.now()}_${filename}`;
+
+  const { error: storageError } = await supabase.storage
+    .from('invoices')
+    .upload(storagePath, file.buffer, {
+      contentType: file.mimetype || 'application/pdf',
+      upsert: true,
+    });
+  if (storageError) throw httpError(storageError.message || 'Unable to store invoice PDF', 500);
+
+  const { data: publicUrlData } = supabase.storage
+    .from('invoices')
+    .getPublicUrl(storagePath);
+  const publicUrl = publicUrlData?.publicUrl || null;
+  if (!publicUrl) throw httpError('Unable to resolve stored invoice URL', 500);
+
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from('sales_invoices')
+    .update({ file_url: publicUrl, updated_at: now })
+    .eq('id', invoiceId);
+  if (error) throw error;
+
+  return getInvoiceById(invoiceId);
+}
+
 async function invoiceSummariesForLots(lotIds) {
   const ids = (lotIds || []).filter(isValidUUID);
   if (!ids.length) return {};
   const { data, error } = await supabase
     .from('sales_invoices')
-    .select('id, lot_id, status, printed_at, invoice_number')
+    .select('id, lot_id, status, printed_at, invoice_number, quantity')
     .in('lot_id', ids)
     .in('status', ['draft', 'due', 'paid']);
   if (error) throw error;
@@ -904,9 +1136,28 @@ async function invoiceSummariesForLots(lotIds) {
       invoice_status: row.status,
       invoice_number: row.invoice_number,
       printed: !!row.printed_at,
+      quantity: toNumber(row.quantity),
     };
   }
   return map;
+}
+
+/**
+ * After overage lot split: draft invoices sync to lot qty; issued/printed must already match.
+ */
+async function assertOrSyncInvoiceQtyForLot(lotId, expectedQty) {
+  const inv = await findActiveInvoiceForLot(lotId);
+  if (!inv) return null;
+  const want = toNumber(expectedQty);
+  const have = toNumber(inv.quantity);
+  if (Math.abs(have - want) <= 0.0001) return inv;
+  if (inv.status === 'draft') {
+    return updateDraft(inv.id, { quantity: want });
+  }
+  throw httpError(
+    `Invoice quantity (${have}) must equal schedule dispatch quantity (${want}) after split. Cancel and recreate the invoice for the schedule qty.`,
+    409
+  );
 }
 
 module.exports = {
@@ -924,8 +1175,14 @@ module.exports = {
   assertLotPrintGate,
   findActiveInvoiceForLot,
   invoiceSummariesForLots,
+  storeSalesInvoicePdf,
+  assertOrSyncInvoiceQtyForLot,
   computeTax,
   round2,
   indianFy,
   resolveLotBillingContext,
+  dispatchedQtyByScheduleIds,
+  remainingQtyForSchedule,
+  pickOpenCampaignScheduleId,
+  resolveScheduleRemainingForLots,
 };

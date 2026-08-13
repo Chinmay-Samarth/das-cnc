@@ -39,23 +39,17 @@ function isValidUUID(str) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 }
 
-async function assertWCManager(workCenterId, employeeId, { isSupervisor = false } = {}) {
-  // Role bypass is opt-in only; My Today / commitment actions require assigned WC manager.
+async function assertWCManager(workCenterId, employeeId, { isSupervisor = false, workDate } = {}) {
+  // Role bypass is opt-in only; My Today / commitment actions require assigned/effective WC manager.
   if (isSupervisor) return true;
-  if (!isValidUUID(employeeId)) {
-    throw httpError('Only the work center manager can perform this action', 403);
-  }
-  const { data: wc, error } = await supabase
-    .from('work_centers')
-    .select('id, manager_employee_id')
-    .eq('id', workCenterId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!wc) throw httpError('Work center not found', 404);
-  if (wc.manager_employee_id !== employeeId) {
-    throw httpError('Only the work center manager can perform this action', 403);
-  }
-  return true;
+  const { assertEffectiveWCManager } = require('./wcContingencyEngine');
+  const { todayDateString } = require('./blanketPosEngine');
+  return assertEffectiveWCManager(
+    workCenterId,
+    employeeId,
+    workDate || todayDateString(),
+    { isSupervisor: false }
+  );
 }
 
 async function getNodeStandards(nodeId) {
@@ -1151,22 +1145,42 @@ async function getWCCommand(workCenterId, workDate) {
 
   const dayEfficiencyIndex = goalToday > 0 ? Math.round((goodToday / goalToday) * 100) : 0;
 
+  const { resolveActingManager, listPresentEmployeeIds: presentIdsFn } = (() => {
+    const contingency = require('./wcContingencyEngine');
+    const assign = require('./productionAssignEngine');
+    return {
+      resolveActingManager: contingency.resolveActingManager,
+      listPresentEmployeeIds: assign.listPresentEmployeeIds,
+    };
+  })();
+
+  const contingency = await resolveActingManager(workCenterId, date);
+  const effectiveManagerId =
+    contingency.effective_manager_id || wc?.manager_employee_id || null;
+  const presentIds = new Set(await presentIdsFn(date));
+
   const teamRaw = (members || []).map((m) => m.employees).filter(Boolean);
   const teamById = new Map(teamRaw.map((emp) => [emp.id, emp]));
-  // Ensure WC manager appears in efficiency matrix even if not in employee_work_centers
-  if (wc?.manager_employee_id && !teamById.has(wc.manager_employee_id)) {
+
+  // Ensure effective manager appears even if not in employee_work_centers
+  if (effectiveManagerId && !teamById.has(effectiveManagerId)) {
     const { data: managerEmp } = await supabase
       .from('employees')
       .select('id, full_name, employee_code')
-      .eq('id', wc.manager_employee_id)
+      .eq('id', effectiveManagerId)
       .maybeSingle();
     if (managerEmp) teamById.set(managerEmp.id, managerEmp);
+  }
+
+  // Efficiency matrix: only present-family employees
+  for (const id of [...teamById.keys()]) {
+    if (!presentIds.has(id)) teamById.delete(id);
   }
 
   const effByEmp = Object.fromEntries((efficiencies || []).map((e) => [e.employee_id, e]));
   const team = [...teamById.values()].map((emp) => {
     const eff = effByEmp[emp.id];
-    const isManager = wc?.manager_employee_id === emp.id;
+    const isManager = effectiveManagerId === emp.id;
     const storedPct = eff?.efficiency_pct != null ? toNumber(eff.efficiency_pct) : null;
     return {
       ...emp,
@@ -1180,9 +1194,27 @@ async function getWCCommand(workCenterId, workDate) {
     };
   });
 
+  const workCenterOut = wc
+    ? {
+        ...wc,
+        // Clients use this for manager seat on the matrix
+        manager_employee_id: effectiveManagerId,
+        primary_manager_employee_id: wc.manager_employee_id,
+      }
+    : null;
+
   return {
-    work_center: wc,
+    work_center: workCenterOut,
     work_date: date,
+    contingency: {
+      manager_unavailable: !!contingency.manager_unavailable,
+      primary_manager_id: contingency.primary_manager_id,
+      acting_employee_id: contingency.acting_employee_id,
+      acting_employee: contingency.acting_employee,
+      reason: contingency.reason,
+      pinned: !!contingency.pinned,
+      effective_manager_id: effectiveManagerId,
+    },
     active_campaign: enriched
       ? { ...enriched, operation_label: nodeLabel }
       : null,
@@ -1386,7 +1418,13 @@ async function upsertWorkerEfficiency(
   actorId,
   { isSupervisor = false } = {}
 ) {
-  await assertWCManager(wcId, actorId, { isSupervisor });
+  const date = String(workDate || '').slice(0, 10);
+  await assertWCManager(wcId, actorId, { isSupervisor, workDate: date });
+
+  const { isEmployeePresent, resolveActingManager } = require('./wcContingencyEngine');
+  if (!(await isEmployeePresent(empId, date))) {
+    throw httpError('Cannot record efficiency for an absent or on-leave employee', 409);
+  }
 
   const { data: wc, error: wcErr } = await supabase
     .from('work_centers')
@@ -1396,10 +1434,14 @@ async function upsertWorkerEfficiency(
   if (wcErr) throw wcErr;
   if (!wc) throw httpError('Work center not found', 404);
 
+  const contingency = await resolveActingManager(wcId, date);
+  const effectiveManagerId =
+    contingency.effective_manager_id || wc.manager_employee_id || null;
+
   let efficiencyPct = toNumber(pct);
   let entryNotes = notes || null;
-  if (wc.manager_employee_id && empId === wc.manager_employee_id) {
-    efficiencyPct = await computeWorkCenterDayEfficiencyPct(wcId, workDate);
+  if (effectiveManagerId && empId === effectiveManagerId) {
+    efficiencyPct = await computeWorkCenterDayEfficiencyPct(wcId, date);
     if (!entryNotes) {
       entryNotes = 'Derived from day efficiency index';
     }
@@ -1410,7 +1452,7 @@ async function upsertWorkerEfficiency(
     .upsert(
       {
         work_center_id: wcId,
-        work_date: workDate,
+        work_date: date,
         employee_id: empId,
         efficiency_pct: efficiencyPct,
         notes: entryNotes,
@@ -1537,13 +1579,55 @@ async function updateCommitmentQty(commitmentId, committedQty, actorId, { isSupe
 
 async function listManagedWorkCenters(employeeId) {
   if (!isValidUUID(employeeId)) return [];
-  const { data, error } = await supabase
+  const { todayDateString } = require('./blanketPosEngine');
+  const { resolveActingManager } = require('./wcContingencyEngine');
+  const today = todayDateString();
+
+  const { data: asPrimary, error } = await supabase
     .from('work_centers')
     .select('id, name, code, manager_employee_id, hours_per_day, horizon_months_default')
     .eq('manager_employee_id', employeeId)
     .order('name');
   if (error) throw error;
-  return data || [];
+
+  const byId = new Map();
+
+  for (const wc of asPrimary || []) {
+    const contingency = await resolveActingManager(wc.id, today);
+    // If manager is out and someone else is acting, do not list under primary
+    if (
+      contingency.manager_unavailable &&
+      contingency.acting_employee_id &&
+      contingency.acting_employee_id !== employeeId
+    ) {
+      continue;
+    }
+    byId.set(wc.id, { ...wc, is_acting: false });
+  }
+
+  const { data: memberships, error: mErr } = await supabase
+    .from('employee_work_centers')
+    .select('work_center_id')
+    .eq('employee_id', employeeId);
+  if (mErr) throw mErr;
+
+  for (const row of memberships || []) {
+    const wcId = row.work_center_id;
+    if (!wcId || byId.has(wcId)) continue;
+    const contingency = await resolveActingManager(wcId, today);
+    if (contingency.acting_employee_id !== employeeId) continue;
+    const { data: wc, error: wErr } = await supabase
+      .from('work_centers')
+      .select('id, name, code, manager_employee_id, hours_per_day, horizon_months_default')
+      .eq('id', wcId)
+      .maybeSingle();
+    if (wErr) throw wErr;
+    if (wc) byId.set(wc.id, { ...wc, is_acting: true });
+  }
+
+  return [...byId.values()].sort((a, b) =>
+    String(a.name || '').localeCompare(String(b.name || ''))
+  );
 }
 
 async function listCommitments({ from, to, work_center_id: workCenterId, status, search } = {}) {

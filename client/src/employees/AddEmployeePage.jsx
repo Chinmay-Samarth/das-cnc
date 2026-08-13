@@ -222,7 +222,7 @@ export default function AddEmployeePage() {
             </button>
             <button
               type="button"
-              className="secondary-button"
+              className="cancel-button"
               onClick={() => navigate('/employees')}
               disabled={submitting}
             >

@@ -1,13 +1,12 @@
 const express = require("express");
 const multer = require("multer")
-const {createClient} = require("@supabase/supabase-js")
 const jwt = require("jsonwebtoken");
 const { getInvoice, startInvoiceOCR } = require('../services/invoiceOcrEngine');
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+const {
+  parseInvoiceDateRange,
+  listInvoicesByDateRange,
+  exportVendorInvoicesExcel,
+} = require('../services/invoiceExportEngine');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
 
@@ -30,6 +29,11 @@ function verifyEmployeeAuth(req, res, next) {
   }
 }
 
+function sendServiceError(res, err) {
+  const status = err.status || 500;
+  return res.status(status).json({ error: err.message || 'Request failed' });
+}
+
 router.post("/upload", verifyEmployeeAuth, upload.single('invoice'), async (req,res)=>{
   try {
     const file = req.file
@@ -50,21 +54,35 @@ router.post("/upload", verifyEmployeeAuth, upload.single('invoice'), async (req,
 
 router.get('/list', verifyEmployeeAuth, async (req,res)=>{
   try{
-
-    const{data:invoices, error }= await supabase
-    .from('invoices')
-    .select(`*,
-      suppliers(name)`)
-    .order("created_at", {ascending: false})
-    
-    if (error) return res.status(500).json({erorr : error.message})
-      
-    res.json(invoices)
+    const range = parseInvoiceDateRange(req.query.from, req.query.to);
+    const invoices = await listInvoicesByDateRange(range);
+    res.json(invoices);
   }
   catch(err){
-    return res.status(500).json({error: err})
+    console.error('Invoice list error:', err);
+    return sendServiceError(res, err);
   }
 })
+
+router.get('/export', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const { buffer, filename } = await exportVendorInvoicesExcel({
+      from: req.query.from,
+      to: req.query.to,
+    });
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', buffer.length);
+    return res.send(buffer);
+  } catch (err) {
+    console.error('Invoice export error:', err);
+    return sendServiceError(res, err);
+  }
+});
 
 router.get('/:id', verifyEmployeeAuth, async (req, res) => {
   try {

@@ -26,6 +26,15 @@ function emitLeaveRequestUpdated(payload) {
   }
 }
 
+/**
+ * Dispatch shortfall approval lifecycle (create / approve / deny / consumed).
+ */
+function emitDispatchShortfallUpdated(payload) {
+  if (!io) return;
+  io.to('dispatch-shortfall').emit('dispatch-shortfall:updated', payload);
+  io.to('production').emit('dispatch-shortfall:updated', payload);
+}
+
 function emitGirnUpdated(payload) {
   if (!io) return;
   const { girnId } = payload;
@@ -208,6 +217,7 @@ module.exports = {
   getIo,
   emitAttendanceUpdated,
   emitLeaveRequestUpdated,
+  emitDispatchShortfallUpdated,
   emitGirnUpdated,
   emitBomUpdated,
   emitProductionUpdated,
