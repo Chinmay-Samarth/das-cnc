@@ -67,6 +67,11 @@ function openPrintDialog(blob) {
   });
 }
 
+export async function regenerateSalesInvoicePdf(invoice) {
+  const blob = await pdf(<SalesInvoicePdfDocument invoice={invoice} />).toBlob();
+  return storeSalesInvoicePdf(invoice, blob, pdfFileName(invoice));
+}
+
 export async function printSalesInvoicePdf(invoice) {
   const { blob, stored } = await generateInvoicePdf(invoice);
   await openPrintDialog(blob);

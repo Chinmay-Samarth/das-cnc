@@ -6,6 +6,7 @@ import {
   MapPin,
   Download,
   BadgeCheck,
+  Banknote,
   ZoomIn,
   ZoomOut,
   ChevronLeft,
@@ -16,11 +17,11 @@ import {
   Minimize2,
 } from "lucide-react";
 import api from "../../api/client";
-import { appPrompt } from "../../components/dialog";
+import { appAlert, appPrompt } from "../../components/dialog";
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
-import { formatDisplayDate } from '../../utils/dateFormat';
+import { formatDisplayDate, toISODateString } from '../../utils/dateFormat';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -29,12 +30,26 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 
 const STATUS_STYLES = {
   paid:       { bg: '#f0fdf4', color: '#16a34a', label: 'PAID' },
-  pending:    { bg: '#fff7ed', color: '#ea580c', label: 'PENDING APPROVAL' },
+  due:        { bg: '#fff7ed', color: '#ea580c', label: 'DUE' },
+  pending:    { bg: '#fff7ed', color: '#ea580c', label: 'DUE' },
   overdue:    { bg: '#fef2f2', color: '#dc2626', label: 'OVERDUE' },
   extracting: { bg: '#eff6ff', color: '#2563eb', label: 'EXTRACTING' },
   saving:     { bg: '#eff6ff', color: '#2563eb', label: 'PROCESSING' },
   error:      { bg: '#fef2f2', color: '#dc2626', label: 'ERROR' },
 };
+
+function todayYmdIst() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+
+function invoiceDisplayStatus(invoice) {
+  const raw = invoice?.status || 'pending';
+  if (raw === 'paid') return 'paid';
+  if (raw === 'extracting' || raw === 'saving' || raw === 'error') return raw;
+  const due = invoice?.due_date ? String(invoice.due_date).slice(0, 10) : '';
+  if (due && due < todayYmdIst()) return 'overdue';
+  return 'due';
+}
 
 const fmt = (val) => isNaN(Number(val)) || val == null
   ? '—'
@@ -71,6 +86,7 @@ export default function InvoiceDetails() {
   const [actionMessage, setActionMessage] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [paying, setPaying] = useState(false);
 
   const onDocLoad = useCallback(({ numPages }) => setNumPages(numPages), []);
 
@@ -182,8 +198,10 @@ export default function InvoiceDetails() {
   if (error) return <div style={styles.stateScreen}>Error: {error}</div>;
   if (!invoice) return <div style={styles.stateScreen}>Invoice not found.</div>;
 
-  const status = STATUS_STYLES[invoice.status] ?? STATUS_STYLES.pending;
+  const statusKey = invoiceDisplayStatus(invoice);
+  const status = STATUS_STYLES[statusKey] ?? STATUS_STYLES.due;
   const supplier = invoice.suppliers ?? {};
+  const canPay = statusKey === 'due' || statusKey === 'overdue';
   const totalGst = taxLines.reduce((sum, tax) => sum + taxAmount(tax, invoice.base_amount), 0);
   const gstRate = taxLines.length
     ? Math.round(taxLines.reduce((sum, t) => sum + t.rate, 0) * 100)
@@ -218,6 +236,66 @@ export default function InvoiceDetails() {
       window.open(invoice.file_url, '_blank');
       setActionMessage('Opened PDF in a new tab — use Ctrl+P to print');
     };
+  };
+
+  const handleRecordPayment = async () => {
+    const paidAt = await appPrompt({
+      title: 'Payment date',
+      message: 'Date when payment was recorded',
+      inputType: 'date',
+      defaultValue: toISODateString(new Date()),
+      confirmLabel: 'Next',
+    });
+    if (paidAt == null) return;
+    if (!String(paidAt).trim()) {
+      await appAlert('Payment date is required');
+      return;
+    }
+
+    const txn = await appPrompt({
+      title: 'Payment reference',
+      message: 'UTR / cheque / transaction reference (REF)',
+      defaultValue: '',
+      confirmLabel: 'Next',
+    });
+    if (txn == null) return;
+    if (!String(txn).trim()) {
+      await appAlert('Reference is required');
+      return;
+    }
+
+    const deductionRaw = await appPrompt({
+      title: 'Deduction',
+      message: 'Optional deduction amount (0 if none)',
+      defaultValue: '0',
+      confirmLabel: 'Next',
+    });
+    if (deductionRaw == null) return;
+
+    const remarks = await appPrompt({
+      title: 'Remarks',
+      message: 'Optional payment remarks',
+      defaultValue: '',
+      confirmLabel: 'Record payment',
+    });
+    if (remarks == null) return;
+
+    setPaying(true);
+    try {
+      const { data } = await api.post(`/invoices/${id}/payments`, {
+        paid_at: String(paidAt).trim(),
+        transaction_id: String(txn).trim(),
+        deduction: Number(deductionRaw) || 0,
+        remarks: String(remarks).trim() || undefined,
+      });
+      setInvoice(data.invoice);
+      setLineItems(data.invoice?.line_items ?? []);
+      setActionMessage('Payment recorded');
+    } catch (err) {
+      await appAlert(err.response?.data?.error || 'Unable to record payment');
+    } finally {
+      setPaying(false);
+    }
   };
 
   const handlePrint = async () => {
@@ -290,9 +368,9 @@ export default function InvoiceDetails() {
         <div style={styles.headerLeft}>
           <div style={styles.headerTitleRow}>
             <h1 style={styles.invoiceTitle}>{invoice.invoice_number}</h1>
-            {/* <span style={{ ...styles.statusBadge, background: status.bg, color: status.color }}>
+            <span style={{ ...styles.statusBadge, background: status.bg, color: status.color }}>
               {status.label}
-            </span> */}
+            </span>
           </div>
           <p style={styles.issueDate}>
             <Calendar size={14} />
@@ -301,14 +379,21 @@ export default function InvoiceDetails() {
         </div>
 
         <div style={styles.headerActions}>
+          {canPay ? (
+            <button
+              type="button"
+              style={styles.approveBtn}
+              disabled={paying}
+              onClick={handleRecordPayment}
+            >
+              <Banknote size={15} />
+              {paying ? 'Recording…' : 'Record payment'}
+            </button>
+          ) : null}
           <a href={invoice.file_url} download style={styles.downloadBtn}>
             <Download size={15} />
             Download PDF
           </a>
-          {/* <button type="button" style={styles.approveBtn}>
-            <BadgeCheck size={15} />
-            Approve Invoice
-          </button> */}
         </div>
       </header>
 
@@ -335,12 +420,40 @@ export default function InvoiceDetails() {
                 View Details &gt;
               </button>
             )}
-            {/* {supplier.billing_address && (
-              <p style={styles.vendorAddress}>
-                <MapPin size={14} style={{ flexShrink: 0, marginTop: 2 }} />
-                {supplier.billing_address}
-              </p>
-            )} */}
+          </section>
+
+          <section style={styles.card}>
+            <span style={styles.sectionTitle}>Payment</span>
+            <div style={styles.taxRows}>
+              <div style={styles.summaryLine}>
+                <span style={styles.summaryLabel}>Due date</span>
+                <span style={styles.summaryValue}>{formatDisplayDate(invoice.due_date)}</span>
+              </div>
+              <div style={styles.summaryLine}>
+                <span style={styles.summaryLabel}>Credit period</span>
+                <span style={styles.summaryValue}>
+                  {invoice.credit_period_days != null ? `${invoice.credit_period_days} days` : '—'}
+                </span>
+              </div>
+              <div style={styles.summaryLine}>
+                <span style={styles.summaryLabel}>Pay date</span>
+                <span style={styles.summaryValue}>{formatDisplayDate(invoice.paid_at)}</span>
+              </div>
+              <div style={styles.summaryLine}>
+                <span style={styles.summaryLabel}>REF</span>
+                <span style={styles.summaryValue}>{invoice.payment_reference || '—'}</span>
+              </div>
+              <div style={styles.summaryLine}>
+                <span style={styles.summaryLabel}>Deduction</span>
+                <span style={styles.summaryValue}>
+                  {invoice.payment_deduction != null ? `₹${fmtMoney(invoice.payment_deduction)}` : '—'}
+                </span>
+              </div>
+              <div style={styles.summaryLine}>
+                <span style={styles.summaryLabel}>Remarks</span>
+                <span style={styles.summaryValue}>{invoice.payment_remarks || '—'}</span>
+              </div>
+            </div>
           </section>
 
           {/* Line items card */}

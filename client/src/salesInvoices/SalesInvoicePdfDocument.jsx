@@ -2,8 +2,6 @@ import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/render
 
 const LOGO_SRC = '/dascnclogo2.png';
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
 const GST_STATES = {
   '01': 'Jammu and Kashmir',
   '02': 'Himachal Pradesh',
@@ -43,15 +41,38 @@ const GST_STATES = {
   '38': 'Ladakh',
 };
 
+const ONES = [
+  '',
+  'one',
+  'two',
+  'three',
+  'four',
+  'five',
+  'six',
+  'seven',
+  'eight',
+  'nine',
+  'ten',
+  'eleven',
+  'twelve',
+  'thirteen',
+  'fourteen',
+  'fifteen',
+  'sixteen',
+  'seventeen',
+  'eighteen',
+  'nineteen',
+];
+const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+
 const styles = StyleSheet.create({
   page: {
-    paddingTop: 40,
-    paddingBottom: 40,
-    paddingHorizontal: 42,
+    paddingTop: 36,
+    paddingBottom: 36,
+    paddingHorizontal: 36,
     fontSize: 10,
     fontFamily: 'Helvetica',
     color: '#1a1a1a',
-    lineHeight: 1.45,
   },
 
   header: {
@@ -60,76 +81,84 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     borderBottomWidth: 2,
     borderBottomColor: '#111111',
-    paddingBottom: 14,
-    marginBottom: 18,
+    paddingBottom: 12,
+    marginBottom: 16,
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    flex: 1.35,
-    paddingRight: 16,
+    flex: 1,
+    paddingRight: 12,
   },
   logo: {
-    width: 118,
-    height: 40,
+    width: 48,
+    height: 48,
     objectFit: 'contain',
     marginRight: 12,
-  },
-  companyBlock: {
-    flex: 1,
   },
   companyName: {
     fontSize: 15,
     fontFamily: 'Helvetica-Bold',
     color: '#111111',
-    letterSpacing: 0.2,
     marginBottom: 3,
   },
   addr: {
-    fontSize: 9,
+    fontSize: 9.5,
     color: '#555555',
     lineHeight: 1.5,
   },
 
   headerRight: {
-    width: 190,
+    width: 168,
     alignItems: 'flex-end',
   },
   title: {
-    fontSize: 13,
+    fontSize: 14,
     fontFamily: 'Helvetica-Bold',
-    letterSpacing: 0.6,
     color: '#111111',
     textAlign: 'right',
   },
-  meta: {
+  metaTable: {
     marginTop: 6,
-    fontSize: 9,
-    color: '#555555',
-    textAlign: 'right',
-    lineHeight: 1.6,
+    width: 168,
   },
-  badge: {
-    marginTop: 8,
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-    fontSize: 8,
-    fontFamily: 'Helvetica-Bold',
-    letterSpacing: 0.5,
-    borderRadius: 3,
+  metaRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingVertical: 1,
+  },
+  metaLabel: {
+    fontSize: 9.5,
+    color: '#888888',
+    paddingRight: 8,
+    textAlign: 'right',
+  },
+  metaValue: {
+    fontSize: 9.5,
+    color: '#111111',
+    textAlign: 'right',
+    minWidth: 72,
   },
 
-  split: {
+  parties: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 20,
+    borderWidth: 0.5,
+    borderColor: '#cccccc',
+    marginBottom: 16,
   },
-  col: { flex: 1, paddingRight: 16 },
-  colLast: { flex: 1, paddingLeft: 12 },
+  partyCol: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  partyColLeft: {
+    borderRightWidth: 0.5,
+    borderRightColor: '#cccccc',
+  },
   sectionLabel: {
-    fontSize: 8,
+    fontSize: 8.5,
     fontFamily: 'Helvetica-Bold',
-    letterSpacing: 0.7,
+    letterSpacing: 0.5,
     color: '#888888',
     marginBottom: 5,
   },
@@ -140,32 +169,14 @@ const styles = StyleSheet.create({
     marginBottom: 3,
   },
   body: {
-    fontSize: 9,
+    fontSize: 9.5,
     color: '#555555',
-    lineHeight: 1.5,
-  },
-
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingVertical: 2,
-  },
-  detailLabel: {
-    fontSize: 9,
-    color: '#888888',
-    width: 58,
-  },
-  detailValue: {
-    fontSize: 9,
-    color: '#555555',
-    flex: 1,
-    textAlign: 'right',
+    lineHeight: 1.55,
   },
 
   table: {
     width: '100%',
-    marginBottom: 2,
+    marginBottom: 4,
   },
   th: {
     flexDirection: 'row',
@@ -175,12 +186,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: '#cccccc',
     paddingVertical: 7,
-    paddingHorizontal: 8,
   },
   thText: {
     fontSize: 9,
     color: '#444444',
     fontFamily: 'Helvetica-Bold',
+    paddingHorizontal: 5,
   },
   tr: {
     flexDirection: 'row',
@@ -188,35 +199,64 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0.5,
     borderBottomColor: '#eeeeee',
     paddingVertical: 8,
-    paddingHorizontal: 8,
   },
   td: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: '#1a1a1a',
+    paddingHorizontal: 5,
   },
   tdMuted: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: '#666666',
+    paddingHorizontal: 5,
+  },
+  tdSub: {
+    fontSize: 8.5,
+    color: '#999999',
   },
   tableRule: {
     borderBottomWidth: 1,
     borderBottomColor: '#cccccc',
-    marginBottom: 16,
+    marginBottom: 14,
   },
 
-  cIdx: { width: 22 },
-  cDesc: { flex: 3.2, paddingRight: 8 },
-  cQty: { width: 78, textAlign: 'right' },
-  cRate: { width: 72, textAlign: 'right' },
-  cAmt: { width: 78, textAlign: 'right' },
+  cSl: { width: '6%' },
+  cPo: { width: '13%' },
+  cHsn: { width: '11%' },
+  cDesc: { width: '25%' },
+  cPkg: { width: '13%' },
+  cQty: { width: '10%', textAlign: 'right' },
+  cRate: { width: '10%', textAlign: 'right' },
+  cAmt: { width: '12%', textAlign: 'right' },
 
   totalsWrap: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginBottom: 20,
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  wordsCol: {
+    flex: 1.3,
+    paddingRight: 16,
+  },
+  wordsLabel: {
+    fontSize: 8.5,
+    fontFamily: 'Helvetica-Bold',
+    letterSpacing: 0.5,
+    color: '#888888',
+    marginBottom: 5,
+  },
+  wordsText: {
+    fontSize: 9.5,
+    color: '#555555',
+    lineHeight: 1.6,
+  },
+  paymentTerms: {
+    fontSize: 9.5,
+    color: '#555555',
+    marginTop: 10,
   },
   totals: {
-    width: 230,
+    width: 210,
   },
   totalRow: {
     flexDirection: 'row',
@@ -224,11 +264,11 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   totalLabel: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: '#666666',
   },
   totalValue: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: '#1a1a1a',
     textAlign: 'right',
   },
@@ -242,45 +282,54 @@ const styles = StyleSheet.create({
     borderTopColor: '#111111',
   },
   grandLabel: {
-    fontSize: 11,
+    fontSize: 12,
     fontFamily: 'Helvetica-Bold',
     color: '#111111',
   },
   grandValue: {
-    fontSize: 11,
+    fontSize: 12,
     fontFamily: 'Helvetica-Bold',
     color: '#111111',
     textAlign: 'right',
   },
 
-  notes: {
-    marginBottom: 16,
-  },
-
-  bottom: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  certify: {
+    fontSize: 8.5,
+    color: '#888888',
+    lineHeight: 1.6,
     borderTopWidth: 0.5,
     borderTopColor: '#dddddd',
-    paddingTop: 12,
+    paddingTop: 10,
+    marginBottom: 18,
   },
-  signBlock: {
-    width: 160,
+
+  signs: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  signCol: {
+    flex: 1,
+  },
+  signColRight: {
+    flex: 1,
     alignItems: 'flex-end',
   },
+  signHint: {
+    fontSize: 9,
+    color: '#666666',
+  },
   signSpace: {
-    height: 34,
+    height: 30,
   },
   signLine: {
     borderTopWidth: 0.5,
     borderTopColor: '#cccccc',
     paddingTop: 4,
-    minWidth: 140,
+    minWidth: 160,
   },
-  signText: {
+  signCaption: {
     fontSize: 9,
-    color: '#555555',
-    textAlign: 'right',
+    color: '#888888',
   },
 
   watermark: {
@@ -293,20 +342,6 @@ const styles = StyleSheet.create({
     transform: 'rotate(-28deg)',
     fontFamily: 'Helvetica-Bold',
   },
-  footer: {
-    position: 'absolute',
-    bottom: 24,
-    left: 42,
-    right: 42,
-    borderTopWidth: 0.5,
-    borderTopColor: '#eeeeee',
-    paddingTop: 10,
-  },
-  footerText: {
-    fontSize: 8,
-    color: '#999999',
-    textAlign: 'center',
-  },
 });
 
 function money(n) {
@@ -317,20 +352,20 @@ function money(n) {
 
 function qtyLabel(line) {
   const n = Number(line?.quantity);
-  const qty = Number.isFinite(n) ? n.toLocaleString('en-IN') : '—';
-  return line?.uom ? `${qty} ${line.uom}` : qty;
+  if (!Number.isFinite(n)) return '—';
+  return n.toLocaleString('en-IN');
 }
 
 function formatPdfDate(value) {
-  if (value == null || value === '') return '—';
+  if (value == null || value === '') return null;
   const str = String(value).trim();
   const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(str);
-  if (iso) {
-    return `${Number(iso[3])} ${MONTHS[Number(iso[2]) - 1]} ${iso[1]}`;
-  }
+  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
   const d = new Date(str);
   if (Number.isNaN(d.getTime())) return str;
-  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
 function stateName(code, fallback) {
@@ -338,12 +373,46 @@ function stateName(code, fallback) {
   return GST_STATES[padded] || fallback || null;
 }
 
-function placeOfSupply(invoice, customer) {
-  const code = invoice?.place_of_supply_state_code || customer?.state_code;
-  if (!code) return null;
-  const padded = String(code).padStart(2, '0').slice(0, 2);
-  const name = stateName(padded, customer?.state);
-  return name ? `${padded} – ${name}` : padded;
+function twoDigit(n) {
+  const v = Math.floor(n);
+  if (v < 20) return ONES[v];
+  const t = Math.floor(v / 10);
+  const o = v % 10;
+  return `${TENS[t]}${o ? ` ${ONES[o]}` : ''}`.trim();
+}
+
+function chunkToWords(n) {
+  const hundred = Math.floor(n / 100);
+  const rest = n % 100;
+  const parts = [];
+  if (hundred) parts.push(`${ONES[hundred]} hundred`);
+  if (rest) parts.push(twoDigit(rest));
+  return parts.join(' ');
+}
+
+function integerToWords(n) {
+  if (n === 0) return 'zero';
+  const crore = Math.floor(n / 10000000);
+  const lakh = Math.floor((n % 10000000) / 100000);
+  const thousand = Math.floor((n % 100000) / 1000);
+  const rest = n % 1000;
+  const parts = [];
+  if (crore) parts.push(`${chunkToWords(crore)} crore`);
+  if (lakh) parts.push(`${chunkToWords(lakh)} lakh`);
+  if (thousand) parts.push(`${chunkToWords(thousand)} thousand`);
+  if (rest) parts.push(chunkToWords(rest));
+  return parts.join(' ');
+}
+
+function rupeesInWords(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return '';
+  const rupees = Math.floor(Math.abs(n) + 1e-9);
+  const paise = Math.round((Math.abs(n) - rupees) * 100);
+  let text = `Rupees ${integerToWords(rupees)}`;
+  if (paise) text += ` and ${twoDigit(paise)} paise`;
+  text += ' only.';
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function logoSrc() {
@@ -353,19 +422,26 @@ function logoSrc() {
   return LOGO_SRC;
 }
 
-function badgeColors(status) {
-  if (status === 'paid') return { backgroundColor: '#ecfdf3', color: '#166534' };
-  if (status === 'cancelled') return { backgroundColor: '#fef2f2', color: '#991b1b' };
-  if (status === 'due') return { backgroundColor: '#fff7ed', color: '#9a3412' };
-  return { backgroundColor: '#f4f4f5', color: '#3f3f46' };
+function partyLines(name, address, gstin, pan, state) {
+  const lines = [];
+  if (address) lines.push(address);
+  const ids = [
+    gstin ? `GSTIN ${gstin}` : null,
+    pan ? `PAN ${pan}` : null,
+  ]
+    .filter(Boolean)
+    .join('  ·  ');
+  if (ids) lines.push(ids);
+  if (state) lines.push(`State – ${state}`);
+  return { name, lines };
 }
 
-function DetailRow({ label, value }) {
+function MetaRow({ label, value, bold }) {
   if (!value) return null;
   return (
-    <View style={styles.detailRow}>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value}</Text>
+    <View style={styles.metaRow}>
+      <Text style={styles.metaLabel}>{label}</Text>
+      <Text style={[styles.metaValue, bold ? { fontFamily: 'Helvetica-Bold' } : null]}>{value}</Text>
     </View>
   );
 }
@@ -375,20 +451,54 @@ export function SalesInvoicePdfDocument({ invoice }) {
   const customer = invoice?.customer_snapshot || {};
   const lines = Array.isArray(invoice?.line_items) ? invoice.line_items : [];
   const cancelled = invoice?.status === 'cancelled';
-  const companyTitle = company.trade_name || company.legal_name || 'Company';
-  const cityLine = [company.city, company.state].filter(Boolean).join(', ');
-  const gstPhone = [
-    company.gstin ? `GSTIN ${company.gstin}` : null,
-    company.phone ? `Ph ${company.phone}` : null,
+  const companyTitle = company.trade_name || company.legal_name || 'Das CNC Products Pvt Ltd';
+
+  const cityState = [
+    company.city,
+    company.pincode ? `– ${company.pincode}` : null,
+    company.state,
+    'India',
   ]
     .filter(Boolean)
-    .join('  |  ');
+    .join(', ')
+    .replace(', –', ' –');
 
-  const issuedOn = formatPdfDate(invoice?.issued_at);
-  const dueOn = invoice?.due_date ? formatPdfDate(invoice.due_date) : null;
-  const pos = placeOfSupply(invoice, customer);
-  const taxLabel = invoice?.tax_type === 'IGST' ? 'IGST 18%' : 'CGST 9% + SGST 9%';
-  const hasBank = Boolean(company.bank_name || company.bank_account || company.ifsc);
+  const gstPhone = [
+    company.phone ? `Ph ${company.phone}` : null,
+    company.gstin ? `GSTIN ${company.gstin}` : null,
+  ]
+    .filter(Boolean)
+    .join('  ·  ');
+
+  const billState = stateName(
+    invoice?.place_of_supply_state_code || customer.state_code,
+    customer.state
+  );
+  const billTo = partyLines(
+    customer.name || invoice?.customer_name || 'Customer',
+    customer.billing_address || customer.official_address,
+    customer.gstin,
+    customer.pan_no,
+    billState
+  );
+  const shipTo = partyLines(
+    customer.name || invoice?.customer_name || 'Customer',
+    customer.official_address || customer.billing_address || customer.shipping_address,
+    customer.gstin,
+    customer.pan_no,
+    billState
+  );
+
+  const freight = Number(invoice?.freight_amount) || 0;
+  const taxable = Number(invoice?.taxable_amount) || 0;
+  const cgst = Number(invoice?.cgst_amount) || 0;
+  const sgst = Number(invoice?.sgst_amount) || 0;
+  const igst = Number(invoice?.igst_amount) || 0;
+  const preRound = taxable + freight + cgst + sgst + igst;
+  const storedTotal = Number(invoice?.total_amount);
+  const grand = Number.isFinite(storedTotal) ? Math.round(storedTotal) : Math.round(preRound);
+  const roundOff = Math.round((grand - preRound) * 100) / 100;
+  const taxAmount = cgst + sgst + igst;
   const displayLines = lines.length ? lines : [{ empty: true }];
 
   return (
@@ -399,144 +509,161 @@ export function SalesInvoicePdfDocument({ invoice }) {
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <Image src={logoSrc()} style={styles.logo} />
-            <View style={styles.companyBlock}>
+            <View>
               <Text style={styles.companyName}>{companyTitle}</Text>
-              {company.legal_name && company.trade_name && company.legal_name !== company.trade_name ? (
-                <Text style={styles.addr}>{company.legal_name}</Text>
-              ) : null}
               {company.address_line1 ? <Text style={styles.addr}>{company.address_line1}</Text> : null}
               {company.address_line2 ? <Text style={styles.addr}>{company.address_line2}</Text> : null}
-              {cityLine ? <Text style={styles.addr}>{cityLine}</Text> : null}
+              {cityState ? <Text style={styles.addr}>{cityState}</Text> : null}
               {gstPhone ? <Text style={styles.addr}>{gstPhone}</Text> : null}
             </View>
           </View>
 
           <View style={styles.headerRight}>
             <Text style={styles.title}>TAX INVOICE</Text>
-            <Text style={styles.meta}>
-              No. {invoice?.invoice_number || '(Draft)'}
-              {'\n'}
-              Date {issuedOn}
-              {dueOn ? `  ·  Due ${dueOn}` : ''}
-            </Text>
-            <Text style={[styles.badge, badgeColors(invoice?.status)]}>
-              {(invoice?.status || 'draft').toUpperCase()}
-            </Text>
+            <View style={styles.metaTable}>
+              <MetaRow label="Invoice no" value={invoice?.invoice_number || '(Draft)'} bold />
+              <MetaRow label="Invoice date" value={formatPdfDate(invoice?.issued_at) || '—'} />
+              <MetaRow
+                label="Vendor code"
+                value={customer.vendor_code || invoice?.vendor_code || null}
+              />
+            </View>
           </View>
         </View>
 
-        <View style={styles.split}>
-          <View style={styles.col}>
-            <Text style={styles.sectionLabel}>BILL TO</Text>
-            <Text style={styles.partyName}>
-              {customer.name || invoice?.customer_name || 'Customer'}
-            </Text>
-            {customer.billing_address || customer.official_address ? (
-              <Text style={styles.body}>{customer.billing_address || customer.official_address}</Text>
-            ) : null}
-            {customer.gstin ? <Text style={styles.body}>GSTIN {customer.gstin}</Text> : null}
-            {pos ? <Text style={styles.body}>Place of supply {pos}</Text> : null}
+        <View style={styles.parties}>
+          <View style={[styles.partyCol, styles.partyColLeft]}>
+            <Text style={styles.sectionLabel}>BILL TO PARTY</Text>
+            <Text style={styles.partyName}>{billTo.name}</Text>
+            {billTo.lines.map((line, i) => (
+              <Text key={i} style={styles.body}>
+                {line}
+              </Text>
+            ))}
           </View>
-
-          <View style={styles.colLast}>
-            <Text style={styles.sectionLabel}>DETAILS</Text>
-            <DetailRow label="Lot" value={invoice?.lot_number} />
-            <DetailRow label="Schedule" value={lines[0]?.schedule_number} />
-            <DetailRow label="Terms" value={invoice?.payment_terms} />
-            <DetailRow label="Tax" value={taxLabel} />
+          <View style={styles.partyCol}>
+            <Text style={styles.sectionLabel}>SHIP TO PARTY</Text>
+            <Text style={styles.partyName}>{shipTo.name}</Text>
+            {shipTo.lines.map((line, i) => (
+              <Text key={i} style={styles.body}>
+                {line}
+              </Text>
+            ))}
           </View>
         </View>
 
         <View style={styles.table}>
           <View style={styles.th}>
-            <Text style={[styles.thText, styles.cIdx]}>#</Text>
+            <Text style={[styles.thText, styles.cSl]}>SL</Text>
+            <Text style={[styles.thText, styles.cPo]}>PO ref</Text>
+            <Text style={[styles.thText, styles.cHsn]}>HSN</Text>
             <Text style={[styles.thText, styles.cDesc]}>Description</Text>
+            <Text style={[styles.thText, styles.cPkg]}>Package</Text>
             <Text style={[styles.thText, styles.cQty]}>Qty</Text>
             <Text style={[styles.thText, styles.cRate]}>Rate</Text>
             <Text style={[styles.thText, styles.cAmt]}>Amount</Text>
           </View>
-          {displayLines.map((line, idx) => (
-            <View key={idx} style={styles.tr} wrap={false}>
-              <Text style={[styles.tdMuted, styles.cIdx]}>{line.empty ? '—' : idx + 1}</Text>
-              <Text style={[styles.td, styles.cDesc]}>
-                {line.empty ? '—' : line.description || 'Item'}
-              </Text>
-              <Text style={[styles.td, styles.cQty]}>{line.empty ? '—' : qtyLabel(line)}</Text>
-              <Text style={[styles.td, styles.cRate]}>{line.empty ? '—' : money(line.unit_price)}</Text>
-              <Text style={[styles.td, styles.cAmt]}>{line.empty ? '—' : money(line.taxable_amount)}</Text>
-            </View>
-          ))}
+          {displayLines.map((line, idx) => {
+            const poRef = line.empty
+              ? '—'
+              : line.po_ref || invoice?.blanket_number || '—';
+            const poDate = line.empty
+              ? null
+              : formatPdfDate(line.po_date || invoice?.blanket_created_at);
+            return (
+              <View key={idx} style={styles.tr} wrap={false}>
+                <Text style={[styles.tdMuted, styles.cSl]}>{line.empty ? '—' : idx + 1}</Text>
+                <View style={styles.cPo}>
+                  <Text style={styles.td}>{poRef}</Text>
+                  {poDate ? <Text style={styles.tdSub}>{poDate}</Text> : null}
+                </View>
+                <Text style={[styles.td, styles.cHsn]}>{line.empty ? '—' : line.hsn || '—'}</Text>
+                <Text style={[styles.td, styles.cDesc]}>
+                  {line.empty ? '—' : line.description || 'Item'}
+                </Text>
+                <Text style={[styles.td, styles.cPkg]}>{line.empty ? '—' : line.package || '—'}</Text>
+                <Text style={[styles.td, styles.cQty]}>{line.empty ? '—' : qtyLabel(line)}</Text>
+                <Text style={[styles.td, styles.cRate]}>
+                  {line.empty ? '—' : money(line.unit_price)}
+                </Text>
+                <Text style={[styles.td, styles.cAmt, { fontFamily: 'Helvetica-Bold' }]}>
+                  {line.empty ? '—' : money(line.taxable_amount)}
+                </Text>
+              </View>
+            );
+          })}
         </View>
         <View style={styles.tableRule} />
 
         <View style={styles.totalsWrap}>
+          <View style={styles.wordsCol}>
+            <Text style={styles.wordsLabel}>AMOUNT IN WORDS</Text>
+            <Text style={styles.wordsText}>Tax: {rupeesInWords(taxAmount)}</Text>
+            <Text style={styles.wordsText}>Total: {rupeesInWords(grand)}</Text>
+            {invoice?.payment_terms ? (
+              <Text style={styles.paymentTerms}>Payment terms  ·  {invoice.payment_terms}</Text>
+            ) : null}
+          </View>
           <View style={styles.totals}>
             <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Taxable amount</Text>
-              <Text style={styles.totalValue}>{money(invoice?.taxable_amount)}</Text>
+              <Text style={styles.totalLabel}>Total value</Text>
+              <Text style={styles.totalValue}>{money(taxable)}</Text>
+            </View>
+            <View style={styles.totalRow}>
+              <Text style={styles.totalLabel}>Freight / P&F</Text>
+              <Text style={styles.totalValue}>{money(freight)}</Text>
             </View>
             {invoice?.tax_type === 'IGST' ? (
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>IGST (18%)</Text>
-                <Text style={styles.totalValue}>{money(invoice?.igst_amount)}</Text>
+                <Text style={styles.totalValue}>{money(igst)}</Text>
               </View>
             ) : (
               <>
                 <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>CGST (9%)</Text>
-                  <Text style={styles.totalValue}>{money(invoice?.cgst_amount)}</Text>
+                  <Text style={styles.totalValue}>{money(cgst)}</Text>
                 </View>
                 <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>SGST (9%)</Text>
-                  <Text style={styles.totalValue}>{money(invoice?.sgst_amount)}</Text>
+                  <Text style={styles.totalValue}>{money(sgst)}</Text>
                 </View>
               </>
             )}
+            <View style={styles.totalRow}>
+              <Text style={styles.totalLabel}>Round off</Text>
+              <Text style={styles.totalValue}>
+                {roundOff < 0 ? `–${money(Math.abs(roundOff))}` : money(roundOff)}
+              </Text>
+            </View>
             <View style={styles.grandRow}>
-              <Text style={styles.grandLabel}>Total (INR)</Text>
-              <Text style={styles.grandValue}>{money(invoice?.total_amount)}</Text>
+              <Text style={styles.grandLabel}>Grand total</Text>
+              <Text style={styles.grandValue}>{money(grand)}</Text>
             </View>
           </View>
         </View>
 
-        {invoice?.notes ? (
-          <View style={styles.notes}>
-            <Text style={styles.sectionLabel}>NOTES</Text>
-            <Text style={styles.body}>{invoice.notes}</Text>
-          </View>
-        ) : null}
+        <Text style={styles.certify}>
+          Certified that the particulars given above are true and correct, and that the amount
+          indicated represents the price actually charged with no additional consideration, directly
+          or indirectly, from the buyer.
+        </Text>
 
-        <View style={styles.bottom}>
-          <View style={styles.col}>
-            {hasBank ? (
-              <>
-                <Text style={styles.sectionLabel}>BANK DETAILS</Text>
-                {company.bank_name ? <Text style={styles.body}>{company.bank_name}</Text> : null}
-                <Text style={styles.body}>
-                  {[
-                    company.bank_account ? `A/c ${company.bank_account}` : null,
-                    company.ifsc ? `IFSC ${company.ifsc}` : null,
-                  ]
-                    .filter(Boolean)
-                    .join('  ·  ')}
-                </Text>
-              </>
-            ) : null}
-          </View>
-          <View style={styles.signBlock}>
-            <Text style={styles.sectionLabel}>AUTHORISED SIGNATORY</Text>
+        <View style={styles.signs}>
+          <View style={styles.signCol}>
+            <Text style={styles.signHint}>Received the above goods in good condition</Text>
             <View style={styles.signSpace} />
             <View style={styles.signLine}>
-              <Text style={styles.signText}>For {companyTitle}</Text>
+              <Text style={styles.signCaption}>Sign. with seal</Text>
             </View>
           </View>
-        </View>
-
-        <View style={styles.footer} fixed>
-          <Text style={styles.footerText}>
-            This is a computer-generated tax invoice. Cancelled numbers are retained for GST
-            compliance.
-          </Text>
+          <View style={styles.signColRight}>
+            <Text style={styles.signHint}>For {companyTitle}</Text>
+            <View style={styles.signSpace} />
+            <View style={styles.signLine}>
+              <Text style={[styles.signCaption, { textAlign: 'right' }]}>Authorised signatory</Text>
+            </View>
+          </View>
         </View>
       </Page>
     </Document>

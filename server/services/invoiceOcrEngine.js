@@ -34,10 +34,64 @@ function extractIrn(doc) {
   return null;
 }
 
+function ymdPartsIst(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return ymdPartsIst(new Date());
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const pick = (type) => Number(parts.find((p) => p.type === type)?.value);
+  return { year: pick('year'), month: pick('month'), day: pick('day') };
+}
+
+function isoDateUtc(year, month, day) {
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function daysBetweenYmd(from, to) {
+  const fromStr = String(from || '').slice(0, 10);
+  const toStr = String(to || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromStr) || !/^\d{4}-\d{2}-\d{2}$/.test(toStr)) return null;
+  const start = Date.UTC(
+    Number(fromStr.slice(0, 4)),
+    Number(fromStr.slice(5, 7)) - 1,
+    Number(fromStr.slice(8, 10))
+  );
+  const end = Date.UTC(
+    Number(toStr.slice(0, 4)),
+    Number(toStr.slice(5, 7)) - 1,
+    Number(toStr.slice(8, 10))
+  );
+  return Math.round((end - start) / 86400000);
+}
+
+async function nextRegisterSerial(createdAt) {
+  const { year, month } = ymdPartsIst(createdAt);
+  const start = new Date(`${isoDateUtc(year, month, 1)}T00:00:00+05:30`).toISOString();
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  const end = new Date(`${isoDateUtc(nextYear, nextMonth, 1)}T00:00:00+05:30`).toISOString();
+
+  const { count, error } = await supabase
+    .from('invoices')
+    .select('id', { count: 'exact', head: true })
+    .gte('created_at', start)
+    .lt('created_at', end)
+    .not('register_serial', 'is', null);
+
+  if (error) throw error;
+  const n = (count || 0) + 1;
+  return `A${String(n).padStart(2, '0')}`;
+}
+
 function normalizeLineItems(doc) {
   return getItems(doc.line_items).map((item) => ({
     description: item.fields?.description?.value || '',
     quantity: item.fields?.quantity?.value ?? null,
+    unit: item.fields?.unit?.value || item.fields?.quantity_unit?.value || '',
     unit_price: item.fields?.unit_price?.value ?? null,
     total: item.fields?.total_price?.value ?? null,
   }));
@@ -141,13 +195,20 @@ async function processInvoiceOCR(invoiceId, inputSource, publicUrl) {
   const supplierId = await resolveSupplier(doc);
   const lineItems = normalizeLineItems(doc);
   const taxItems = normalizeTaxItems(doc);
+  const invoiceDate = getValue(doc.date);
+  const dueDate = getValue(doc.due_date);
+  const existing = await getInvoice(invoiceId);
+  const registerSerial =
+    existing?.register_serial || (await nextRegisterSerial(existing?.created_at || new Date()));
 
   const invoiceData = {
     status: 'pending',
     file_url: publicUrl,
     invoice_number: getValue(doc.invoice_number),
-    invoice_date: getValue(doc.date),
-    due_date: getValue(doc.due_date),
+    invoice_date: invoiceDate,
+    due_date: dueDate,
+    credit_period_days: daysBetweenYmd(invoiceDate, dueDate),
+    register_serial: registerSerial,
     base_amount: getValue(doc.total_net),
     total_amount: getValue(doc.total_amount),
     tax_amount: getValue(doc.total_tax),

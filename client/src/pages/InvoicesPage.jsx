@@ -9,13 +9,33 @@ import { appAlert } from '../components/dialog';
 
 const STATUS_OPTIONS = [
   { id: 'all', label: 'All statuses' },
-  { id: 'pending', label: 'Pending' },
+  { id: 'due', label: 'Due' },
   { id: 'paid', label: 'Paid' },
   { id: 'overdue', label: 'Overdue' },
   { id: 'extracting', label: 'Extracting' },
   { id: 'saving', label: 'Saving' },
   { id: 'error', label: 'Error' },
 ];
+
+function todayYmdIst() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+
+function invoiceDisplayStatus(invoice) {
+  const raw = invoice?.status || 'pending';
+  if (raw === 'paid') return 'paid';
+  if (raw === 'extracting' || raw === 'saving' || raw === 'error') return raw;
+  const due = invoice?.due_date ? String(invoice.due_date).slice(0, 10) : '';
+  if (due && due < todayYmdIst()) return 'overdue';
+  return 'due';
+}
+
+function statusLabel(status) {
+  if (status === 'due') return 'DUE';
+  if (status === 'paid') return 'PAID';
+  if (status === 'overdue') return 'OVERDUE';
+  return String(status || 'DUE').replace(/_/g, ' ').toUpperCase();
+}
 
 const fmt = (val) =>
   isNaN(Number(val)) || val == null
@@ -34,7 +54,7 @@ function statusTone(status) {
   if (status === 'paid') return 'completed';
   if (status === 'overdue' || status === 'error') return 'overdue';
   if (status === 'extracting' || status === 'saving') return 'running';
-  if (status === 'pending') return 'pending';
+  if (status === 'due' || status === 'pending') return 'pending';
   return status || 'pending';
 }
 
@@ -115,7 +135,8 @@ export default function InvoicesPage() {
   const filteredInvoices = useMemo(() => {
     const query = search.trim().toLowerCase();
     const matches = invoices.filter((invoice) => {
-      if (statusFilter !== 'all' && invoice.status !== statusFilter) return false;
+      const displayStatus = invoiceDisplayStatus(invoice);
+      if (statusFilter !== 'all' && displayStatus !== statusFilter) return false;
       if (!query) return true;
       return [
         invoice.suppliers?.name,
@@ -372,8 +393,8 @@ export default function InvoicesPage() {
                     <td>₹{fmt(item.total_amount)}</td>
                     <td>{formatDisplayDate(item.due_date)}</td>
                     <td>
-                      <StatusBadge status={statusTone(item.status)}>
-                        {String(item.status || 'pending').replace(/_/g, ' ').toUpperCase()}
+                      <StatusBadge status={statusTone(invoiceDisplayStatus(item))}>
+                        {statusLabel(invoiceDisplayStatus(item))}
                       </StatusBadge>
                     </td>
                   </tr>

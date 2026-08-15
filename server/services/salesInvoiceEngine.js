@@ -514,7 +514,7 @@ async function resolveLotBillingContext(lotId) {
 
   const { data: blanket, error: bErr } = await supabase
     .from('blanket_pos')
-    .select('id, blanket_number, customer_id, payment_terms, currency, status')
+    .select('id, blanket_number, customer_id, payment_terms, currency, status, created_at')
     .eq('id', line.blanket_po_id)
     .maybeSingle();
   if (bErr) throw bErr;
@@ -549,12 +549,26 @@ async function resolveLotBillingContext(lotId) {
   };
 }
 
-function buildLineItems({ componentLabel, quantity, unitPrice, uom, tax, schedule }) {
+function buildLineItems({
+  componentLabel,
+  quantity,
+  unitPrice,
+  uom,
+  tax,
+  schedule,
+  poRef,
+  poDate,
+  hsn,
+  packageLabel,
+}) {
   return [
     {
       line_no: 1,
       description: componentLabel || 'Component',
-      hsn: null,
+      hsn: hsn || null,
+      po_ref: poRef || null,
+      po_date: poDate || null,
+      package: packageLabel || null,
       quantity: toNumber(quantity),
       uom: uom || null,
       unit_price: toNumber(unitPrice),
@@ -583,6 +597,7 @@ async function getInvoiceById(id) {
     cancelledByRes,
     customerRes,
     lotRes,
+    blanketRes,
   ] = await Promise.all([
     supabase
       .from('sales_invoice_payments')
@@ -627,6 +642,13 @@ async function getInvoiceById(id) {
           .eq('id', data.lot_id)
           .maybeSingle()
       : Promise.resolve({ data: null }),
+    data.blanket_po_id
+      ? supabase
+          .from('blanket_pos')
+          .select('id, blanket_number, created_at')
+          .eq('id', data.blanket_po_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
 
   const payments = paymentsRes.data || [];
@@ -653,6 +675,8 @@ async function getInvoiceById(id) {
     customer_name: customerRes.data?.name || data.customer_snapshot?.name || null,
     lot_number: lotRes.data?.lot_number || null,
     lot_status: lotRes.data?.status || null,
+    blanket_number: blanketRes.data?.blanket_number || null,
+    blanket_created_at: blanketRes.data?.created_at || null,
     printed_by_employee: printedByRes.data || null,
     issued_by_employee: issuedByRes.data || null,
     payment_recorded_by_employee: paidByRes.data || null,
@@ -782,6 +806,9 @@ async function createDraftFromLot(lotId, actorId, body = {}) {
     uom: ctx.line.uom,
     tax,
     schedule: ctx.schedule,
+    poRef: ctx.blanket.blanket_number,
+    poDate: ctx.blanket.created_at || null,
+    hsn: ctx.line.hsn || null,
   });
 
   const { data, error } = await supabase
@@ -849,16 +876,21 @@ async function updateDraft(id, patch) {
     customerStateCode: customerState,
   });
 
+  const prevLine = inv.line_items?.[0] || {};
   const lineItems = buildLineItems({
-    componentLabel: inv.line_items?.[0]?.description,
+    componentLabel: prevLine.description,
     quantity: qty,
     unitPrice,
     uom: inv.uom,
     tax,
     schedule: {
-      schedule_number: inv.line_items?.[0]?.schedule_number,
-      due_date: inv.line_items?.[0]?.schedule_due_date,
+      schedule_number: prevLine.schedule_number,
+      due_date: prevLine.schedule_due_date,
     },
+    poRef: prevLine.po_ref || inv.blanket_number,
+    poDate: prevLine.po_date || inv.blanket_created_at,
+    hsn: prevLine.hsn || null,
+    packageLabel: prevLine.package || null,
   });
 
   const update = {

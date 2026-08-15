@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
   Printer,
+  RefreshCw,
   Banknote,
   Ban,
   Truck,
@@ -13,7 +14,7 @@ import { PageHeader, StatusBadge } from '../components/mes';
 import { appAlert, appConfirm, appPrompt } from '../components/dialog';
 import InvoicePdfViewer from '../components/Invoices/InvoicePdfViewer';
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
-import { printSalesInvoicePdf, formatInr } from './downloadSalesInvoicePdf';
+import { printSalesInvoicePdf, regenerateSalesInvoicePdf, formatInr } from './downloadSalesInvoicePdf';
 import SalesInvoicePdfDocument from './SalesInvoicePdfDocument';
 
 function tone(status) {
@@ -100,6 +101,21 @@ export default function SalesInvoiceDetailsPage() {
       setDownloaded(true);
     } catch (err) {
       await appAlert(err.message || 'Print failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRegenerate() {
+    if (!invoice) return;
+    setBusy(true);
+    try {
+      const stored = await regenerateSalesInvoicePdf(invoice);
+      if (stored?.id) setInvoice(stored);
+      setDownloaded(true);
+      await appAlert('Invoice PDF regenerated.');
+    } catch (err) {
+      await appAlert(err.message || 'Could not regenerate invoice');
     } finally {
       setBusy(false);
     }
@@ -220,6 +236,15 @@ export default function SalesInvoiceDetailsPage() {
         >
           <Printer size={15} />
           Print invoice
+        </button>
+        <button
+          type="button"
+          className="mes-btn mes-btn-secondary"
+          disabled={busy}
+          onClick={handleRegenerate}
+        >
+          <RefreshCw size={15} />
+          Regenerate invoice
         </button>
         {['due', 'paid'].includes(invoice.status) && !invoice.printed_at ? (
           <button

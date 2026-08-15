@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer")
 const jwt = require("jsonwebtoken");
 const { getInvoice, startInvoiceOCR } = require('../services/invoiceOcrEngine');
+const { recordVendorInvoicePayment } = require('../services/invoicePaymentEngine');
 const {
   parseInvoiceDateRange,
   listInvoicesByDateRange,
@@ -77,9 +78,27 @@ router.get('/export', verifyEmployeeAuth, async (req, res) => {
     );
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', buffer.length);
-    return res.send(buffer);
+    return res.end(buffer);
   } catch (err) {
     console.error('Invoice export error:', err);
+    return sendServiceError(res, err);
+  }
+});
+
+function actorId(req) {
+  return req.user?.sub || req.user?.id || null;
+}
+
+router.post('/:id/payments', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const invoice = await recordVendorInvoicePayment(
+      req.params.id,
+      actorId(req),
+      req.body || {}
+    );
+    return res.json({ invoice });
+  } catch (err) {
+    console.error('Invoice payment error:', err);
     return sendServiceError(res, err);
   }
 });
