@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import api from '../api/client';
+import { useAuth } from '../auth/authContext';
 import { useSocket } from '../socket/socketContext';
 import { getCategoryConfig, requiresInspection } from './girnCategoryConfig';
-import { formatDisplayDate } from '../utils/dateFormat';
+import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val))
@@ -52,13 +53,19 @@ function DetailItem({ label, value }) {
 }
 
 // ─── Overview Tab ──────────────────────────────────────────────────────────────
-function OverviewTab({ girn, onAction, actionLoading }) {
+function OverviewTab({ girn, onAction, actionLoading, canReview }) {
   const [rejectNotes, setRejectNotes] = useState('');
   const [showReject, setShowReject] = useState(false);
 
   const isDraft = girn.status === 'draft';
   const isPending = girn.status === 'pending_inspection';
   const isFinished = girn.status === 'approved' || girn.status === 'rejected';
+  const approverLabel = girn.approver_name
+    ? `${girn.approver_name}${girn.approver_code ? ` (${girn.approver_code})` : ''}`
+    : null;
+  const rejecterLabel = girn.rejecter_name
+    ? `${girn.rejecter_name}${girn.rejecter_code ? ` (${girn.rejecter_code})` : ''}`
+    : null;
 
   return (
     <div>
@@ -107,6 +114,18 @@ function OverviewTab({ girn, onAction, actionLoading }) {
           <StatusBadge status={girn.status} />
         </div>
         {girn.notes ? <DetailItem label="Notes" value={girn.notes} /> : null}
+        {girn.status === 'approved' && approverLabel ? (
+          <DetailItem
+            label="Approved by"
+            value={`${approverLabel}${girn.approved_at ? ` on ${formatDisplayDateTime(girn.approved_at)}` : ''}`}
+          />
+        ) : null}
+        {girn.status === 'rejected' && rejecterLabel ? (
+          <DetailItem
+            label="Rejected by"
+            value={`${rejecterLabel}${girn.rejected_at ? ` on ${formatDisplayDateTime(girn.rejected_at)}` : ''}`}
+          />
+        ) : null}
       </div>
 
       {!isFinished ? (
@@ -124,7 +143,7 @@ function OverviewTab({ girn, onAction, actionLoading }) {
             </>
           ) : null}
 
-          {isPending ? (
+          {isPending && canReview ? (
             <>
               <button
                 type="button"
@@ -143,6 +162,13 @@ function OverviewTab({ girn, onAction, actionLoading }) {
                 Reject
               </button>
             </>
+          ) : null}
+          {isPending && !canReview ? (
+            <p className="muted" style={{ margin: 0 }}>
+              Awaiting admin approval — see the{' '}
+              <Link to="/approvals?tab=girn&status=ready">Approvals</Link> page once inspections are
+              complete.
+            </p>
           ) : null}
         </div>
       ) : null}
@@ -597,6 +623,9 @@ function InspectionTab({ girn, items, onSaveInspection }) {
 export default function GIRNDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const canReview =
+    user?.accessLevel === 'ADMIN' || user?.accessLevel === 'SUPERVISOR';
   const [girn, setGirn] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -712,6 +741,7 @@ export default function GIRNDetailPage() {
             girn={girn}
             onAction={handleAction}
             actionLoading={actionLoading}
+            canReview={canReview}
           />
         ) : tab === 'items' ? (
           <ItemsTab items={items} />

@@ -1,4 +1,4 @@
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/authContext';
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../api/client';
@@ -25,6 +25,7 @@ import {
   Database,
   Layers,
   IndianRupee,
+  Plus,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'das-sidebar-open-sections';
@@ -50,8 +51,8 @@ const NAV_SECTIONS = [
       { to: '/production/outsource', label: 'Outsourcing', icon: Send },
       { to: '/production/dispatch', label: 'Ready for Dispatch', icon: PackageCheck },
       {
-        to: '/dispatch-approvals',
-        label: 'Dispatch Approvals',
+        to: '/approvals',
+        label: 'Approvals',
         icon: ClipboardList,
         adminOrSupervisorOnly: true,
       },
@@ -116,7 +117,7 @@ function NavItem({ item, onNavigate }) {
   );
 }
 
-function CollapsibleSection({ id, label, items, open, onToggle, onNavigate }) {
+function CollapsibleSection({ id, label, items, open, onToggle, onNavigate, headerAction }) {
   const panelId = `sidebar-section-${id}`;
   return (
     <div className={`sidebar-section${open ? ' is-open' : ''}`}>
@@ -128,7 +129,10 @@ function CollapsibleSection({ id, label, items, open, onToggle, onNavigate }) {
         onClick={() => onToggle(id)}
       >
         <span className="sidebar-section-label">{label}</span>
-        <ChevronDown size={14} className="sidebar-section-chevron" aria-hidden />
+        <span className="sidebar-section-actions">
+          {headerAction}
+          <ChevronDown size={14} className="sidebar-section-chevron" aria-hidden />
+        </span>
       </button>
       <div id={panelId} className="sidebar-section-body" hidden={!open}>
         {items.map((item) => (
@@ -140,8 +144,9 @@ function CollapsibleSection({ id, label, items, open, onToggle, onNavigate }) {
 }
 
 export default function Sidebar({ onNavigate }) {
-  const { user, logout, isFloorOnly } = useAuth();
+  const { user, logout, isFloorOnly, isAdmin, defaultHomePath } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [masters, setMasters] = useState([]);
   const [managesWorkCenter, setManagesWorkCenter] = useState(false);
   const [openSections, setOpenSections] = useState(() => readStoredOpen() || {});
@@ -251,15 +256,22 @@ export default function Sidebar({ onNavigate }) {
   return (
     <>
       <div className="sidebar-brand">
-        <img src="/dascnclogo1.png" alt="DAS CNC" className="brand-logo sidebar-logo" />
+        <NavLink
+          to={defaultHomePath()}
+          className="sidebar-brand-link"
+          aria-label="Go to home"
+          onClick={onNavigate}
+        >
+          <img src="/dascnclogo1.png" alt="DAS CNC" className="brand-logo sidebar-logo" />
+        </NavLink>
       </div>
 
       <nav className="sidebar-nav" aria-label="Main">
-        {floorOnly ? null : (
+        {isAdmin() ? (
           <div className="sidebar-pin">
             <NavItem item={{ to: '/home', label: 'Home', icon: Home, end: true }} onNavigate={onNavigate} />
           </div>
-        )}
+        ) : null}
 
         <div className="sidebar-sections">
           {floorOnly ? (
@@ -287,7 +299,7 @@ export default function Sidebar({ onNavigate }) {
                 />
               ))}
 
-              {masterItems.length ? (
+              {masterItems.length || isAdmin() ? (
                 <CollapsibleSection
                   id="masters"
                   label="Masters"
@@ -295,6 +307,33 @@ export default function Sidebar({ onNavigate }) {
                   open={!!openSections.masters}
                   onToggle={toggleSection}
                   onNavigate={onNavigate}
+                  headerAction={
+                    isAdmin() ? (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        className="sidebar-section-plus"
+                        aria-label="Add master"
+                        title="Add master"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          navigate('/masters/config/new');
+                          onNavigate?.();
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            navigate('/masters/config/new');
+                            onNavigate?.();
+                          }
+                        }}
+                      >
+                        <Plus size={14} />
+                      </span>
+                    ) : null
+                  }
                 />
               ) : null}
             </>

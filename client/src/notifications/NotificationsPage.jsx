@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Bell,
   CheckCheck,
@@ -18,6 +18,7 @@ import {
   Waves,
   CalendarOff,
   PackageCheck,
+  ShoppingCart,
 } from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
@@ -42,7 +43,9 @@ const TYPE_META = {
     category: 'production',
   },
   insufficient_stock: { icon: PackageX, label: 'Stock short', category: 'inventory' },
+  reorder_purchase_required: { icon: ShoppingCart, label: 'Reorder purchase', category: 'inventory' },
   girn_pending_inspection: { icon: ClipboardCheck, label: 'GIRN inspection', category: 'inventory' },
+  girn_ready_for_approval: { icon: ClipboardCheck, label: 'GIRN approval', category: 'inventory' },
   invoice_overdue: { icon: FileText, label: 'Invoice overdue', category: 'finance' },
   op1_schedule_delay: { icon: Timer, label: 'Op1 delay', category: 'production' },
   outsource_lead_delay: { icon: Truck, label: 'Outsource delay', category: 'production' },
@@ -81,7 +84,8 @@ function sortNotifications(list) {
 
 export default function NotificationsPage() {
   const navigate = useNavigate();
-  const { hasAccess } = useAuth();
+  const [searchParams] = useSearchParams();
+  const { hasAccess, defaultHomePath } = useAuth();
   const { subscribe } = useSocket();
   const isAdmin = hasAccess('ADMIN');
 
@@ -89,7 +93,8 @@ export default function NotificationsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [statusFilter, setStatusFilter] = useState('unread');
-  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState(() => searchParams.get('category') || 'all');
+  const [priorityFilter] = useState(() => searchParams.get('priority') || '');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [threshold, setThreshold] = useState(80);
   const [settingsBusy, setSettingsBusy] = useState(false);
@@ -109,6 +114,7 @@ export default function NotificationsPage() {
       const params = {};
       if (statusFilter === 'unread') params.status = 'unread';
       if (categoryFilter !== 'all') params.category = categoryFilter;
+      if (priorityFilter) params.priority = priorityFilter;
       const { data } = await api.get('/notifications', { params });
       setItems(sortNotifications(data.notifications || []));
     } catch (err) {
@@ -119,7 +125,7 @@ export default function NotificationsPage() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [isAdmin, statusFilter, categoryFilter]);
+  }, [isAdmin, statusFilter, categoryFilter, priorityFilter]);
 
   const loadSettings = useCallback(async () => {
     if (!isAdmin) return;
@@ -181,12 +187,21 @@ export default function NotificationsPage() {
       if (n.type === 'leave_request_pending') {
         navigate('/leave-requests?status=pending');
       } else if (n.type === 'dispatch_shortfall_pending') {
-        navigate('/dispatch-approvals?status=pending');
+        navigate('/approvals?tab=dispatch&status=pending');
+      } else if (n.type === 'girn_ready_for_approval') {
+        navigate('/approvals?tab=girn&status=ready');
       } else if (n.employee_id && n.type !== 'leave_request_pending') {
         navigate(`/employees/${n.employee_id}`);
       } else if (n.type === 'girn_pending_inspection') {
-        const girnId = n.payload?.girn_id;
-        navigate(girnId ? `/girn/${girnId}` : '/girn');
+        navigate('/approvals?tab=girn&status=awaiting_inspection');
+      } else if (n.type === 'reorder_purchase_required') {
+        const cat = n.payload?.item_category || 'raw_material';
+        const masterId = n.payload?.master_record_id;
+        navigate(
+          masterId
+            ? `/stock?category=${encodeURIComponent(cat)}&master_record_id=${encodeURIComponent(masterId)}`
+            : '/stock'
+        );
       } else if (n.type === 'op1_schedule_delay') {
         const cardId = n.payload?.parent_card_id;
         navigate(cardId ? `/production/cards/${cardId}` : '/production/horizon-planner');
@@ -264,7 +279,7 @@ export default function NotificationsPage() {
   }
 
   if (!isAdmin) {
-    return <Navigate to="/home" replace />;
+    return <Navigate to={defaultHomePath()} replace />;
   }
 
   return (

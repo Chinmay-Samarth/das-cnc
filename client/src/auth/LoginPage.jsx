@@ -3,10 +3,10 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './authContext';
 
 export default function LoginPage() {
-  const { user, login, defaultHomePath, isFloorOnly } = useAuth();
+  const { user, login, defaultHomePath } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const fallback = defaultHomePath?.() || '/home';
+  const fallback = defaultHomePath?.() || '/production/today';
   const from = location.state?.from?.pathname || fallback;
 
   const [employeeCode, setEmployeeCode] = useState('');
@@ -16,9 +16,9 @@ export default function LoginPage() {
   const [error, setError] = useState('');
 
   if (user) {
-    const home = isFloorOnly() ? '/production/today' : '/home';
+    const home = defaultHomePath?.() || '/production/today';
     const dest =
-      from && from !== '/auth/login' && !(isFloorOnly() && from === '/home')
+      from && from !== '/auth/login' && !(home !== '/home' && from === '/home')
         ? from
         : home;
     return <Navigate to={dest} replace />;
@@ -31,11 +31,11 @@ export default function LoginPage() {
 
     try {
       const loggedIn = await login(employeeCode.trim(), password);
-      const floor =
-        loggedIn.accessLevel === 'MANAGER' || loggedIn.accessLevel === 'OPERATOR';
-      const home = floor ? '/production/today' : '/home';
+      const home = loggedIn.accessLevel === 'ADMIN' ? '/home' : '/production/today';
       const dest =
-        from && from !== '/auth/login' && !(floor && from === '/home') ? from : home;
+        from && from !== '/auth/login' && !(home !== '/home' && from === '/home')
+          ? from
+          : home;
       navigate(dest, { replace: true });
     } catch (err) {
       const message = err?.response?.data?.error || 'Login failed. Please try again.';

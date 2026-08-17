@@ -33,6 +33,22 @@ function toResult({ type, typeLabel, id, title, subtitle, path }) {
   return { type, typeLabel, id, title, subtitle: subtitle || '', path };
 }
 
+function formatMasterSlug(slug) {
+  return String(slug || '')
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function queryData(result, label) {
+  if (result.error) {
+    console.error(`Global search ${label} query failed:`, result.error.message);
+    return [];
+  }
+  return result.data || [];
+}
+
 router.get('/', verifyEmployeeAuth, async (req, res) => {
   try {
     const raw = (req.query.q || '').trim();
@@ -51,7 +67,6 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
       customersRes,
       invoicesRes,
       girnsRes,
-      componentsRes,
       mastersRes,
     ] = await Promise.all([
       supabase
@@ -91,38 +106,16 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
         .limit(perType),
 
       supabase
-        .from('components')
-        .select('id, name, code')
-        .or(`name.ilike.${pattern},code.ilike.${pattern}`)
-        .order('name', { ascending: true })
-        .limit(perType),
-
-      supabase
         .from('v_master_lookup')
-        .select('record_id, label, master_slug, master_slug')
+        .select('record_id, label, master_slug')
         .ilike('label', pattern)
         .order('label', { ascending: true })
         .limit(perType),
     ]);
 
-    const errors = [
-      employeesRes.error,
-      suppliersRes.error,
-      customersRes.error,
-      invoicesRes.error,
-      girnsRes.error,
-      componentsRes.error,
-      mastersRes.error,
-    ].filter(Boolean);
-
-    if (errors.length) {
-      console.error('Global search errors:', errors);
-      return res.status(500).json({ error: errors[0].message });
-    }
-
     const results = [];
 
-    for (const row of employeesRes.data || []) {
+    for (const row of queryData(employeesRes, 'employees')) {
       results.push(toResult({
         type: 'employee',
         typeLabel: 'Employee',
@@ -133,7 +126,7 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
       }));
     }
 
-    for (const row of suppliersRes.data || []) {
+    for (const row of queryData(suppliersRes, 'suppliers')) {
       results.push(toResult({
         type: 'supplier',
         typeLabel: 'Supplier',
@@ -144,7 +137,7 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
       }));
     }
 
-    for (const row of customersRes.data || []) {
+    for (const row of queryData(customersRes, 'customers')) {
       results.push(toResult({
         type: 'customer',
         typeLabel: 'Customer',
@@ -155,7 +148,7 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
       }));
     }
 
-    for (const row of invoicesRes.data || []) {
+    for (const row of queryData(invoicesRes, 'invoices')) {
       results.push(toResult({
         type: 'invoice',
         typeLabel: 'Invoice',
@@ -166,7 +159,7 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
       }));
     }
 
-    for (const row of girnsRes.data || []) {
+    for (const row of queryData(girnsRes, 'girns')) {
       results.push(toResult({
         type: 'girn',
         typeLabel: 'GIRN',
@@ -177,25 +170,14 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
       }));
     }
 
-    for (const row of componentsRes.data || []) {
-      results.push(toResult({
-        type: 'component',
-        typeLabel: 'Component',
-        id: row.id,
-        title: row.name,
-        subtitle: row.code || '',
-        path: `/components/${row.id}`,
-      }));
-    }
-
-    for (const row of mastersRes.data || []) {
-      const masterLabel = (row.master_name || '').replace(/\s*Master$/i, '');
+    for (const row of queryData(mastersRes, 'masters')) {
+      const masterLabel = formatMasterSlug(row.master_slug);
       results.push(toResult({
         type: 'master',
         typeLabel: masterLabel || 'Master',
         id: row.record_id,
         title: row.label,
-        subtitle: row.master_name || row.master_slug,
+        subtitle: masterLabel,
         path: `/masters/${row.master_slug}/records/${row.record_id}`,
       }));
     }

@@ -12,6 +12,7 @@ const { evaluateAttendanceAlerts } = require('./services/attendanceAlertEngine')
 const { evaluateTomorrowDeliveryStockAlerts } = require('./services/inventoryAlertEngine');
 const { evaluateSalesInvoiceOverdueAlerts } = require('./services/salesInvoiceAlertEngine');
 const { evaluateProductionAlerts } = require('./services/productionAlertEngine');
+const { evaluateReorderAlerts } = require('./services/reorderAlertEngine');
 const cors = require('cors');
 const { initSocket, attachConnectionHandlers } = require('./socket');
  
@@ -52,6 +53,8 @@ app.use('/api/campaigns', require('./routes/campaigns'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/leave-requests', require('./routes/leaveRequests'));
 app.use('/api/dispatch-shortfall-approvals', require('./routes/dispatchShortfallApprovals'));
+app.use('/api/girn-approvals', require('./routes/girnApprovals'));
+app.use('/api/admin', require('./routes/adminDashboard'));
 // app.use('/api/machines',   require('./routes/machines'));    // next module
  
 // Health check
@@ -123,6 +126,11 @@ cron.schedule('*/20 * * * *', async () => {
     console.error('Inventory delivery alert evaluation failed:', err);
   }
   try {
+    await evaluateReorderAlerts();
+  } catch (err) {
+    console.error('Reorder alert evaluation failed:', err);
+  }
+  try {
     await evaluateProductionAlerts();
   } catch (err) {
     console.error('Production alert evaluation failed:', err);
@@ -144,6 +152,8 @@ setTimeout(() => {
   evaluateTomorrowDeliveryStockAlerts()
     // .then((result) => console.log('Initial inventory delivery alerts:', result.created))
     .catch((err) => console.error('Initial inventory delivery alert evaluation failed:', err));
+  evaluateReorderAlerts()
+    .catch((err) => console.error('Initial reorder alert evaluation failed:', err));
   evaluateProductionAlerts()
     // .then((result) => console.log('Initial production alerts:', result.created))
     .catch((err) => console.error('Initial production alert evaluation failed:', err));

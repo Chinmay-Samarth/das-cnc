@@ -13,6 +13,7 @@ const {
 const { evaluateTomorrowDeliveryStockAlerts } = require('../services/inventoryAlertEngine');
 const { evaluateSalesInvoiceOverdueAlerts } = require('../services/salesInvoiceAlertEngine');
 const { evaluateProductionAlerts } = require('../services/productionAlertEngine');
+const { evaluateReorderAlerts } = require('../services/reorderAlertEngine');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
@@ -111,9 +112,10 @@ router.post(
     }
     const attendance = await evaluateAttendanceAlerts();
     const inventory = await evaluateTomorrowDeliveryStockAlerts();
+    const reorder = await evaluateReorderAlerts();
     const production = await evaluateProductionAlerts();
     const invoices = await evaluateSalesInvoiceOverdueAlerts();
-    res.json({ attendance, inventory, production, invoices });
+    res.json({ attendance, inventory, reorder, production, invoices });
   })
 );
 
@@ -133,6 +135,7 @@ router.get(
       .limit(Math.min(200, Number(req.query.limit) || 100));
 
     if (req.query.category) query = query.eq('category', req.query.category);
+    if (req.query.priority) query = query.eq('priority', Number(req.query.priority));
     if (req.query.status === 'unread') query = query.eq('status', 'unread');
     else if (req.query.status === 'read') query = query.eq('status', 'read');
     else if (req.query.status === 'dismissed') query = query.eq('status', 'dismissed');

@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { RefreshCw, Package, CheckCircle2, AlertCircle, XCircle } from 'lucide-react';
 import api from '../api/client';
 import { useSocket } from '../socket/socketContext';
@@ -24,12 +24,13 @@ function addDays(dateStr, days) {
 
 export default function ProductionBoardPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { subscribe } = useSocket();
   const [filters, setFilters] = useState({
     from: addDays(todayStr(), -7),
     to: addDays(todayStr(), 7),
     work_center_id: '',
-    status: '',
+    status: searchParams.get('status') || '',
     search: '',
   });
   const [commitments, setCommitments] = useState([]);

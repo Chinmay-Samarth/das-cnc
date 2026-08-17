@@ -1,5 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const { getCategoryConfig, updatesStock } = require('../config/girnCategoryConfig');
+const { triggerReorderAlertEvaluation } = require('./reorderAlertEngine');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -152,6 +153,8 @@ async function applyStockForGirn(girnId, items = []) {
     allStockUpdates.push(...stockUpdates);
     allLedgerIds.push(...ledgerIds);
   }
+
+  triggerReorderAlertEvaluation();
 
   return { stockUpdates: allStockUpdates, ledgerIds: allLedgerIds };
 }

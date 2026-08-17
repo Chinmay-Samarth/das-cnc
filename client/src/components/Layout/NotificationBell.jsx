@@ -46,9 +46,20 @@ export default function NotificationBell() {
 
   useEffect(() => {
     if (!isAdmin) return undefined;
-    return subscribe('leave-requests:updated', () => {
+    const unsubLeave = subscribe('leave-requests:updated', () => {
       loadCount();
     });
+    const unsubGirn = subscribe('girn:updated', () => {
+      loadCount();
+    });
+    const unsubInventory = subscribe('inventory:updated', () => {
+      loadCount();
+    });
+    return () => {
+      unsubLeave();
+      unsubGirn();
+      unsubInventory();
+    };
   }, [isAdmin, subscribe, loadCount]);
 
   if (!isAdmin) return null;

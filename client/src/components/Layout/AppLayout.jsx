@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Link, Outlet } from 'react-router-dom';
 import { useAuth } from '../../auth/authContext';
 import Sidebar from './Sidebar';
 import GlobalSearch from './GlobalSearch';
@@ -7,7 +7,7 @@ import NotificationBell from './NotificationBell';
 
 export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { isFloorOnly } = useAuth();
+  const { isFloorOnly, defaultHomePath } = useAuth();
   const floorOnly = isFloorOnly();
 
   function closeMobileNav() {
@@ -27,9 +27,9 @@ export default function AppLayout() {
           <span />
           <span />
         </button>
-        <strong className="mobile-brand">
+        <Link to={defaultHomePath()} className="mobile-brand" aria-label="Go to home">
           <img src="/dascnclogo1.png" alt="DAS CNC" className="brand-logo mobile-logo" />
-        </strong>
+        </Link>
         <div className="mobile-top-actions">
           {floorOnly ? null : <NotificationBell />}
         </div>
@@ -41,9 +41,9 @@ export default function AppLayout() {
 
       <aside className={`app-sidebar${mobileOpen ? ' open' : ''}`}>
         <div className="sidebar-mobile-header">
-          <strong>
+          <Link to={defaultHomePath()} onClick={closeMobileNav} aria-label="Go to home">
             <img src="/dascnclogo1.png" alt="DAS CNC" className="brand-logo drawer-logo" />
-          </strong>
+          </Link>
           <button type="button" className="secondary-btn" onClick={closeMobileNav}>
             Close
           </button>

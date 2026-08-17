@@ -1,9 +1,11 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Home, ArrowLeft } from 'lucide-react';
+import { useAuth } from '../auth/authContext';
 
 export default function NotFoundPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { defaultHomePath } = useAuth();
 
   return (
     <main className="app-shell employee-details-page">
@@ -23,7 +25,7 @@ export default function NotFoundPage() {
           The link may be broken or the page may have been moved. Use the buttons below to get back on track.
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button type="button" className="primary-button" onClick={() => navigate('/home')}>
+          <button type="button" className="primary-button" onClick={() => navigate(defaultHomePath())}>
             <Home size={16} style={{ display: 'inline', marginRight: 6, verticalAlign: 'middle' }} />
             Go to Home
           </button>

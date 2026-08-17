@@ -9,6 +9,10 @@ const { classifyLineItems } = require('../services/girnItemClassifier');
 const { getCategoryConfig, girnNeedsInspection, girnCanAutoApprove } = require('../config/girnCategoryConfig');
 const { applyStockForGirn, rollbackStock } = require('../services/girnStockEngine');
 const { validateGirnInspection } = require('../services/girnInspectionEngine');
+const {
+  canReviewGirn,
+  dismissGirnReadyNotification,
+} = require('../services/girnApprovalEngine');
 const { assignLotToGirnItem } = require('../services/componentLotEngine');
 const { emitGirnUpdated, emitInventoryUpdated } = require('../socket/emitter');
 
@@ -382,6 +386,7 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       !isOutsourceReturn && auto_approve && girnCanAutoApprove(resolvedItems);
     const initialStatus = shouldAutoApprove ? 'approved' : 'draft';
 
+    const autoApproveNow = new Date().toISOString();
     const { data: newGirn, error: girnError } = await supabase
       .from('girns')
       .insert({
@@ -397,6 +402,12 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
         status: initialStatus,
         source: isOutsourceReturn ? 'outsource_return' : 'standard',
         outsource_shipment_id: isOutsourceReturn ? outsource_shipment_id : null,
+        ...(shouldAutoApprove
+          ? {
+              approved_by: req.user?.sub || received_by || null,
+              approved_at: autoApproveNow,
+            }
+          : {}),
       })
       .select()
       .single();
@@ -549,9 +560,13 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
         grand_total,
         status,
         notes,
+        approved_at,
+        rejected_at,
         suppliers ( id, name ),
         invoices ( id, invoice_number, file_url ),
-        employees!received_by ( id, full_name, employee_code )
+        employees!received_by ( id, full_name, employee_code ),
+        approver:employees!girns_approved_by_fkey ( id, full_name, employee_code ),
+        rejecter:employees!girns_rejected_by_fkey ( id, full_name, employee_code )
       `)
       .eq('id', id)
       .maybeSingle();
@@ -607,6 +622,10 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
         invoice_file_url: girn.invoices?.file_url ?? null,
         received_by_name: girn.employees?.full_name ?? null,
         received_by_code: girn.employees?.employee_code ?? null,
+        approver_name: girn.approver?.full_name ?? null,
+        approver_code: girn.approver?.employee_code ?? null,
+        rejecter_name: girn.rejecter?.full_name ?? null,
+        rejecter_code: girn.rejecter?.employee_code ?? null,
         items: itemsWithLogs,
       },
     });
@@ -768,9 +787,16 @@ router.post('/:id/submit', verifyEmployeeAuth, async (req, res) => {
       }
 
       try {
+        const now = new Date().toISOString();
         const { data: approved, error: approveError } = await supabase
           .from('girns')
-          .update({ status: 'approved' })
+          .update({
+            status: 'approved',
+            approved_by: req.user?.sub || null,
+            approved_at: now,
+            rejected_by: null,
+            rejected_at: null,
+          })
           .eq('id', id)
           .select()
           .single();
@@ -812,6 +838,10 @@ router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
   let ledgerIds = [];
 
   try {
+    if (!canReviewGirn(req.user)) {
+      return res.status(403).json({ error: 'Only admins or supervisors can approve/reject GIRNs' });
+    }
+
     const { data: girn, error: girnError } = await supabase
       .from('girns')
       .select('id, status, source')
@@ -867,14 +897,25 @@ router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
       ledgerIds = stockResult.ledgerIds;
     }
 
+    const now = new Date().toISOString();
     const { data: approved, error: approveError } = await supabase
       .from('girns')
-      .update({ status: 'approved' })
+      .update({
+        status: 'approved',
+        approved_by: req.user?.sub || null,
+        approved_at: now,
+        rejected_by: null,
+        rejected_at: null,
+      })
       .eq('id', id)
       .select()
       .single();
 
     if (approveError) throw approveError;
+
+    await dismissGirnReadyNotification(id).catch((e) =>
+      console.error('Dismiss GIRN ready notification failed:', e.message)
+    );
 
     emitGirnUpdated({ girnId: id, action: 'approved', status: 'approved' });
     if (girn.source !== 'outsource_return') {
@@ -901,6 +942,10 @@ router.post('/:id/reject', verifyEmployeeAuth, async (req, res) => {
     const { id } = req.params;
     const { notes } = req.body;
 
+    if (!canReviewGirn(req.user)) {
+      return res.status(403).json({ error: 'Only admins or supervisors can approve/reject GIRNs' });
+    }
+
     const { data: existing, error: fetchError } = await supabase
       .from('girns')
       .select('id, status')
@@ -913,7 +958,14 @@ router.post('/:id/reject', verifyEmployeeAuth, async (req, res) => {
       return res.status(409).json({ error: 'Only GIRNs pending inspection can be rejected' });
     }
 
-    const updatePayload = { status: 'rejected' };
+    const now = new Date().toISOString();
+    const updatePayload = {
+      status: 'rejected',
+      rejected_by: req.user?.sub || null,
+      rejected_at: now,
+      approved_by: null,
+      approved_at: null,
+    };
     if (notes) updatePayload.notes = notes;
 
     const { data: rejected, error: updateError } = await supabase
@@ -924,6 +976,10 @@ router.post('/:id/reject', verifyEmployeeAuth, async (req, res) => {
       .single();
 
     if (updateError) throw updateError;
+
+    await dismissGirnReadyNotification(id).catch((e) =>
+      console.error('Dismiss GIRN ready notification failed:', e.message)
+    );
 
     emitGirnUpdated({ girnId: id, action: 'rejected', status: 'rejected' });
 

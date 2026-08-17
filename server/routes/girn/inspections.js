@@ -11,6 +11,7 @@ const {
 } = require('../../services/inspectionResultEngine');
 const { assignLotToGirnItem } = require('../../services/componentLotEngine');
 const { emitGirnUpdated } = require('../../socket/emitter');
+const { maybeNotifyGirnReadyForApproval } = require('../../services/girnApprovalEngine');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -287,6 +288,10 @@ router.post(
       const execution = await loadInspectionExecution(itemId);
 
       emitGirnUpdated({ girnId, action: 'inspection', status: girn.status });
+
+      await maybeNotifyGirnReadyForApproval(girnId).catch((e) =>
+        console.error('GIRN ready-for-approval notification failed:', e.message)
+      );
 
       return res.json({
         message: 'Inspection submitted successfully',

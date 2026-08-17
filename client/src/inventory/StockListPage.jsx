@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import { GIRN_CATEGORIES } from '../girn/girnCategoryConfig';
 import StatTile from '../components/shared/StatTile';
@@ -47,6 +47,7 @@ function formatDate(iso) {
 
 export default function StockListPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { subscribe } = useSocket();
   const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState([]);
@@ -58,8 +59,16 @@ export default function StockListPage() {
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [sortKey, setSortKey] = useState('current_stock');
   const [sortAsc, setSortAsc] = useState(false);
+  const [highlightMasterId, setHighlightMasterId] = useState(null);
 
   const LIMIT = 50;
+
+  useEffect(() => {
+    const category = searchParams.get('category');
+    const masterRecordId = searchParams.get('master_record_id');
+    if (category) setCategoryFilter(category);
+    if (masterRecordId) setHighlightMasterId(masterRecordId);
+  }, [searchParams]);
 
   const loadSummary = useCallback(async () => {
     const { data } = await api.get('/inventory/stock/summary');
@@ -78,6 +87,7 @@ export default function StockListPage() {
       };
       if (categoryFilter !== 'all') params.category = categoryFilter;
       if (search.trim()) params.search = search.trim();
+      if (highlightMasterId) params.master_record_id = highlightMasterId;
 
       const { data } = await api.get('/inventory/stock', { params });
       setRows(data.rows || []);
@@ -88,7 +98,7 @@ export default function StockListPage() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [page, categoryFilter, search, sortKey, sortAsc]);
+  }, [page, categoryFilter, search, sortKey, sortAsc, highlightMasterId]);
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
   useEffect(() => { loadStock(); }, [loadStock]);
@@ -213,7 +223,13 @@ export default function StockListPage() {
                     key={row.id}
                     role="button"
                     tabIndex={0}
-                    style={{ cursor: 'pointer' }}
+                    style={{
+                      cursor: 'pointer',
+                      background:
+                        highlightMasterId && row.master_record_id === highlightMasterId
+                          ? '#fef9c3'
+                          : undefined,
+                    }}
                     onClick={() => navigate(`/stock/${row.id}`)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') navigate(`/stock/${row.id}`);

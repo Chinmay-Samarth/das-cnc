@@ -408,7 +408,7 @@ function AdminLeaveView({ initialStatus = 'pending' }) {
 }
 
 export default function LeaveRequestPage() {
-  const { user, isFloorOnly } = useAuth();
+  const { user, isFloorOnly, defaultHomePath } = useAuth();
   const [searchParams] = useSearchParams();
   const isReviewer =
     user?.accessLevel === 'ADMIN' || user?.accessLevel === 'SUPERVISOR';
@@ -416,7 +416,7 @@ export default function LeaveRequestPage() {
     user?.accessLevel === 'OPERATOR' || user?.accessLevel === 'MANAGER';
 
   if (!canApply && !isReviewer) {
-    return <Navigate to={isFloorOnly() ? '/production/today' : '/home'} replace />;
+    return <Navigate to={defaultHomePath()} replace />;
   }
 
   const initialStatus = searchParams.get('status') || 'pending';

@@ -1,6 +1,7 @@
 const { createClient } = require('@supabase/supabase-js');
 const { loadBomEdges, enrichEdges } = require('./bomEngine');
 const { emitInventoryBackflushed } = require('../socket/emitter');
+const { triggerReorderAlertEvaluation } = require('./reorderAlertEngine');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -183,6 +184,8 @@ async function backflushRawMaterials({
     }
     throw err;
   }
+
+  triggerReorderAlertEvaluation();
 
   return { lines };
 }

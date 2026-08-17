@@ -110,12 +110,18 @@ export function AuthProvider({ children }) {
     return user.accessLevel === 'MANAGER' || user.accessLevel === 'OPERATOR'
   }
 
+  function isAdmin() {
+    return user?.accessLevel === 'ADMIN'
+  }
+
   function defaultHomePath() {
-    return isFloorOnly() ? '/production/today' : '/home'
+    if (!user) return '/auth/login'
+    if (user.accessLevel === 'ADMIN') return '/home'
+    return '/production/today'
   }
 
   const value = useMemo(
-    () => ({ user, loading, login, logout, hasAccess, isFloorOnly, defaultHomePath }),
+    () => ({ user, loading, login, logout, hasAccess, isFloorOnly, isAdmin, defaultHomePath }),
     [user, loading]
   )
 
