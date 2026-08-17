@@ -8814,7 +8814,8 @@ textarea {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: var(--mes-space-3);
-  align-items: start;
+  align-items: stretch;
+  grid-auto-rows: minmax(200px, auto);
 }
 
 .mes-dash-span-3 { grid-column: span 3; }
@@ -8823,7 +8824,16 @@ textarea {
 
 .mes-dash-panel {
   min-width: 0;
-  min-height: 180px;
+  min-height: 200px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  cursor: default;
+  overflow: visible;
+}
+
+.mes-dash-panel.is-clickable {
+  cursor: pointer;
 }
 
 .mes-dash-panel-head {
@@ -8834,6 +8844,7 @@ textarea {
   margin-bottom: 12px;
   user-select: none;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .mes-dash-panel-title-row {
@@ -8849,12 +8860,14 @@ textarea {
   font-weight: 700;
 }
 
+.mes-dash-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
 .mes-dash-panel-tools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  margin-left: auto;
+  display: none;
 }
 
 .mes-dash-size-toggle {
@@ -8898,6 +8911,14 @@ textarea {
   backdrop-filter: blur(16px);
 }
 
+.mes-ios-size-menu.is-context {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: auto;
+  z-index: 80;
+}
+
 .mes-ios-size-option {
   display: flex;
   align-items: center;
@@ -8914,7 +8935,8 @@ textarea {
 }
 
 .mes-ios-size-option:hover {
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.72) !important;
+  /* background: #fefef3 !important; */
 }
 
 .mes-ios-size-option.is-active {
@@ -9077,6 +9099,11 @@ textarea {
 
 .mes-dash-panel .mes-empty {
   padding: 18px 8px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
 .mes-dash-panel .mes-empty-icon {
@@ -9302,6 +9329,7 @@ textarea {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+  height: auto;
 }
 
 .mes-dash-approval-tile {

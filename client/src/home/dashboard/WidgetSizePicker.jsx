@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { SIZE_OPTIONS } from './widgetOrder';
 
-function SizeGlyph({ size, active = false }) {
-  const stroke = active ? '#111827' : '#111827';
+function SizeGlyph({ size }) {
+  const stroke = '#111827';
   if (size === 'quarter') {
     return (
       <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden>
@@ -31,25 +32,24 @@ function SizeGlyph({ size, active = false }) {
   );
 }
 
-export default function WidgetSizePicker({ id, size, onChange }) {
-  const [open, setOpen] = useState(false);
+export default function WidgetSizePicker({
+  size,
+  allowedSizes,
+  open,
+  x = 0,
+  y = 0,
+  onChange,
+  onClose,
+}) {
   const rootRef = useRef(null);
-
-  useEffect(() => {
-    function onForeignOpen(event) {
-      if (event.detail !== id) setOpen(false);
-    }
-    window.addEventListener('dash-size-picker', onForeignOpen);
-    return () => window.removeEventListener('dash-size-picker', onForeignOpen);
-  }, [id]);
 
   useEffect(() => {
     if (!open) return undefined;
     function onDoc(event) {
-      if (!rootRef.current?.contains(event.target)) setOpen(false);
+      if (!rootRef.current?.contains(event.target)) onClose?.();
     }
     function onKey(event) {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape') onClose?.();
     }
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
@@ -57,56 +57,67 @@ export default function WidgetSizePicker({ id, size, onChange }) {
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
     };
-  }, [open]);
+  }, [open, onClose]);
 
-  function toggle(event) {
-    event.stopPropagation();
-    window.dispatchEvent(new CustomEvent('dash-size-picker', { detail: id }));
-    setOpen((v) => !v);
-  }
+  useLayoutEffect(() => {
+    if (!open || !rootRef.current) return;
+    const el = rootRef.current;
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    let left = x;
+    let top = y;
+    if (left + rect.width > window.innerWidth - pad) {
+      left = Math.max(pad, window.innerWidth - rect.width - pad);
+    }
+    if (top + rect.height > window.innerHeight - pad) {
+      top = Math.max(pad, y - rect.height);
+    }
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+  }, [open, x, y]);
 
-  return (
-    <div className="mes-ios-size" ref={rootRef}>
-      <button
-        type="button"
-        className={`mes-ios-size-trigger${open ? ' is-open' : ''}`}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label="Change widget size"
-        title="Change widget size"
-        onClick={toggle}
-      >
-        <SizeGlyph size={size} />
-      </button>
-      {open ? (
-        <div className="mes-ios-size-menu" role="listbox" aria-label="Widget size">
-          {SIZE_OPTIONS.map((opt) => {
-            const active = size === opt.id;
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                role="option"
-                aria-selected={active}
-                className={`mes-ios-size-option${active ? ' is-active' : ''}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onChange?.(opt.id);
-                  setOpen(false);
-                }}
-              >
-                <span className="mes-ios-size-glyph">
-                  <SizeGlyph size={opt.id} active={active} />
-                </span>
-                <span className="mes-ios-size-copy">
-                  <strong>{opt.label}</strong>
-                  <em>{opt.hint}</em>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
+  if (!open || typeof document === 'undefined') return null;
+
+  const options = SIZE_OPTIONS.filter((opt) => allowedSizes.includes(opt.id));
+
+  return createPortal(
+    <div
+      className="mes-ios-size-menu is-context"
+      role="listbox"
+      aria-label="Widget size"
+      ref={rootRef}
+      style={{ left: `${x}px`, top: `${y}px` }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {options.map((opt) => {
+        const active = size === opt.id;
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            role="option"
+            aria-selected={active}
+            className={`mes-ios-size-option${active ? ' is-active' : ''}`}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onChange?.(opt.id);
+              onClose?.();
+            }}
+          >
+            <span className="mes-ios-size-glyph">
+              <SizeGlyph size={opt.id} />
+            </span>
+            <span className="mes-ios-size-copy">
+              <strong>{opt.label}</strong>
+              <em>{opt.hint}</em>
+            </span>
+          </button>
+        );
+      })}
+    </div>,
+    document.body
   );
 }

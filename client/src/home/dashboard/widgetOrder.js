@@ -8,8 +8,14 @@ export const SIZE_OPTIONS = [
 
 export const SIZE_SPAN = Object.fromEntries(SIZE_OPTIONS.map((s) => [s.id, s.span]));
 
+const ALLOWED_SIZES = {
+  attendance: ['half', 'full'],
+  approvals: ['half', 'full'],
+  delivery: ['full'],
+};
+
 const DEFAULT_SIZES = {
-  attendance: 'quarter',
+  attendance: 'half',
   production: 'quarter',
   campaigns: 'quarter',
   dispatch: 'quarter',
@@ -37,25 +43,31 @@ export const DEFAULT_WIDGET_ORDER = [
 export function defaultLayout() {
   return DEFAULT_WIDGET_ORDER.map((id) => ({
     id,
-    size: DEFAULT_SIZES[id] || 'half',
+    size: normalizeSize(DEFAULT_SIZES[id], id),
   }));
 }
 
-function normalizeSize(size) {
-  return SIZE_SPAN[size] ? size : 'half';
+function normalizeSize(size, widgetId) {
+  const allowed = allowedSizesFor(widgetId);
+  if (allowed.includes(size)) return size;
+  return allowed[0] || 'half';
+}
+
+export function allowedSizesFor(widgetId) {
+  return ALLOWED_SIZES[widgetId] || ['quarter', 'half', 'full'];
 }
 
 function normalizeLayout(raw) {
   let items = [];
   if (Array.isArray(raw) && raw.every((x) => typeof x === 'string')) {
-    items = raw.map((id) => ({ id, size: DEFAULT_SIZES[id] || 'half' }));
+    items = raw.map((id) => ({ id, size: normalizeSize(DEFAULT_SIZES[id], id) }));
   } else if (Array.isArray(raw) && raw.every((x) => x && typeof x === 'object' && x.id)) {
-    items = raw.map((x) => ({ id: x.id, size: normalizeSize(x.size) }));
+    items = raw.map((x) => ({ id: x.id, size: normalizeSize(x.size, x.id) }));
   } else if (raw && typeof raw === 'object' && Array.isArray(raw.order)) {
     const sizes = raw.sizes && typeof raw.sizes === 'object' ? raw.sizes : {};
     items = raw.order.map((id) => ({
       id,
-      size: normalizeSize(sizes[id] || DEFAULT_SIZES[id]),
+      size: normalizeSize(sizes[id] || DEFAULT_SIZES[id], id),
     }));
   } else {
     return defaultLayout();
@@ -67,10 +79,10 @@ function normalizeLayout(raw) {
   for (const item of items) {
     if (!known.has(item.id) || seen.has(item.id)) continue;
     seen.add(item.id);
-    next.push({ id: item.id, size: normalizeSize(item.size) });
+    next.push({ id: item.id, size: normalizeSize(item.size, item.id) });
   }
   for (const id of DEFAULT_WIDGET_ORDER) {
-    if (!seen.has(id)) next.push({ id, size: DEFAULT_SIZES[id] || 'half' });
+    if (!seen.has(id)) next.push({ id, size: normalizeSize(DEFAULT_SIZES[id], id) });
   }
   return next;
 }

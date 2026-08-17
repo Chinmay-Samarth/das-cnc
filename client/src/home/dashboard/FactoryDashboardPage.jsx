@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { Check, LayoutGrid, Pencil, RefreshCw } from 'lucide-react';
 import { AlertBanner, EmptyState, PageHeader } from '../../components/mes';
 import { formatDisplayDate } from '../../utils/dateFormat';
 import useFactoryDashboard from './useFactoryDashboard';
-import { readLayout, saveLayout, resetLayout } from './widgetOrder';
+import { allowedSizesFor, readLayout, saveLayout, resetLayout } from './widgetOrder';
 import { readKpiOrder, saveKpiOrder, resetKpiOrder } from './kpiTiles';
 import DashboardWidget from './DashboardWidget';
 import DashboardKpiStrip from './DashboardKpiStrip';
@@ -18,14 +17,6 @@ import P1AlertsPanel from './P1AlertsPanel';
 import ApprovalsShortcutPanel from './ApprovalsShortcutPanel';
 import HorizonWavePanel from './HorizonWavePanel';
 import WcHeatmapPanel from './WcHeatmapPanel';
-
-function ViewAll({ to, label = 'View all' }) {
-  return (
-    <Link to={to} className="mes-dash-view-all" onClick={(e) => e.stopPropagation()}>
-      {label}
-    </Link>
-  );
-}
 
 export default function FactoryDashboardPage() {
   const { data, loading, error, reload } = useFactoryDashboard();
@@ -53,6 +44,7 @@ export default function FactoryDashboardPage() {
   }
 
   function handleSizeChange(id, size) {
+    if (!allowedSizesFor(id).includes(size)) return;
     persist(layout.map((w) => (w.id === id ? { ...w, size } : w)));
   }
 
@@ -70,54 +62,54 @@ export default function FactoryDashboardPage() {
   const widgets = {
     attendance: {
       title: 'Attendance health',
-      action: <ViewAll to="/attendance" />,
+      to: '/attendance',
       body: <AttendanceHealthPanel attendance={data?.attendance} />,
     },
     production: {
       title: 'Production pulse',
-      action: <ViewAll to="/production?status=RUNNING" />,
+      to: '/production?status=RUNNING',
       body: <ProductionPulsePanel production={data?.production} />,
     },
     campaigns: {
       title: 'Campaign progress',
-      action: <ViewAll to="/production/campaigns" />,
+      to: '/production/campaigns',
       body: <CampaignProgressPanel campaigns={data?.campaigns} />,
     },
     heatmap: {
       title: 'Work-center heatmap',
-      action: <ViewAll to="/production/work-centers" />,
+      to: '/production/work-centers',
       body: <WcHeatmapPanel workCenters={data?.work_centers} />,
     },
     delivery: {
       title: 'Weekly deliveries',
-      action: <ViewAll to="/delivery-schedules" />,
+      to: '/delivery-schedules',
       body: <DeliveryTimelinePanel schedules={data?.delivery_schedules} />,
     },
     outsource: {
       title: 'Outsource due',
-      action: <ViewAll to="/production/outsource" />,
+      to: '/production/outsource',
       body: <OutsourceDuePanel outsource={data?.outsource} />,
     },
     waves: {
       title: 'Horizon waves',
-      action: <ViewAll to="/production/horizon-planner" />,
+      to: '/production/horizon-planner',
       body: <HorizonWavePanel waves={data?.horizon_waves} />,
     },
     dispatch: {
       title: 'Ready for dispatch',
-      action: <ViewAll to="/production/dispatch" />,
+      to: '/production/dispatch',
       body: <DispatchReadyPanel dispatch={data?.dispatch} />,
     },
     alerts: {
       title: 'P1 alerts',
-      action: <ViewAll to="/notifications?priority=1" />,
+      to: '/notifications?priority=1',
       body: (
         <P1AlertsPanel alerts={data?.notifications_p1} inventory={data?.inventory_p1} />
       ),
     },
     approvals: {
       title: 'Approvals',
-      action: <ViewAll to="/approvals" />,
+      to: '/approvals',
       body: <ApprovalsShortcutPanel approvals={data?.approvals} />,
     },
   };
@@ -171,7 +163,7 @@ export default function FactoryDashboardPage() {
         <>
           {editing ? (
             <p className="mes-dash-edit-hint">
-              Drag tiles to reorder. Hide with −, add from the plus card, and tap a panel’s size icon for Small, Medium, or Large.
+              Drag tiles to reorder. Hide with −, add from the plus card. Right-click a widget to change its size.
             </p>
           ) : null}
           <DashboardKpiStrip
@@ -190,7 +182,7 @@ export default function FactoryDashboardPage() {
                   id={item.id}
                   size={item.size}
                   title={widget.title}
-                  action={widget.action}
+                  href={widget.to}
                   onDrop={handleDrop}
                   onSizeChange={handleSizeChange}
                 >
