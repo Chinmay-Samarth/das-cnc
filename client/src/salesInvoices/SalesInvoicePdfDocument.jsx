@@ -67,12 +67,20 @@ const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 
 
 const styles = StyleSheet.create({
   page: {
-    paddingTop: 36,
-    paddingBottom: 36,
-    paddingHorizontal: 36,
+    paddingTop: 24,
+    paddingBottom: 24,
+    paddingHorizontal: 24,
     fontSize: 10,
     fontFamily: 'Helvetica',
     color: '#1a1a1a',
+  },
+  frame: {
+    borderWidth: 1,
+    borderColor: '#111111',
+    minHeight: '100%',
+    paddingTop: 20,
+    paddingBottom: 20,
+    paddingHorizontal: 20,
   },
 
   header: {
@@ -181,15 +189,12 @@ const styles = StyleSheet.create({
   th: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f4f4f2',
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: '#cccccc',
+    backgroundColor: '#111111',
     paddingVertical: 7,
   },
   thText: {
     fontSize: 9,
-    color: '#444444',
+    color: '#ffffff',
     fontFamily: 'Helvetica-Bold',
     paddingHorizontal: 5,
   },
@@ -506,6 +511,7 @@ export function SalesInvoicePdfDocument({ invoice }) {
       <Page size="A4" style={styles.page}>
         {cancelled ? <Text style={styles.watermark}>CANCELLED</Text> : null}
 
+        <View style={styles.frame}>
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <Image src={logoSrc()} style={styles.logo} />
@@ -664,6 +670,7 @@ export function SalesInvoicePdfDocument({ invoice }) {
               <Text style={[styles.signCaption, { textAlign: 'right' }]}>Authorised signatory</Text>
             </View>
           </View>
+        </View>
         </View>
       </Page>
     </Document>

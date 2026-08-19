@@ -88,6 +88,29 @@ async function getMasterSchema(masterId) {
  
   return Object.values(sectionsMap).sort((a, b) => a.order - b.order)
 }
+
+async function relatedMasterSourceTypes(fields) {
+  const ids = [...new Set((fields || []).map((f) => f.related_master_id).filter(Boolean))]
+  if (!ids.length) return {}
+  const { data, error } = await supabase
+    .from('masters')
+    .select('id, source_type')
+    .in('id', ids)
+  if (error) throw { status: 500, message: error.message }
+  return Object.fromEntries((data || []).map((m) => [m.id, m.source_type]))
+}
+
+function assignRelationValue(target, field, value, sourceTypeByMasterId) {
+  const raw = value || null
+  const isLegacy = sourceTypeByMasterId[field.related_master_id] === 'legacy'
+  if (isLegacy) {
+    target.value = raw
+    target.linked_record_id = null
+  } else {
+    target.linked_record_id = raw
+    target.value = null
+  }
+}
  
 // Upload a file to Supabase Storage, return public URL
 async function uploadFile(file, masterSlug) {
@@ -403,6 +426,7 @@ router.post('/:slug/records', upload.any(), wrap(async (req, res) => {
       fieldMap[`${section.slug}__${field.slug}`] = field
     }
   }
+  const sourceTypeByMasterId = await relatedMasterSourceTypes(Object.values(fieldMap))
  
   // Create master record
   const { data: record, error: recErr } = await supabase
@@ -424,7 +448,7 @@ router.post('/:slug/records', upload.any(), wrap(async (req, res) => {
       const row = { record_id: record.id, field_id: field.id }
  
       if (field.field_type === 'relation') {
-        row.linked_record_id = value || null
+        assignRelationValue(row, field, value, sourceTypeByMasterId)
       } else if (field.field_type === 'file' || field.field_type === 'multi_file') {
         // handled via uploaded files below
         continue
@@ -496,7 +520,7 @@ router.post('/:slug/records', upload.any(), wrap(async (req, res) => {
         const cell = { row_id: sectionRow.id, field_id: field.id }
  
         if (field.field_type === 'relation') {
-          cell.linked_record_id = value || null
+          assignRelationValue(cell, field, value, sourceTypeByMasterId)
         } else if (field.field_type === 'file' || field.field_type === 'multi_file') {
           continue // handled via uploaded files
         } else {
@@ -573,6 +597,7 @@ router.put('/:slug/records/:id', upload.any(), wrap(async (req, res) => {
     sectionMap[section.slug] = section
     for (const field of section.fields) fieldMap[`${section.slug}__${field.slug}`] = field
   }
+  const sourceTypeByMasterId = await relatedMasterSourceTypes(Object.values(fieldMap))
 
   // ── Flat values — upsert only what's sent, don't touch the rest ──────────
   const flatUpserts = []
@@ -582,7 +607,7 @@ router.put('/:slug/records/:id', upload.any(), wrap(async (req, res) => {
       const field = fieldMap[`${sectionSlug}__${fieldSlug}`]
       if (!field) continue
       const row = { record_id: id, field_id: field.id }
-      if (field.field_type === 'relation')                              row.linked_record_id = value || null
+      if (field.field_type === 'relation')                              assignRelationValue(row, field, value, sourceTypeByMasterId)
       else if (field.field_type === 'file' || field.field_type === 'multi_file') continue // handled below
       else                                                               row.value = value != null ? String(value) : null
       flatUpserts.push(row)
@@ -662,7 +687,7 @@ for (const [fieldId, { field, urls }] of Object.entries(filesByField)) {
         const field = fieldMap[`${sectionSlug}__${fieldSlug}`]
         if (!field) continue
         const cell = { row_id: sectionRow.id, field_id: field.id }
-        if (field.field_type === 'relation')                              cell.linked_record_id = value || null
+        if (field.field_type === 'relation')                              assignRelationValue(cell, field, value, sourceTypeByMasterId)
         else if (field.field_type === 'file' || field.field_type === 'multi_file') continue
         else                                                               cell.value = value != null ? String(value) : null
         cellInserts.push(cell)
@@ -722,6 +747,18 @@ router.get('/:slug/lookup', wrap(async (req, res) => {
   const master = await getMaster(req.params.slug)
   const search = req.query.search || ''
   const forComponent = req.query.for_component || ''
+  const recordId = req.query.record_id || ''
+
+  if (recordId) {
+    const { data, error } = await supabase
+      .from('v_master_lookup')
+      .select('record_id, label')
+      .eq('master_slug', master.slug)
+      .eq('record_id', recordId)
+      .maybeSingle()
+    if (error) throw { status: 500, message: error.message }
+    return res.json(data ? [data] : [])
+  }
 
   if (master.slug === 'tool' && forComponent) {
     const { loadToolRecordIdsForComponent } = require('../services/masterFieldEngine');

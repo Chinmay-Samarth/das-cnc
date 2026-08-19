@@ -74,6 +74,12 @@ function openPrintDialog(blob) {
   });
 }
 
+export async function regeneratePurchaseOrderPdf(po) {
+  const company = po?.company || (await loadCompany());
+  const blob = await pdf(<PurchaseOrderPdfDocument po={po} company={company} />).toBlob();
+  return storePurchaseOrderPdf(po, blob, pdfFileName(po));
+}
+
 export async function printPurchaseOrderPdf(po) {
   const { blob, stored } = await generatePoPdf(po);
   await openPrintDialog(blob);

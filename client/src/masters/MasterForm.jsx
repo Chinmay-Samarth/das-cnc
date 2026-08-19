@@ -1,29 +1,32 @@
 // =============================================================================
 // MasterForm.jsx
 // Generic form renderer for all dynamic masters.
+// Reads schema from /api/masters/:slug/schema and renders tabs, flat fields,
+// and repeatable section tables. Handles all field types including file uploads
+// and relation dropdowns.
 //
-// Edit  → tabbed record editor (clean, same actions as before)
-// Create → MES wizard (section-by-section + review)
+// Usage:
+//   <MasterForm slug="raw-material" recordId={id} onSave={handleSave} />
+//   recordId = undefined → create mode
+//   recordId = uuid      → edit mode
 // =============================================================================
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { ArrowLeft, Check, FileText, Plus, Trash2, Upload, X } from 'lucide-react'
-import api from '../api/client'
-import FormSearchSelect from '../components/shared/FormSearchSelect'
-import { AlertBanner, EmptyState, PageHeader } from '../components/mes'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { ArrowLeft, Plus, X } from 'lucide-react'
+import api from '../api/client'   // your existing axios instance
 
-const FIELD_TYPES_WITH_FULL_WIDTH = ['textarea', 'file', 'multi_file', 'multi_select']
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const FIELD_TYPES_WITH_FULL_WIDTH = ['textarea']
+
+// ─── Utility ─────────────────────────────────────────────────────────────────
 
 function buildEmptyFlat(sections) {
   const flat = {}
   for (const s of sections) {
     if (s.is_repeatable) continue
     flat[s.slug] = {}
-    for (const f of s.fields) {
-      if (f.field_type === 'checkbox') flat[s.slug][f.slug] = false
-      else if (f.field_type === 'multi_select' || f.field_type === 'multi_file') flat[s.slug][f.slug] = []
-      else flat[s.slug][f.slug] = ''
-    }
+    for (const f of s.fields) flat[s.slug][f.slug] = ''
   }
   return flat
 }
@@ -39,201 +42,172 @@ function buildEmptyRepeatable(sections) {
 
 function buildEmptyRow(fields) {
   const row = {}
-  for (const f of fields) {
-    if (f.field_type === 'checkbox') row[f.slug] = false
-    else if (f.field_type === 'multi_select' || f.field_type === 'multi_file') row[f.slug] = []
-    else row[f.slug] = ''
-  }
+  for (const f of fields) row[f.slug] = ''
   return row
 }
 
-function singularName(name) {
-  if (!name) return 'item'
-  return name.replace(/s$/i, '') || name
-}
+// ─── Sub-components ──────────────────────────────────────────────────────────
 
-function isChecked(value) {
-  return value === true || value === 'true' || value === '1' || value === 1
-}
-
-function isFieldFilled(field, value, existingFile) {
-  if (field.field_type === 'checkbox') return isChecked(value)
-  if (field.field_type === 'file') return Boolean(value instanceof File ? value : existingFile)
-  if (field.field_type === 'multi_file') {
-    const pending = Array.isArray(value) ? value.length : 0
-    const saved = Array.isArray(existingFile) ? existingFile.length : 0
-    return pending + saved > 0
-  }
-  if (Array.isArray(value)) return value.length > 0
-  if (typeof value === 'string') return Boolean(value.trim())
-  return value != null && value !== ''
-}
-
-function formatFileName(file) {
-  if (!file) return ''
-  if (typeof file === 'string') return file.split('/').pop() || file
-  return file.name || file.url?.split('/').pop() || 'File'
-}
-
-function displayFieldValue(field, value, existingFile, relationLabel) {
-  if (field.field_type === 'checkbox') return isChecked(value) ? 'Yes' : 'No'
-  if (field.field_type === 'relation') return relationLabel || '—'
-  if (field.field_type === 'file') {
-    if (value instanceof File) return value.name
-    return formatFileName(existingFile) || '—'
-  }
-  if (field.field_type === 'multi_file') {
-    const pending = Array.isArray(value) ? value.map((f) => f.name) : []
-    const saved = Array.isArray(existingFile) ? existingFile.map(formatFileName) : []
-    const names = [...saved, ...pending].filter(Boolean)
-    return names.length ? names.join(', ') : '—'
-  }
-  if (field.field_type === 'multi_select') {
-    const items = Array.isArray(value) ? value : String(value || '').split(',').map((s) => s.trim()).filter(Boolean)
-    return items.length ? items.join(', ') : '—'
-  }
-  if (value == null || value === '') return '—'
-  return String(value)
-}
-
+// Relation field — searchable dropdown backed by /api/masters/:slug/lookup
 function RelationField({ field, value, onChange, disabled }) {
   const [options, setOptions] = useState([])
   const [search, setSearch] = useState('')
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [selectedLabel, setSelectedLabel] = useState('')
+  const wrapRef = useRef(null)
 
+  // Load initial label when editing
   useEffect(() => {
-    if (!value) {
-      setSelectedLabel('')
-      return
-    }
+    if (!value) { setSelectedLabel(''); return }
     api.get(`/masters/${field.related_master_slug}/lookup?search=`)
-      .then((res) => {
-        const match = res.data.find((o) => o.record_id === value)
+      .then(res => {
+        const match = res.data.find(o => o.record_id === value)
         if (match) setSelectedLabel(match.label)
       })
-      .catch(() => {})
   }, [value, field.related_master_slug])
 
+  // Search on type
   useEffect(() => {
-    if (!open) return undefined
+    if (!open) return
     setLoading(true)
     const timer = setTimeout(() => {
       api.get(`/masters/${field.related_master_slug}/lookup?search=${encodeURIComponent(search)}`)
-        .then((res) => setOptions(res.data || []))
+        .then(res => setOptions(res.data))
         .finally(() => setLoading(false))
     }, 250)
     return () => clearTimeout(timer)
   }, [search, open, field.related_master_slug])
 
+  // Close on outside click
+  useEffect(() => {
+    function handler(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
   return (
-    <FormSearchSelect
-      value={value || ''}
-      selectedLabel={selectedLabel}
-      placeholder={`Select ${field.label}…`}
-      options={options}
-      disabled={disabled}
-      searchable
-      search={search}
-      onSearchChange={setSearch}
-      onOpenChange={setOpen}
-      loading={loading}
-      emptyMessage="No results"
-      onChange={(recordId, option) => {
-        onChange(recordId, option?.label || '')
-        setSelectedLabel(option?.label || '')
-        setSearch('')
-      }}
-    />
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <div
+        className={`mf-relation-trigger ${disabled ? 'mf-disabled' : ''}`}
+        onClick={() => !disabled && setOpen(o => !o)}
+      >
+        <span className={selectedLabel ? '' : 'mf-placeholder'}>
+          {selectedLabel || `Select ${field.label}…`}
+        </span>
+        <i className="ti ti-chevron-down" aria-hidden="true" />
+      </div>
+      {open && (
+        <div className="mf-dropdown">
+          <div className="global-search-input">
+            <i className="ti ti-search" aria-hidden="true" />
+            <input
+              autoFocus
+              placeholder="Search…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+          <div className="mf-dropdown-list">
+            {loading && <div className="mf-dropdown-hint">Loading…</div>}
+            {!loading && options.length === 0 && (
+              <div className="mf-dropdown-hint">No results</div>
+            )}
+            {options.map(opt => (
+              <div
+                key={opt.record_id}
+                // className={`mf-dropdown-item ${value === opt.record_id ? 'mf-active' : ''}`}
+                className={`global-search-result ${value === opt.record_id ? 'is-active' : ""}`}
+                onClick={() => {
+                  onChange(opt.record_id)
+                  setSelectedLabel(opt.label)
+                  setOpen(false)
+                  setSearch('')
+                }}
+              >
+                <span className='global-search-result-title'>{opt.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
-function FileField({ value, onChange, disabled, existingUrl }) {
+// File field — single file upload with preview/remove
+function FileField({ field, value, onChange, disabled, existingUrl }) {
   const inputRef = useRef(null)
-  const existingHref = typeof existingUrl === 'string' ? existingUrl : existingUrl?.url
-  const isImage = existingHref && /\.(png|jpg|jpeg|gif|webp)$/i.test(existingHref)
+  const isImage = existingUrl && /\.(png|jpg|jpeg|gif|webp)$/i.test(existingUrl)
 
   return (
     <div className="mf-file-field">
-      {existingHref && !value ? (
-        <div className="mf-file-chip">
-          {isImage ? (
-            <img src={existingHref} alt="" className="mf-file-thumb" />
-          ) : (
-            <FileText size={16} />
-          )}
-          <a href={existingHref} target="_blank" rel="noreferrer">{formatFileName(existingHref)}</a>
-          <span className="mf-badge">saved</span>
+      {existingUrl && (
+        <div className="mf-file-existing">
+          {isImage
+            ? <img src={existingUrl} alt="attachment" className="mf-file-thumb" />
+            : <a href={existingUrl} target="_blank" rel="noreferrer" className="mf-file-link">
+              <i className="ti ti-file" /> View existing file
+            </a>
+          }
         </div>
-      ) : null}
-
-      {value ? (
-        <div className="mf-file-chip">
-          <FileText size={16} />
-          <span>{value.name}</span>
-          <button
-            type="button"
-            className="mf-chip-remove"
-            onClick={() => onChange(null)}
-            disabled={disabled}
-            aria-label="Remove file"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      ) : null}
-
-      <button
-        type="button"
-        className="neutral-button"
-        disabled={disabled}
-        onClick={() => inputRef.current?.click()}
+      )}
+      <div
+        className={`mf-file-drop ${disabled ? 'mf-disabled' : ''}`}
+        onClick={() => !disabled && inputRef.current?.click()}
       >
-        <Upload size={15} style={{ display: 'inline', marginRight: 6, verticalAlign: 'text-bottom' }} />
-        {value || existingHref ? 'Replace file' : 'Choose file'}
-      </button>
+        {value
+          ? <><i className="ti ti-check" /> {value.name}</>
+          : <><i className="ti ti-upload" /> {existingUrl ? 'Replace file' : 'Choose file'}</>
+        }
+      </div>
       <input
         ref={inputRef}
         type="file"
         style={{ display: 'none' }}
         disabled={disabled}
-        onChange={(e) => onChange(e.target.files[0] || null)}
+        onChange={e => onChange(e.target.files[0] || null)}
       />
+      {value && (
+        <button type="button" className="cancel-button" onClick={() => onChange(null)}>
+          Remove
+        </button>
+      )}
     </div>
   )
 }
 
-function MultiFileField({ value = [], onChange, disabled, existingUrls = [] }) {
+// Multi-file field
+function MultiFileField({ field, value = [], onChange, disabled, existingUrls = [] }) {
   const inputRef = useRef(null)
 
   function addFiles(e) {
-    const newFiles = Array.from(e.target.files || [])
+    const newFiles = Array.from(e.target.files)
     onChange([...value, ...newFiles])
     e.target.value = ''
+  }
+
+  function removeNew(idx) {
+    onChange(value.filter((_, i) => i !== idx))
   }
 
   return (
     <div className="mf-multifile-field">
       {existingUrls.map((f, i) => (
-        <div key={`saved-${i}`} className="mf-file-chip">
-          <FileText size={16} />
-          <a href={f.url || f} target="_blank" rel="noreferrer">{formatFileName(f)}</a>
+        <div key={i} className="mf-multifile-item mf-existing">
+          <i className="ti ti-file" />
+          <a href={f.url} target="_blank" rel="noreferrer">{f.name || 'File ' + (i + 1)}</a>
           <span className="mf-badge">saved</span>
         </div>
       ))}
       {value.map((f, i) => (
-        <div key={`new-${i}`} className="mf-file-chip">
-          <FileText size={16} />
+        <div key={i} className="mf-multifile-item">
+          <i className="ti ti-file" />
           <span>{f.name}</span>
-          <button
-            type="button"
-            className="mf-chip-remove"
-            onClick={() => onChange(value.filter((_, idx) => idx !== i))}
-            disabled={disabled}
-            aria-label={`Remove ${f.name}`}
-          >
-            <X size={14} />
+          <button type="button" className="cancel-button" onClick={() => removeNew(i)}>
+            <X size={16} />
           </button>
         </div>
       ))}
@@ -243,8 +217,7 @@ function MultiFileField({ value = [], onChange, disabled, existingUrls = [] }) {
         disabled={disabled}
         onClick={() => inputRef.current?.click()}
       >
-        <Plus size={15} style={{ display: 'inline', marginRight: 6, verticalAlign: 'text-bottom' }} />
-        Add files
+        <Plus size={16} style={{ display: 'inline', marginRight: 4 }} /> Add files
       </button>
       <input
         ref={inputRef}
@@ -258,105 +231,54 @@ function MultiFileField({ value = [], onChange, disabled, existingUrls = [] }) {
   )
 }
 
-function MultiSelectField({ field, value, onChange, disabled }) {
-  const selected = Array.isArray(value)
-    ? value
-    : String(value || '').split(',').map((s) => s.trim()).filter(Boolean)
-
-  function toggle(opt) {
-    const next = selected.includes(opt)
-      ? selected.filter((item) => item !== opt)
-      : [...selected, opt]
-    onChange(next)
-  }
-
-  return (
-    <div className="mf-multi-select">
-      {(field.options || []).map((opt) => (
-        <button
-          key={opt}
-          type="button"
-          className={`neutral-button${selected.includes(opt) ? ' is-selected' : ''}`}
-          disabled={disabled}
-          onClick={() => toggle(opt)}
-        >
-          {opt}
-        </button>
-      ))}
-      {(field.options || []).length === 0 ? (
-        <span className="muted">No options configured</span>
-      ) : null}
-    </div>
-  )
-}
-
-function FieldInput({ field, value, onChange, disabled, existingFile, invalid }) {
-  const inputClass = invalid ? 'input-error' : undefined
-
+// Single field renderer — dispatches to the right input type
+function FieldInput({ field, value, onChange, disabled, existingFile }) {
   switch (field.field_type) {
     case 'textarea':
       return (
         <textarea
-          rows={4}
-          className={inputClass}
+          className="mf-input"
+          rows={3}
           placeholder={field.placeholder || ''}
           value={value || ''}
           disabled={disabled}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={e => onChange(e.target.value)}
         />
       )
     case 'number':
-    case 'float':
       return (
         <input
           type="number"
-          className={inputClass}
-          step={field.field_type === 'float' ? 'any' : '1'}
+          className="mf-input"
           placeholder={field.placeholder || ''}
-          value={value ?? ''}
+          value={value || ''}
           disabled={disabled}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={e => onChange(e.target.value)}
         />
       )
     case 'date':
       return (
         <input
           type="date"
-          className={inputClass}
+          className="mf-input"
           value={value || ''}
           disabled={disabled}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      )
-    case 'checkbox':
-      return (
-        <input
-          type="checkbox"
-          className="mf-checkbox-input"
-          checked={isChecked(value)}
-          disabled={disabled}
-          onChange={(e) => onChange(e.target.checked)}
+          onChange={e => onChange(e.target.value)}
         />
       )
     case 'select':
       return (
-        <FormSearchSelect
+        <select
+          className="mf-input mf-select"
           value={value || ''}
-          onChange={onChange}
-          options={field.options || []}
-          placeholder="Select…"
           disabled={disabled}
-          searchable={(field.options || []).length > 6}
-        />
-      )
-    case 'multi_select':
-      return (
-        <MultiSelectField
-          field={field}
-          value={value}
-          onChange={onChange}
-          disabled={disabled}
-        />
+          onChange={e => onChange(e.target.value)}
+        >
+          <option value="">Select…</option>
+          {(field.options || []).map(opt => (
+            <option key={opt} value={opt} className='global-search-result'>{opt}</option>
+          ))}
+        </select>
       )
     case 'relation':
       return (
@@ -370,6 +292,7 @@ function FieldInput({ field, value, onChange, disabled, existingFile, invalid })
     case 'file':
       return (
         <FileField
+          field={field}
           value={value}
           onChange={onChange}
           disabled={disabled}
@@ -379,6 +302,7 @@ function FieldInput({ field, value, onChange, disabled, existingFile, invalid })
     case 'multi_file':
       return (
         <MultiFileField
+          field={field}
           value={Array.isArray(value) ? value : []}
           onChange={onChange}
           disabled={disabled}
@@ -389,250 +313,145 @@ function FieldInput({ field, value, onChange, disabled, existingFile, invalid })
       return (
         <input
           type="text"
-          className={inputClass}
+          className="mf-input"
           placeholder={field.placeholder || ''}
           value={value || ''}
           disabled={disabled}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={e => onChange(e.target.value)}
         />
       )
   }
 }
 
-function FlatSection({ section, values, onChange, disabled, existingFiles, errors = {} }) {
+// Flat section — renders a 2-col grid of labelled fields
+function FlatSection({ section, values, onChange, disabled, existingFiles }) {
   return (
     <div className="mf-flat-section">
-      {section.fields.map((field) => {
-        const errKey = `${section.slug}__${field.slug}`
-        const err = errors[errKey]
-        const isFull = FIELD_TYPES_WITH_FULL_WIDTH.includes(field.field_type)
-        const isCheck = field.field_type === 'checkbox'
-
-        return (
-          <label
-            key={field.id || field.slug}
-            className={`mf-field${isFull ? ' mf-full' : ''}${isCheck ? ' mf-check-field' : ''}${err ? ' is-invalid' : ''}`}
-          >
-            <span>
-              {field.label}
-              {field.is_required ? <span className="required-mark"> *</span> : null}
-            </span>
-            <FieldInput
-              field={field}
-              value={values?.[field.slug]}
-              onChange={(val, label) => onChange(section.slug, field.slug, val, label)}
-              disabled={disabled}
-              existingFile={existingFiles?.[field.slug]}
-              invalid={Boolean(err)}
-            />
-            {err ? <span className="field-error">{err}</span> : null}
+      {section.fields.map(field => (
+        <div
+          key={field.id}
+          className={`mf-field-wrap ${FIELD_TYPES_WITH_FULL_WIDTH.includes(field.field_type) || field.field_type === 'file' || field.field_type === 'multi_file' ? 'mf-full' : ''}`}
+        >
+          <label className="mf-label">
+            {field.label}
+            {field.is_required && <span className="mf-required">*</span>}
           </label>
-        )
-      })}
+          <FieldInput
+            field={field}
+            value={values?.[field.slug]}
+            onChange={val => onChange(section.slug, field.slug, val)}
+            disabled={disabled}
+            existingFile={existingFiles?.[field.slug]}
+          />
+        </div>
+      ))}
     </div>
   )
 }
 
-function RepeatableSection({
-  section,
-  rows,
-  onRowChange,
-  onAddRow,
-  onRemoveRow,
-  disabled,
-  existingFiles,
-  errors = {},
-}) {
-  const itemName = singularName(section.name)
+// Repeatable section — renders rows as a table
+function RepeatableSection({ section, rows, onRowChange, onAddRow, onRemoveRow, disabled, existingFiles }) {
+  const singular = section.name.replace(/s$/i, '') || section.name;
 
   return (
     <div className="mf-repeat-section">
       {rows.length === 0 ? (
         <div className="mf-repeat-empty">
-          <EmptyState
-            title={`No ${section.name.toLowerCase()} yet`}
-            description={`Add a ${itemName.toLowerCase()} if this record needs one. You can skip this step.`}
-          />
-          <button
-            type="button"
-            className="neutral-button"
-            disabled={disabled}
-            onClick={() => onAddRow(section.slug, section.fields)}
-          >
-            <Plus size={15} style={{ display: 'inline', marginRight: 6, verticalAlign: 'text-bottom' }} />
-            Add {itemName}
-          </button>
+          <p className="mf-repeat-empty-title">No {section.name.toLowerCase()} yet</p>
+          <p className="mf-repeat-empty-desc">
+            Add a {singular.toLowerCase()} using the same fields as a new record.
+          </p>
         </div>
       ) : (
-        <div className="mf-repeat-list">
+        <div className="mf-repeat-cards">
           {rows.map((row, rowIdx) => (
-            <div key={rowIdx} className="mf-repeat-card">
-              <div className="mf-repeat-card-head">
-                <strong>{itemName} {rowIdx + 1}</strong>
+            <article key={rowIdx} className="mf-repeat-card">
+              <header className="mf-repeat-card-head">
+                <div>
+                  <p className="mf-repeat-card-kicker">{singular}</p>
+                  <h3 className="mf-repeat-card-title">
+                    {singular} {rowIdx + 1}
+                  </h3>
+                </div>
                 <button
                   type="button"
-                  className="neutral-button mf-repeat-remove"
+                  className="mf-icon-btn mf-danger"
                   disabled={disabled}
                   onClick={() => onRemoveRow(section.slug, rowIdx)}
+                  title={`Remove ${singular.toLowerCase()}`}
                 >
-                  <Trash2 size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: 'text-bottom' }} />
-                  Remove
+                  <X size={16} />
                 </button>
-              </div>
-              <div className="mf-flat-section">
-                {section.fields.map((field) => {
-                  const errKey = `${section.slug}__${rowIdx}__${field.slug}`
-                  const err = errors[errKey]
-                  const isFull = FIELD_TYPES_WITH_FULL_WIDTH.includes(field.field_type)
-                  const isCheck = field.field_type === 'checkbox'
-                  return (
-                    <label
-                      key={field.id || field.slug}
-                      className={`mf-field${isFull ? ' mf-full' : ''}${isCheck ? ' mf-check-field' : ''}${err ? ' is-invalid' : ''}`}
-                    >
-                      <span>
-                        {field.label}
-                        {field.is_required ? <span className="required-mark"> *</span> : null}
-                      </span>
-                      <FieldInput
-                        field={field}
-                        value={row[field.slug]}
-                        onChange={(val, label) => onRowChange(section.slug, rowIdx, field.slug, val, label)}
-                        disabled={disabled}
-                        existingFile={existingFiles?.[rowIdx]?.[field.slug]}
-                        invalid={Boolean(err)}
-                      />
-                      {err ? <span className="field-error">{err}</span> : null}
-                    </label>
-                  )
-                })}
-              </div>
-            </div>
+              </header>
+              <FlatSection
+                section={section}
+                values={row}
+                onChange={(_sSlug, fieldSlug, val) => onRowChange(section.slug, rowIdx, fieldSlug, val)}
+                disabled={disabled}
+                existingFiles={existingFiles?.[rowIdx]}
+              />
+            </article>
           ))}
         </div>
       )}
 
-      {rows.length > 0 ? (
-        <button
-          type="button"
-          className="neutral-button"
-          disabled={disabled}
-          onClick={() => onAddRow(section.slug, section.fields)}
-        >
-          <Plus size={15} style={{ display: 'inline', marginRight: 6, verticalAlign: 'text-bottom' }} />
-          Add {itemName}
-        </button>
-      ) : null}
+      <button
+        type="button"
+        className="mf-add-row-btn"
+        disabled={disabled}
+        onClick={() => onAddRow(section.slug, section.fields)}
+      >
+        <Plus size={16} />
+        Add {singular}
+      </button>
     </div>
   )
 }
 
-function ReviewPanel({ sections, flat, repeatable, existingFiles, relationLabels }) {
-  return (
-    <div className="mf-review">
-      {sections.map((section) => {
-        if (section.is_repeatable) {
-          const rows = repeatable[section.slug] || []
-          return (
-            <div key={section.id || section.slug} className="mf-review-block">
-              <h3>{section.name}</h3>
-              {rows.length === 0 ? (
-                <p className="muted">None added</p>
-              ) : (
-                rows.map((row, rowIdx) => (
-                  <div key={rowIdx} className="mf-review-row">
-                    <p className="mf-review-row-title">{singularName(section.name)} {rowIdx + 1}</p>
-                    <dl className="mf-review-grid">
-                      {section.fields.map((field) => (
-                        <div key={field.id || field.slug}>
-                          <dt>{field.label}</dt>
-                          <dd>
-                            {displayFieldValue(
-                              field,
-                              row[field.slug],
-                              existingFiles?.[section.slug]?.[rowIdx]?.[field.slug],
-                              relationLabels[`${section.slug}__${rowIdx}__${field.slug}`]
-                            )}
-                          </dd>
-                        </div>
-                      ))}
-                    </dl>
-                  </div>
-                ))
-              )}
-            </div>
-          )
-        }
+// ─── Main Component ───────────────────────────────────────────────────────────
 
-        return (
-          <div key={section.id || section.slug} className="mf-review-block">
-            <h3>{section.name}</h3>
-            <dl className="mf-review-grid">
-              {section.fields.map((field) => (
-                <div key={field.id || field.slug}>
-                  <dt>{field.label}</dt>
-                  <dd>
-                    {displayFieldValue(
-                      field,
-                      flat[section.slug]?.[field.slug],
-                      existingFiles?.[section.slug]?.[field.slug],
-                      relationLabels[`${section.slug}__${field.slug}`]
-                    )}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-export default function MasterForm({ slug, recordId, onSave, onCancel, variant, embedded = false }) {
+export default function MasterForm({ slug, recordId, onSave, onCancel }) {
   const isEdit = Boolean(recordId)
-  const isWizard = variant === 'wizard' || (!isEdit && variant !== 'edit')
 
-  const [schema, setSchema] = useState(null)
+  const [schema, setSchema] = useState(null)   // { master, sections }
   const [activeTab, setActiveTab] = useState(0)
-  const [step, setStep] = useState(0)
-  const [flat, setFlat] = useState({})
-  const [repeatable, setRepeatable] = useState({})
-  const [fileMap, setFileMap] = useState({})
+  const [flat, setFlat] = useState({})     // { section_slug: { field_slug: value } }
+  const [repeatable, setRepeatable] = useState({})     // { section_slug: [ rowObj ] }
+  const [fileMap, setFileMap] = useState({})     // { section_slug: { field_slug: File } }
+  // or { section_slug: { rowIdx: { field_slug: File } } }
   const [existingFiles, setExistingFiles] = useState({})
-  const [relationLabels, setRelationLabels] = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [errors, setErrors] = useState({})
   const [name, setName] = useState('')
 
+  // ── Load schema ─────────────────────────────────────────────────────────────
   useEffect(() => {
     setLoading(true)
-    api.get(`/masters/${slug}/schema`).then((res) => {
+    api.get(`/masters/${slug}/schema`).then(res => {
       const { master, sections } = res.data
-      setSchema({ master, sections: sections || [] })
+      setSchema({ master, sections })
       if (!isEdit) {
-        setFlat(buildEmptyFlat(sections || []))
-        setRepeatable(buildEmptyRepeatable(sections || []))
+        setFlat(buildEmptyFlat(sections))
+        setRepeatable(buildEmptyRepeatable(sections))
       }
-    }).catch(() => {
-      setSchema(null)
     }).finally(() => setLoading(false))
-  }, [slug, isEdit])
+  }, [slug])
 
+  // ── Load record for edit ────────────────────────────────────────────────────
   useEffect(() => {
     if (!isEdit || !schema) return
-    api.get(`/masters/${slug}/records/${recordId}`).then((res) => {
+    api.get(`/masters/${slug}/records/${recordId}`).then(res => {
       const { flat: rFlat, repeatable: rRep, label: recordName } = res.data
 
+      // Hydrate flat state
       const flatState = buildEmptyFlat(schema.sections)
       const existingF = {}
-      const labels = {}
       for (const [sSlug, fields] of Object.entries(rFlat || {})) {
         if (!flatState[sSlug]) flatState[sSlug] = {}
         for (const [fSlug, v] of Object.entries(fields)) {
           if (v.file_url) {
-            flatState[sSlug][fSlug] = null
+            flatState[sSlug][fSlug] = null  // file fields start null (user re-uploads or keeps)
             if (!existingF[sSlug]) existingF[sSlug] = {}
             existingF[sSlug][fSlug] = v.file_url
           } else if (v.file_urls) {
@@ -641,15 +460,13 @@ export default function MasterForm({ slug, recordId, onSave, onCancel, variant, 
             existingF[sSlug][fSlug] = v.file_urls
           } else if (v.linked_record_id) {
             flatState[sSlug][fSlug] = v.linked_record_id
-            if (v._label) labels[`${sSlug}__${fSlug}`] = v._label
-          } else if (typeof v.value === 'boolean' || v.value === 'true' || v.value === 'false') {
-            flatState[sSlug][fSlug] = isChecked(v.value)
           } else {
             flatState[sSlug][fSlug] = v.value || ''
           }
         }
       }
 
+      // Hydrate repeatable state
       const repState = buildEmptyRepeatable(schema.sections)
       const existingR = {}
       for (const [sSlug, rows] of Object.entries(rRep || {})) {
@@ -669,9 +486,6 @@ export default function MasterForm({ slug, recordId, onSave, onCancel, variant, 
               existingR[sSlug][ri][k] = v.file_urls
             } else if (v?.linked_record_id) {
               out[k] = v.linked_record_id
-              if (v._label) labels[`${sSlug}__${ri}__${k}`] = v._label
-            } else if (typeof v?.value === 'boolean' || v?.value === 'true' || v?.value === 'false') {
-              out[k] = isChecked(v.value)
             } else {
               out[k] = v?.value || ''
             }
@@ -683,106 +497,92 @@ export default function MasterForm({ slug, recordId, onSave, onCancel, variant, 
       setFlat(flatState)
       setRepeatable(repState)
       setExistingFiles({ ...existingF, ...existingR })
-      setRelationLabels(labels)
       setName(recordName)
-    }).catch(() => {
-      setErrors({ _form: 'Failed to load record.' })
     })
-  }, [isEdit, recordId, schema, slug])
+  }, [isEdit, recordId, schema])
 
-  const rememberFile = useCallback((sectionSlug, key, value) => {
+  // ── Field change handlers ───────────────────────────────────────────────────
+  const handleFlatChange = useCallback((sectionSlug, fieldSlug, value) => {
+    setFlat(prev => ({
+      ...prev,
+      [sectionSlug]: { ...prev[sectionSlug], [fieldSlug]: value }
+    }))
+    // if it's a File object, stash in fileMap
     if (value instanceof File || (Array.isArray(value) && value[0] instanceof File)) {
-      setFileMap((prev) => ({
+      setFileMap(prev => ({
         ...prev,
-        [sectionSlug]: { ...(prev[sectionSlug] || {}), [key]: value },
+        [sectionSlug]: { ...(prev[sectionSlug] || {}), [fieldSlug]: value }
       }))
     }
   }, [])
 
-  const handleFlatChange = useCallback((sectionSlug, fieldSlug, value, label) => {
-    setFlat((prev) => ({
-      ...prev,
-      [sectionSlug]: { ...prev[sectionSlug], [fieldSlug]: value },
-    }))
-    rememberFile(sectionSlug, fieldSlug, value)
-    if (typeof label === 'string') {
-      setRelationLabels((prev) => ({ ...prev, [`${sectionSlug}__${fieldSlug}`]: label }))
-    }
-    setErrors((prev) => {
-      if (!prev[`${sectionSlug}__${fieldSlug}`]) return prev
-      const next = { ...prev }
-      delete next[`${sectionSlug}__${fieldSlug}`]
-      return next
-    })
-  }, [rememberFile])
-
-  const handleRowChange = useCallback((sectionSlug, rowIdx, fieldSlug, value, label) => {
-    setRepeatable((prev) => {
+  const handleRowChange = useCallback((sectionSlug, rowIdx, fieldSlug, value) => {
+    setRepeatable(prev => {
       const rows = [...(prev[sectionSlug] || [])]
       rows[rowIdx] = { ...rows[rowIdx], [fieldSlug]: value }
       return { ...prev, [sectionSlug]: rows }
     })
-    rememberFile(sectionSlug, `${rowIdx}__${fieldSlug}`, value)
-    if (typeof label === 'string') {
-      setRelationLabels((prev) => ({ ...prev, [`${sectionSlug}__${rowIdx}__${fieldSlug}`]: label }))
+    if (value instanceof File || (Array.isArray(value) && value[0] instanceof File)) {
+      setFileMap(prev => {
+        const sec = { ...(prev[sectionSlug] || {}) }
+        sec[`${rowIdx}__${fieldSlug}`] = value
+        return { ...prev, [sectionSlug]: sec }
+      })
     }
-  }, [rememberFile])
+  }, [])
 
   const handleAddRow = useCallback((sectionSlug, fields) => {
-    setRepeatable((prev) => ({
+    setRepeatable(prev => ({
       ...prev,
-      [sectionSlug]: [...(prev[sectionSlug] || []), buildEmptyRow(fields)],
+      [sectionSlug]: [...(prev[sectionSlug] || []), buildEmptyRow(fields)]
     }))
   }, [])
 
   const handleRemoveRow = useCallback((sectionSlug, rowIdx) => {
-    setRepeatable((prev) => {
+    setRepeatable(prev => {
       const rows = [...(prev[sectionSlug] || [])]
       rows.splice(rowIdx, 1)
       return { ...prev, [sectionSlug]: rows }
     })
   }, [])
 
-  function validateSection(section) {
+  // ── Validation ──────────────────────────────────────────────────────────────
+  function validate() {
     const errs = {}
-    if (!section) return errs
-    if (section.is_repeatable) {
-      const rows = repeatable[section.slug] || []
-      rows.forEach((row, rowIdx) => {
-        for (const field of section.fields) {
-          if (!field.is_required) continue
-          const existing = existingFiles[section.slug]?.[rowIdx]?.[field.slug]
-          if (!isFieldFilled(field, row[field.slug], existing)) {
-            errs[`${section.slug}__${rowIdx}__${field.slug}`] = `${field.label} is required`
-          }
+    for (const section of schema.sections) {
+      if (section.is_repeatable) continue
+      for (const field of section.fields) {
+        if (!field.is_required) continue
+        const val = flat[section.slug]?.[field.slug]
+        if (!val || (typeof val === 'string' && !val.trim())) {
+          errs[`${section.slug}__${field.slug}`] = `${field.label} is required`
         }
-      })
-      return errs
-    }
-    for (const field of section.fields) {
-      if (!field.is_required) continue
-      const val = flat[section.slug]?.[field.slug]
-      const existing = existingFiles[section.slug]?.[field.slug]
-      if (!isFieldFilled(field, val, existing)) {
-        errs[`${section.slug}__${field.slug}`] = `${field.label} is required`
       }
     }
     return errs
   }
 
-  function validateAll() {
-    const errs = {}
-    for (const section of schema.sections) {
-      Object.assign(errs, validateSection(section))
+  // ── Submit ──────────────────────────────────────────────────────────────────
+  async function handleSubmit(e) {
+    e.preventDefault()
+    const errs = validate()
+    if (Object.keys(errs).length) {
+      setErrors(errs)
+      // jump to first tab with an error
+      const errKey = Object.keys(errs)[0]
+      const errSectionSlug = errKey.split('__')[0]
+      const tabIdx = schema.sections.findIndex(s => s.slug === errSectionSlug)
+      if (tabIdx >= 0) setActiveTab(tabIdx)
+      return
     }
-    return errs
-  }
-
-  async function persist() {
+    setErrors({})
     setSaving(true)
+
     try {
+      // Build FormData — JSON payload + files
       const formData = new FormData()
 
+      // Strip File objects from flat before serialising
       const flatPayload = {}
       for (const [sSlug, fields] of Object.entries(flat)) {
         flatPayload[sSlug] = {}
@@ -794,7 +594,7 @@ export default function MasterForm({ slug, recordId, onSave, onCancel, variant, 
 
       const repPayload = {}
       for (const [sSlug, rows] of Object.entries(repeatable)) {
-        repPayload[sSlug] = rows.map((row) => {
+        repPayload[sSlug] = rows.map(row => {
           const out = {}
           for (const [k, v] of Object.entries(row)) {
             if (v instanceof File || (Array.isArray(v) && v[0] instanceof File)) continue
@@ -806,267 +606,107 @@ export default function MasterForm({ slug, recordId, onSave, onCancel, variant, 
 
       formData.append('data', JSON.stringify({ flat: flatPayload, repeatable: repPayload }))
 
+      // Attach files — flat: file__sectionSlug__fieldSlug
       for (const [sSlug, fields] of Object.entries(fileMap)) {
         for (const [key, fileVal] of Object.entries(fields)) {
           if (key.includes('__')) {
+            // repeatable: key = "rowIdx__fieldSlug"
             const [rowIdx, fSlug] = key.split('__')
             if (Array.isArray(fileVal)) {
-              fileVal.forEach((f) => formData.append(`file__${sSlug}__${rowIdx}__${fSlug}`, f))
+              fileVal.forEach(f => formData.append(`file__${sSlug}__${rowIdx}__${fSlug}`, f))
             } else if (fileVal) {
-              formData.append(`file__${sSlug}__${rowIdx}__${fSlug}`, fileVal)
+              formData.append(`file__${sSlug}__${rowIdx}__${key.split('__')[1]}`, fileVal)
             }
-          } else if (Array.isArray(fileVal)) {
-            fileVal.forEach((f) => formData.append(`file__${sSlug}__${key}`, f))
-          } else if (fileVal) {
-            formData.append(`file__${sSlug}__${key}`, fileVal)
+          } else {
+            // flat
+            if (Array.isArray(fileVal)) {
+              fileVal.forEach(f => formData.append(`file__${sSlug}__${key}`, f))
+            } else if (fileVal) {
+              formData.append(`file__${sSlug}__${key}`, fileVal)
+            }
           }
         }
       }
 
-      let savedId = recordId
       if (isEdit) {
         await api.put(`/masters/${slug}/records/${recordId}`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' },
+          headers: { 'Content-Type': 'multipart/form-data' }
         })
       } else {
-        const res = await api.post(`/masters/${slug}/records`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' },
+        await api.post(`/masters/${slug}/records`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
         })
-        savedId = res.data?.id
       }
 
-      onSave?.(savedId)
+      onSave?.()
     } catch (err) {
+      console.error(err)
       setErrors({ _form: err?.response?.data?.error || 'Failed to save. Try again.' })
     } finally {
       setSaving(false)
     }
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault()
-    if (!schema) return
-
-    if (isWizard && step < schema.sections.length) {
-      const sectionErrs = validateSection(schema.sections[step])
-      if (Object.keys(sectionErrs).length) {
-        setErrors(sectionErrs)
-        return
-      }
-      setErrors({})
-      setStep((s) => s + 1)
-      return
-    }
-
-    const errs = validateAll()
-    if (Object.keys(errs).length) {
-      setErrors(errs)
-      const errKey = Object.keys(errs)[0]
-      const errSectionSlug = errKey.split('__')[0]
-      const tabIdx = schema.sections.findIndex((s) => s.slug === errSectionSlug)
-      if (tabIdx >= 0) {
-        setActiveTab(tabIdx)
-        setStep(tabIdx)
-      }
-      return
-    }
-    setErrors({})
-    await persist()
-  }
-
-  const wizardSteps = useMemo(() => {
-    if (!schema) return []
-    const sectionSteps = schema.sections.map((section, idx) => ({
-      id: idx,
-      title: section.name,
-      hint: section.is_repeatable ? 'Add as many as needed' : 'Fill in the details',
-    }))
-    return [
-      ...sectionSteps,
-      { id: schema.sections.length, title: 'Review', hint: 'Confirm and create' },
-    ]
-  }, [schema])
-
+  // ── Render ──────────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className={embedded ? 'mf-embedded' : 'mes-shell bpo-setup-page'}>
-        <p className="muted">Loading form…</p>
+      <div className="mf-loading">
+        <i className="ti ti-loader-2 mf-spin" />
+        Loading form…
       </div>
     )
   }
 
-  if (!schema) {
-    return (
-      <div className={embedded ? 'mf-embedded' : 'mes-shell bpo-setup-page'}>
-        <AlertBanner tone="danger" title="Unable to load form">
-          Failed to load this master schema.
-        </AlertBanner>
-      </div>
-    )
-  }
+  if (!schema) return <div className="mf-error">Failed to load form schema.</div>
 
   const { master, sections } = schema
-  const reviewStep = sections.length
-  const onReview = isWizard && step >= reviewStep
-  const currentSection = sections[isWizard ? step : activeTab]
-  const shellClass = embedded ? 'mf-embedded' : isWizard ? 'mes-shell bpo-setup-page' : 'mes-shell'
-
-  function renderSection(section) {
-    if (!section) return null
-    if (section.is_repeatable) {
-      return (
-        <RepeatableSection
-          section={section}
-          rows={repeatable[section.slug] || []}
-          onRowChange={handleRowChange}
-          onAddRow={handleAddRow}
-          onRemoveRow={handleRemoveRow}
-          disabled={saving}
-          existingFiles={existingFiles[section.slug]}
-          errors={errors}
-        />
-      )
-    }
-    return (
-      <FlatSection
-        section={section}
-        values={flat[section.slug]}
-        onChange={handleFlatChange}
-        disabled={saving}
-        existingFiles={existingFiles[section.slug]}
-        errors={errors}
-      />
-    )
-  }
-
-  if (isWizard) {
-    return (
-      <main className={shellClass}>
-        {!embedded ? (
-          <PageHeader
-            eyebrow={master.name}
-            title={`New ${master.name}`}
-            subtitle="Fill each step, then review before creating the record."
-            actions={
-              onCancel ? (
-                <button type="button" className="neutral-button" onClick={onCancel} disabled={saving}>
-                  <ArrowLeft size={16} />
-                  Back to list
-                </button>
-              ) : null
-            }
-          />
-        ) : null}
-
-        {wizardSteps.length > 1 ? (
-          <nav className="bpo-steps" aria-label="Record steps">
-            {wizardSteps.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                className={`bpo-step${step === s.id ? ' is-active' : ''}${step > s.id ? ' is-done' : ''}`}
-                onClick={() => {
-                  if (s.id <= step) setStep(s.id)
-                }}
-                disabled={s.id > step}
-              >
-                <span className="bpo-step-num">
-                  {step > s.id ? <Check size={14} strokeWidth={3} /> : s.id + 1}
-                </span>
-                <span className="bpo-step-text">
-                  <strong>{s.title}</strong>
-                  <small>{s.hint}</small>
-                </span>
-              </button>
-            ))}
-          </nav>
-        ) : null}
-
-        {errors._form ? <AlertBanner tone="danger">{errors._form}</AlertBanner> : null}
-
-        <form onSubmit={handleSubmit} noValidate>
-          <section className="card bpo-setup-card">
-            {onReview ? (
-              <div className="bpo-panel">
-                <h2>Review {master.name}</h2>
-                <p className="muted bpo-lead">Check the details below, then create the record.</p>
-                <ReviewPanel
-                  sections={sections}
-                  flat={flat}
-                  repeatable={repeatable}
-                  existingFiles={existingFiles}
-                  relationLabels={relationLabels}
-                />
-              </div>
-            ) : (
-              <div className="bpo-panel">
-                <h2>{currentSection?.name}</h2>
-                <p className="muted bpo-lead">
-                  {currentSection?.is_repeatable
-                    ? `Add each ${singularName(currentSection.name).toLowerCase()} as its own card. This step is optional.`
-                    : 'Required fields are marked with an asterisk.'}
-                </p>
-                {renderSection(currentSection)}
-              </div>
-            )}
-          </section>
-
-          <footer className="bpo-footer">
-            <button
-              type="button"
-              className="neutral-button"
-              disabled={step <= 0 || saving}
-              onClick={() => setStep((s) => Math.max(0, s - 1))}
-            >
-              Back
-            </button>
-            {onReview ? (
-              <button type="submit" className="primary-button" disabled={saving}>
-                {saving ? 'Creating…' : `Create ${master.name}`}
-              </button>
-            ) : (
-              <button type="submit" className="primary-button" disabled={saving}>
-                Continue
-              </button>
-            )}
-          </footer>
-        </form>
-      </main>
-    )
-  }
 
   return (
-    <div className={shellClass}>
-      {!embedded ? (
-        <div className="mrd-header">
-          <div className="mrd-header-left">
-            {onCancel ? (
-              <button type="button" className="neutral-button" onClick={onCancel} disabled={saving}>
-                <ArrowLeft size={16} style={{ display: 'inline', marginRight: 4, verticalAlign: 'text-bottom' }} />
-                Back
-              </button>
-            ) : null}
-            <div className="mrd-title-block">
-              <div>
-                <div className="mrd-master-name">
-                  {isEdit ? `Edit ${master.name}` : `New ${master.name}`}
-                </div>
-                {isEdit && name ? <div className="muted">{name}</div> : null}
+    <div className="mf-page-root app-shell">
+
+      {/* Header */}
+      <div className="mrd-header">
+        <div className="mrd-header-left">
+          {onCancel && (
+            <button
+              type="button"
+              className="neutral-button "
+              onClick={onCancel}
+              disabled={saving}
+            >
+              <ArrowLeft size={16} style={{ display: 'inline' }} />Back
+            </button>
+          )}
+          <div className="mrd-title-block">
+            {/* <span className="mrd-master-icon">{master.icon || '📦'}</span> */}
+            <div>
+              <div className="mrd-master-name">
+                {isEdit ? `Edit ${master.name}` : `New ${master.name}`}
               </div>
+              {isEdit && recordId && (
+                <div className="">{name}</div>
+              )}
             </div>
           </div>
         </div>
-      ) : null}
 
-      {errors._form ? <AlertBanner tone="danger">{errors._form}</AlertBanner> : null}
+        {errors._form && (
+          <div className="mf-form-error">
+            <i className="ti ti-alert-circle" /> {errors._form}
+          </div>
+        )}
+      </div>
 
-      {sections.length > 1 ? (
+      {/* Pill tab bar */}
+      {sections.length > 1 && (
         <div className="mrd-tab-bar" role="tablist">
           {sections.map((section, idx) => {
-            const hasError = Object.keys(errors).some((key) => key.startsWith(`${section.slug}__`))
+            const hasError = section.fields.some(
+              f => errors[`${section.slug}__${f.slug}`]
+            )
             return (
               <button
-                key={section.id || section.slug}
+                key={section.id}
                 role="tab"
                 aria-selected={activeTab === idx}
                 className={`mrd-tab${activeTab === idx ? ' is-active' : ''}${hasError ? ' mf-tab-error' : ''}`}
@@ -1074,36 +714,500 @@ export default function MasterForm({ slug, recordId, onSave, onCancel, variant, 
                 type="button"
               >
                 {section.name}
-                {section.is_repeatable ? (
-                  <span className="mrd-tab-count">{repeatable[section.slug]?.length || 0}</span>
-                ) : null}
+                {section.is_repeatable && (
+                  <span className="mrd-tab-count">
+                    {repeatable[section.slug]?.length || 0}
+                  </span>
+                )}
+                {hasError && <i className="ti ti-alert-circle mf-err-dot" aria-hidden="true" />}
               </button>
             )
           })}
         </div>
-      ) : null}
+      )}
 
+      {/* Tab content */}
       <form onSubmit={handleSubmit} noValidate>
         <div className="card" style={{ marginTop: 0 }}>
-          <div className="mrd-section-title">{sections[activeTab]?.name}</div>
+          <div className="mrd-section-title">
+            {sections[activeTab]?.name}
+          </div>
+
           {sections.map((section, idx) => (
-            <div key={section.id || section.slug} role="tabpanel" hidden={activeTab !== idx}>
-              {renderSection(section)}
+            <div key={section.id} role="tabpanel" hidden={activeTab !== idx}>
+              {section.is_repeatable ? (
+                <RepeatableSection
+                  section={section}
+                  rows={repeatable[section.slug] || []}
+                  onRowChange={handleRowChange}
+                  onAddRow={handleAddRow}
+                  onRemoveRow={handleRemoveRow}
+                  disabled={saving}
+                  existingFiles={existingFiles[section.slug]}
+                />
+              ) : (
+                <>
+                  <FlatSection
+                    section={section}
+                    values={flat[section.slug]}
+                    onChange={handleFlatChange}
+                    disabled={saving}
+                    existingFiles={existingFiles[section.slug]}
+                  />
+                  {section.fields.map(f => {
+                    const err = errors[`${section.slug}__${f.slug}`]
+                    return err
+                      ? <p key={f.id} className="mf-field-error">{err}</p>
+                      : null
+                  })}
+                </>
+              )}
             </div>
           ))}
         </div>
 
-        <div className="mf-footer">
-          {onCancel ? (
-            <button type="button" className="cancel-button" onClick={onCancel} disabled={saving}>
+        {/* Footer actions */}
+        <div className="mf-footer" style={{ display: 'flex', gap: 4 }}>
+          {onCancel && (
+            <button
+              type="button"
+              className="cancel-button"
+              onClick={onCancel}
+              disabled={saving}
+            >
               Cancel
             </button>
-          ) : null}
-          <button type="submit" className="primary-button" disabled={saving}>
-            {saving ? 'Saving…' : isEdit ? 'Save changes' : `Create ${master.name}`}
+          )}
+          <button
+            type="submit"
+            className="primary-button"
+            disabled={saving}
+          >
+            {saving
+              ? <><i className="ti ti-loader-2 mf-spin" /> Saving…</>
+              : isEdit ? 'Save changes' : `Create ${master.name}`
+            }
           </button>
         </div>
       </form>
     </div>
   )
 }
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+// Scoped to .mf-* — won't bleed into the rest of your app
+
+const MF_STYLES = `
+.mf-root {
+  font-family: inherit;
+  color: var(--color-text-primary, #1a1a1a);
+  max-width: 960px;
+}
+
+/* Header */
+.mf-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.mf-header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mf-header-title i {
+  font-size: 20px;
+  color: var(--color-text-secondary, #555);
+}
+.mf-header-title h1 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+.mf-form-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #c0392b;
+  background: #fdf0ef;
+  border: 1px solid #f5c6c4;
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+
+/* Tabs */
+.mf-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--color-border-tertiary, #e0e0e0);
+  margin-bottom: 24px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.mf-tabs::-webkit-scrollbar { display: none; }
+.mf-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #666);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+  margin-bottom: -1px;
+}
+.mf-tab:hover { color: var(--color-text-primary, #111); }
+.mf-tab-active {
+  color: var(--color-text-primary, #111);
+  border-bottom-color: #2563eb;
+}
+.mf-tab-error { color: #c0392b; }
+.mf-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--color-border-tertiary, #e8e8e8);
+  border-radius: 9px;
+}
+.mf-tab-active .mf-tab-count {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.mf-err-dot { font-size: 13px; color: #c0392b; }
+
+/* Flat section grid */
+.mf-flat-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 24px;
+  padding: 4px 0 24px;
+}
+.mf-field-wrap { display: flex; flex-direction: column; gap: 5px; }
+.mf-full { grid-column: 1 / -1; }
+
+.mf-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #555);
+  letter-spacing: 0.01em;
+}
+.mf-required { color: #c0392b; margin-left: 2px; }
+
+/* Inputs */
+.mf-input {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--color-text-primary, #111);
+  background: var(--color-background-primary, #fff);
+  border: 1px solid var(--color-border-secondary, #d4d4d4);
+  border-radius: 6px;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.mf-input:focus { border-color: #2563eb; box-shadow: 0 0 0 2px #dbeafe; }
+.mf-input:disabled { opacity: 0.55; cursor: not-allowed; }
+.mf-input[type="date"] { cursor: pointer; }
+textarea.mf-input { resize: vertical; min-height: 72px; }
+.mf-select { cursor: pointer; }
+
+/* Relation dropdown */
+.mf-relation-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  font-size: 13px;
+  border: 1px solid var(--color-border-secondary, #d4d4d4);
+  border-radius: 6px;
+  background: var(--color-background-primary, #fff);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s;
+}
+.mf-relation-trigger:hover { border-color: #2563eb; }
+.mf-relation-trigger.mf-disabled { opacity: 0.55; cursor: not-allowed; }
+.mf-placeholder { color: var(--color-text-tertiary, #aaa); }
+.mf-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: var(--color-background-primary, #fff);
+  border: 1px solid var(--color-border-primary, #ccc);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+  overflow: hidden;
+}
+.mf-dropdown-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border-tertiary, #eee);
+}
+.mf-dropdown-search i { color: var(--color-text-tertiary, #aaa); font-size: 14px; }
+.mf-dropdown-search input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 13px;
+  background: transparent;
+  color: var(--color-text-primary, #111);
+}
+.mf-dropdown-list { max-height: 200px; overflow-y: auto; }
+.mf-dropdown-hint { padding: 10px 12px; font-size: 13px; color: var(--color-text-tertiary, #aaa); }
+.mf-dropdown-item {
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.mf-dropdown-item:hover { background: var(--color-background-secondary, #f5f5f5); }
+.mf-dropdown-item.mf-active {
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-weight: 500;
+}
+
+/* File fields */
+.mf-file-field { display: flex; flex-direction: column; gap: 6px; }
+.mf-file-drop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 1px dashed var(--color-border-secondary, #ccc);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--color-text-secondary, #555);
+  transition: border-color 0.15s, background 0.15s;
+  background: none;
+  font-family: inherit;
+}
+.mf-file-drop:hover:not(.mf-disabled) {
+  border-color: #2563eb;
+  background: #f0f7ff;
+  color: #1d4ed8;
+}
+.mf-file-drop.mf-disabled { opacity: 0.55; cursor: not-allowed; }
+.mf-file-drop.mf-compact { width: fit-content; }
+.mf-file-existing { display: flex; align-items: center; gap: 8px; }
+.mf-file-thumb { height: 48px; border-radius: 4px; border: 1px solid var(--color-border-tertiary); }
+.mf-file-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #2563eb;
+  text-decoration: none;
+}
+.mf-file-clear {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #c0392b;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+}
+.mf-multifile-field { display: flex; flex-direction: column; gap: 6px; }
+.mf-multifile-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+}
+.mf-multifile-item i { color: var(--color-text-secondary, #555); }
+.mf-multifile-item a { color: #2563eb; text-decoration: none; }
+.mf-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: #d1fae5;
+  color: #065f46;
+}
+
+/* Repeatable section — stacked cards using the same field grid as create */
+.mf-repeat-section { padding: 4px 0 8px; }
+.mf-repeat-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.mf-repeat-card {
+  border: 1px solid var(--color-border-tertiary, #e6e6e6);
+  border-radius: 12px;
+  padding: 16px 18px 4px;
+  background: var(--color-background-primary, #fff);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.mf-repeat-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border-tertiary, #eee);
+}
+.mf-repeat-card-kicker {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary, #6b7280);
+}
+.mf-repeat-card-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+.mf-repeat-card .mf-flat-section {
+  padding: 0 0 12px;
+}
+.mf-repeat-empty {
+  padding: 28px 16px;
+  text-align: center;
+  border: 1px dashed var(--color-border-secondary, #d4d4d4);
+  border-radius: 12px;
+  margin-bottom: 14px;
+  background: var(--color-background-secondary, #fafafa);
+}
+.mf-repeat-empty-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 650;
+}
+.mf-repeat-empty-desc {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary, #666);
+}
+
+.mf-add-row-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #2563eb;
+  background: #f0f7ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.mf-add-row-btn:hover:not(:disabled) { background: #dbeafe; }
+.mf-add-row-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Utility */
+.mf-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  background: none;
+  color: var(--color-text-secondary, #666);
+  transition: background 0.1s, color 0.1s;
+  font-size: 15px;
+}
+.mf-icon-btn:hover { background: var(--color-background-secondary, #f0f0f0); }
+.mf-icon-btn.mf-danger:hover { background: #fef2f2; color: #c0392b; }
+.mf-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.mf-field-error {
+  font-size: 12px;
+  color: #c0392b;
+  margin: -8px 0 8px;
+}
+
+/* Footer */
+.mf-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 20px 0 4px;
+  border-top: 1px solid var(--color-border-tertiary, #eee);
+  margin-top: 8px;
+}
+.mf-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 7px;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.mf-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.mf-btn-primary {
+  background: #2563eb;
+  color: #fff;
+}
+.mf-btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+.mf-btn-ghost {
+  background: var(--color-background-secondary, #f0f0f0);
+  color: var(--color-text-primary, #111);
+  border: 1px solid var(--color-border-secondary, #ddd);
+}
+.mf-btn-ghost:hover:not(:disabled) { background: var(--color-border-tertiary, #e8e8e8); }
+
+/* Loading */
+.mf-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 40px;
+  color: var(--color-text-secondary, #666);
+  font-size: 14px;
+}
+.mf-error {
+  padding: 20px;
+  color: #c0392b;
+  font-size: 14px;
+}
+@keyframes mf-spin { to { transform: rotate(360deg); } }
+.mf-spin { display: inline-block; animation: mf-spin 0.8s linear infinite; }
+
+/* Responsive */
+@media (max-width: 640px) {
+  .mf-flat-section { grid-template-columns: 1fr; }
+  .mf-full { grid-column: 1; }
+  .mf-repeat-table { font-size: 12px; overflow-x: auto; display: block; }
+}
+`

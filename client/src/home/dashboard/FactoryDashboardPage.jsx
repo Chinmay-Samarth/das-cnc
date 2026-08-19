@@ -128,7 +128,7 @@ export default function FactoryDashboardPage() {
           <>
             <button
               type="button"
-              className={`mes-btn ${editing ? 'mes-btn-primary' : 'mes-btn-secondary'}`}
+              className={` ${editing ? 'primary-button' : 'neutral-button'}`}
               onClick={() => setEditing((v) => !v)}
             >
               {editing ? <Check size={15} /> : <Pencil size={15} />}
@@ -136,7 +136,7 @@ export default function FactoryDashboardPage() {
             </button>
             <button
               type="button"
-              className="mes-btn mes-btn-secondary"
+              className="neutral-button"
               onClick={handleResetLayout}
             >
               <LayoutGrid size={15} />
@@ -144,7 +144,7 @@ export default function FactoryDashboardPage() {
             </button>
             <button
               type="button"
-              className="mes-btn mes-btn-secondary"
+              className="neutral-button"
               onClick={() => reload()}
               disabled={loading}
             >

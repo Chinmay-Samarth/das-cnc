@@ -14,6 +14,10 @@ import { formatDisplayDate } from '../utils/dateFormat'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function relationRecordId(cell) {
+  return cell?.linked_record_id || cell?.value || null
+}
+
 function formatValue(field, cell) {
   if (!cell) return '—'
 
@@ -31,7 +35,7 @@ function formatValue(field, cell) {
   }
 
   if (field.field_type === 'relation') {
-    return cell._label || cell.linked_record_id || '—'
+    return cell._label || relationRecordId(cell) || '—'
   }
 
   if (field.field_type === 'date' && cell.value) {
@@ -333,16 +337,21 @@ export default function MasterRecordDetailPage() {
 
     async function getLabel(relatedSlug, recordId) {
       if (!relatedSlug || !recordId) return null
-      if (!lookupCache[relatedSlug]) {
-        try {
-          const res = await api.get(`/masters/${relatedSlug}/lookup`)
-          lookupCache[relatedSlug] = {}
-          for (const item of res.data) {
-            lookupCache[relatedSlug][item.record_id] = item.label
-          }
-        } catch { return recordId }
+      if (!lookupCache[relatedSlug]) lookupCache[relatedSlug] = {}
+      if (lookupCache[relatedSlug][recordId]) return lookupCache[relatedSlug][recordId]
+      try {
+        const res = await api.get(`/masters/${relatedSlug}/lookup`, {
+          params: { record_id: recordId },
+        })
+        const match = Array.isArray(res.data)
+          ? res.data.find((item) => item.record_id === recordId)
+          : null
+        const label = match?.label || recordId
+        lookupCache[relatedSlug][recordId] = label
+        return label
+      } catch {
+        return recordId
       }
-      return lookupCache[relatedSlug]?.[recordId] || recordId
     }
 
     const updatedFlat = { ...flat }
@@ -355,8 +364,9 @@ export default function MasterRecordDetailPage() {
       if (!section.is_repeatable) {
         for (const field of relFields) {
           const cell = updatedFlat[section.slug]?.[field.slug]
-          if (cell?.linked_record_id) {
-            const label = await getLabel(field.related_master_slug, cell.linked_record_id)
+          const relatedId = relationRecordId(cell)
+          if (relatedId) {
+            const label = await getLabel(field.related_master_slug, relatedId)
             updatedFlat[section.slug][field.slug] = { ...cell, _label: label }
           }
         }
@@ -365,8 +375,9 @@ export default function MasterRecordDetailPage() {
         for (let ri = 0; ri < rows.length; ri++) {
           for (const field of relFields) {
             const cell = rows[ri][field.slug]
-            if (cell?.linked_record_id) {
-              const label = await getLabel(field.related_master_slug, cell.linked_record_id)
+            const relatedId = relationRecordId(cell)
+            if (relatedId) {
+              const label = await getLabel(field.related_master_slug, relatedId)
               updatedRep[section.slug][ri][field.slug] = { ...cell, _label: label }
             }
           }

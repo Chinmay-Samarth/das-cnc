@@ -87,11 +87,28 @@ async function runThreeWayMatch(poId) {
   }
 
   let invoice = null;
-  if (po.invoice_id) {
+  let invoiceId = po.invoice_id;
+  if (!invoiceId) {
+    const { data: girnInvoice } = await supabase
+      .from('girns')
+      .select('invoice_id')
+      .eq('purchase_order_id', poId)
+      .not('invoice_id', 'is', null)
+      .limit(1)
+      .maybeSingle();
+    invoiceId = girnInvoice?.invoice_id || null;
+    if (invoiceId) {
+      await supabase
+        .from('purchase_orders')
+        .update({ invoice_id: invoiceId, updated_at: new Date().toISOString() })
+        .eq('id', poId);
+    }
+  }
+  if (invoiceId) {
     const { data } = await supabase
       .from('invoices')
       .select('id, line_items, total_amount')
-      .eq('id', po.invoice_id)
+      .eq('id', invoiceId)
       .maybeSingle();
     invoice = data;
   }

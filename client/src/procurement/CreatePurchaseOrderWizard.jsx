@@ -38,14 +38,18 @@ export default function CreatePurchaseOrderWizard() {
   const [lines, setLines] = useState([]);
   const [printed, setPrinted] = useState(false);
 
+  const [itemSources, setItemSources] = useState({});
+
   const loadDemand = useCallback(async () => {
     const { data } = await api.get('/purchase-orders/demand-summary');
     const items = data.items || [];
     setDemand(items);
     const nextQty = {};
     const nextSel = {};
+    const nextSources = {};
     for (const item of items) {
       nextQty[item.master_record_id] = String(item.suggested_qty);
+      nextSources[item.master_record_id] = item.sources || [];
     }
     if (seedMasterId) {
       nextSel[seedMasterId] = true;
@@ -56,6 +60,7 @@ export default function CreatePurchaseOrderWizard() {
     }
     setQtys(nextQty);
     setSelected(nextSel);
+    setItemSources((prev) => ({ ...nextSources, ...prev }));
     return items;
   }, [seedMasterId, searchParams]);
 
@@ -85,12 +90,15 @@ export default function CreatePurchaseOrderWizard() {
         );
         const sel = {};
         const q = {};
+        const nextSources = {};
         for (const l of order.lines || []) {
           sel[l.master_record_id] = true;
           q[l.master_record_id] = String(l.quantity);
+          if (l.sources) nextSources[l.master_record_id] = l.sources;
         }
         setSelected((prev) => ({ ...prev, ...sel }));
         setQtys((prev) => ({ ...prev, ...q }));
+        setItemSources((prev) => ({ ...prev, ...nextSources }));
         if (order.status !== 'draft') setStep(4);
       }
     } catch (err) {
@@ -105,7 +113,10 @@ export default function CreatePurchaseOrderWizard() {
   }, [bootstrap]);
 
   const selectedItems = useMemo(() => {
-    const fromDemand = demand.filter((d) => selected[d.master_record_id]);
+    const fromDemand = demand.filter((d) => selected[d.master_record_id]).map((d) => ({
+      ...d,
+      sources: itemSources[d.master_record_id] || d.sources || [],
+    }));
     const extraIds = Object.keys(selected).filter(
       (id) => selected[id] && !demand.some((d) => d.master_record_id === id)
     );
@@ -121,12 +132,39 @@ export default function CreatePurchaseOrderWizard() {
         campaign_requirement: Number(line?.campaign_requirement || 0),
         trigger_reason: line?.trigger_reason || 'manual',
         supplier_id: supplierId || null,
+        sources: itemSources[id] || line?.sources || [],
+        master_slug: line?.master_slug || 'raw-material',
       };
     });
     return [...fromDemand, ...extras];
-  }, [demand, selected, lines, qtys, supplierId]);
+  }, [demand, selected, lines, qtys, supplierId, itemSources]);
 
   const selectedSupplier = suppliers.find((s) => s.id === supplierId);
+
+  const linkedSuppliers = useMemo(() => {
+    if (!selectedItems.length) return [];
+    const idSets = selectedItems.map(
+      (item) => new Set((itemSources[item.master_record_id] || item.sources || []).map((s) => s.supplier_id))
+    );
+    const shared = idSets.reduce((acc, set) => new Set([...acc].filter((id) => set.has(id))));
+    return suppliers.filter((s) => shared.has(s.id));
+  }, [selectedItems, itemSources, suppliers]);
+
+  function commercialFor(recordId, sid = supplierId) {
+    return (itemSources[recordId] || []).find((s) => s.supplier_id === sid) || null;
+  }
+
+  function applyCommercialRates(sid, currentLines) {
+    return currentLines.map((l) => {
+      const src = commercialFor(l.master_record_id, sid);
+      if (!src) return l;
+      return {
+        ...l,
+        unit_rate: src.rate != null ? String(src.rate) : l.unit_rate,
+        tax_gst: src.tax_gst,
+      };
+    });
+  }
 
   useEffect(() => {
     if (expectedDelivery || !selectedSupplier?.lead_time_days) return;
@@ -150,7 +188,12 @@ export default function CreatePurchaseOrderWizard() {
 
   function canContinue() {
     if (step === 1) return selectedItems.length > 0;
-    if (step === 2) return Boolean(supplierId);
+    if (step === 2) {
+      if (!supplierId) return false;
+      return (
+        linkedSuppliers.some((s) => s.id === supplierId) || po?.supplier_id === supplierId
+      );
+    }
     if (step === 3) return lines.length > 0 && lines.every((l) => Number(l.quantity) > 0);
     return true;
   }
@@ -161,7 +204,11 @@ export default function CreatePurchaseOrderWizard() {
       master_record_id: item.master_record_id,
       quantity: Number(qtys[item.master_record_id] || item.suggested_qty || 0),
       unit: item.unit,
-      unit_rate: Number(lines.find((l) => l.master_record_id === item.master_record_id)?.unit_rate || 0),
+      unit_rate: Number(
+        lines.find((l) => l.master_record_id === item.master_record_id)?.unit_rate ||
+          commercialFor(item.master_record_id)?.rate ||
+          0
+      ),
       campaign_requirement: item.campaign_requirement || 0,
       moq: item.moq || 0,
       trigger_reason: item.trigger_reason || null,
@@ -194,12 +241,22 @@ export default function CreatePurchaseOrderWizard() {
         const saved = await saveDraftHeader();
         setPo(saved);
         setLines(
-          (saved.lines || []).map((l) => ({
-            ...l,
-            quantity: String(l.quantity),
-            unit_rate: String(l.unit_rate ?? 0),
-          }))
+          applyCommercialRates(
+            supplierId,
+            (saved.lines || []).map((l) => ({
+              ...l,
+              quantity: String(l.quantity),
+              unit_rate: String(l.unit_rate ?? 0),
+            }))
+          )
         );
+        const fromSaved = {};
+        for (const l of saved.lines || []) {
+          if (l.sources) fromSaved[l.master_record_id] = l.sources;
+        }
+        if (Object.keys(fromSaved).length) {
+          setItemSources((prev) => ({ ...prev, ...fromSaved }));
+        }
         navigate(`/purchase-orders/create?id=${saved.id}`, { replace: true });
       }
       if (step === 3 && po?.id) {
@@ -274,27 +331,55 @@ export default function CreatePurchaseOrderWizard() {
     }
   }
 
-  function addManualLine(record) {
+  async function addManualLine(record) {
     const recordId = record?.master_record_id || record?.record_id;
     if (!recordId) return;
+    const masterSlug = record.master_slug || 'raw-material';
     setSelected((prev) => ({ ...prev, [recordId]: true }));
     setQtys((prev) => ({ ...prev, [recordId]: prev[recordId] || '1' }));
-    setLines((prev) => {
-      if (prev.some((l) => l.master_record_id === recordId)) return prev;
-      return [
-        ...prev,
-        {
-          master_record_id: recordId,
-          item_label: record.master_record_label || record.label,
-          item_category: 'raw_material',
-          quantity: '1',
-          unit: 'kg',
-          unit_rate: '0',
-          moq: 0,
-          campaign_requirement: 0,
-        },
-      ];
-    });
+    try {
+      const { data } = await api.get(
+        `/purchase-orders/item-sources?master_record_ids=${recordId}&master_slug=${masterSlug}`
+      );
+      const sources = data.sources?.[recordId] || [];
+      setItemSources((prev) => ({ ...prev, [recordId]: sources }));
+      const src = sources.find((s) => s.supplier_id === supplierId) || sources[0];
+      setLines((prev) => {
+        if (prev.some((l) => l.master_record_id === recordId)) return prev;
+        return [
+          ...prev,
+          {
+            master_record_id: recordId,
+            item_label: record.master_record_label || record.label,
+            item_category: 'raw_material',
+            quantity: '1',
+            unit: 'kg',
+            unit_rate: src?.rate != null ? String(src.rate) : '0',
+            tax_gst: src?.tax_gst,
+            moq: 0,
+            campaign_requirement: 0,
+            sources,
+          },
+        ];
+      });
+    } catch {
+      setLines((prev) => {
+        if (prev.some((l) => l.master_record_id === recordId)) return prev;
+        return [
+          ...prev,
+          {
+            master_record_id: recordId,
+            item_label: record.master_record_label || record.label,
+            item_category: 'raw_material',
+            quantity: '1',
+            unit: 'kg',
+            unit_rate: '0',
+            moq: 0,
+            campaign_requirement: 0,
+          },
+        ];
+      });
+    }
   }
 
   if (loading) {
@@ -444,17 +529,39 @@ export default function CreatePurchaseOrderWizard() {
                 Supplier <span className="req">*</span>
                 <select
                   value={supplierId}
-                  onChange={(e) => setSupplierId(e.target.value)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setSupplierId(next);
+                    setLines((prev) => applyCommercialRates(next, prev));
+                  }}
                   required
                   disabled={busy}
                 >
                   <option value="">Select supplier…</option>
-                  {suppliers.map((s) => (
+                  {(linkedSuppliers.length ? linkedSuppliers : []).map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
                     </option>
                   ))}
+                  {supplierId && !linkedSuppliers.some((s) => s.id === supplierId)
+                    ? suppliers
+                        .filter((s) => s.id === supplierId)
+                        .map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))
+                    : null}
                 </select>
+                <span className="table-subtext">
+                  Only suppliers linked as Source in the item Commercials section are listed.
+                </span>
+                {!linkedSuppliers.length ? (
+                  <span className="table-subtext" style={{ color: '#b91c1c' }}>
+                    No shared source found. Add a Source (supplier), Rate, and Tax GST in Commercials
+                    on the raw material master for every selected item.
+                  </span>
+                ) : null}
               </label>
               <label>
                 Expected delivery
@@ -505,6 +612,7 @@ export default function CreatePurchaseOrderWizard() {
                     <th>Qty</th>
                     <th>Unit</th>
                     <th>Rate</th>
+                    <th>GST %</th>
                     <th>Amount</th>
                     <th />
                   </tr>
@@ -513,6 +621,7 @@ export default function CreatePurchaseOrderWizard() {
                   {lines.map((line, idx) => {
                     const qty = Number(line.quantity) || 0;
                     const rate = Number(line.unit_rate) || 0;
+                    const gst = commercialFor(line.master_record_id)?.tax_gst ?? line.tax_gst;
                     const belowMoq = Number(line.moq) > 0 && qty < Number(line.moq);
                     return (
                       <tr key={line.master_record_id}>
@@ -553,6 +662,7 @@ export default function CreatePurchaseOrderWizard() {
                             }
                           />
                         </td>
+                        <td>{gst != null && gst !== '' ? gst : '—'}</td>
                         <td>{formatInr(qty * rate)}</td>
                         <td>
                           <button

@@ -2,6 +2,8 @@ const { createClient } = require('@supabase/supabase-js');
 const {
   loadProcurementMetaForMaster,
   loadSupplierIdForMasterRecord,
+  loadCommercialSourcesForRecords,
+  pickCommercialSource,
   computeOrderQtyWithMoq,
 } = require('./masterFieldEngine');
 const {
@@ -84,7 +86,13 @@ async function enrichPoHeader(row) {
   const supplierId = row.supplier_id;
   let supplier = null;
   if (supplierId) {
-    const { data } = await supabase.from('suppliers').select('id, name, lead_time_days, credit_period_days').eq('id', supplierId).maybeSingle();
+    const { data } = await supabase
+      .from('suppliers')
+      .select(
+        'id, name, lead_time_days, credit_period_days, official_address, billing_address, GSTIN, payment_details, contact_person'
+      )
+      .eq('id', supplierId)
+      .maybeSingle();
     supplier = data;
   }
   const lines = row.lines || [];
@@ -94,6 +102,10 @@ async function enrichPoHeader(row) {
   return {
     ...row,
     supplier_name: supplier?.name ?? null,
+    supplier_address: supplier?.official_address || supplier?.billing_address || null,
+    supplier_gstin: supplier?.GSTIN ?? null,
+    supplier_payment_details: supplier?.payment_details ?? null,
+    supplier_contact_person: supplier?.contact_person ?? null,
     lead_time_days: supplier?.lead_time_days ?? null,
     credit_period_days: supplier?.credit_period_days ?? null,
     fulfillment_pct: fulfillmentPct,
@@ -116,12 +128,27 @@ async function loadPoLines(poId) {
     .select('record_id, label')
     .in('record_id', recordIds);
   const labelById = Object.fromEntries((lookups || []).map((l) => [l.record_id, l.label]));
+  const rmIds = lines.filter((l) => l.item_category !== 'tool').map((l) => l.master_record_id);
+  const toolIds = lines.filter((l) => l.item_category === 'tool').map((l) => l.master_record_id);
+  const [rmSources, toolSources] = await Promise.all([
+    loadCommercialSourcesForRecords(rmIds, 'raw-material').catch(() => ({})),
+    loadCommercialSourcesForRecords(toolIds, 'tool').catch(() => ({})),
+  ]);
 
-  return lines.map((l) => ({
-    ...l,
-    item_label: labelById[l.master_record_id] || l.master_record_id,
-    open_qty: roundQty(Math.max(0, toNumber(l.quantity) - toNumber(l.received_qty))),
-  }));
+  return lines.map((l) => {
+    const masterSlug = l.item_category === 'tool' ? 'tool' : 'raw-material';
+    const sources =
+      (masterSlug === 'tool' ? toolSources : rmSources)[l.master_record_id] || [];
+    const source = pickCommercialSource(sources);
+    return {
+      ...l,
+      item_label: labelById[l.master_record_id] || l.master_record_id,
+      open_qty: roundQty(Math.max(0, toNumber(l.quantity) - toNumber(l.received_qty))),
+      sources,
+      master_slug: masterSlug,
+      tax_gst: source?.tax_gst ?? null,
+    };
+  });
 }
 
 async function getPurchaseOrderById(id, { includeMatch = true } = {}) {
@@ -136,7 +163,7 @@ async function getPurchaseOrderById(id, { includeMatch = true } = {}) {
   const lines = await loadPoLines(id);
   const { data: girns } = await supabase
     .from('girns')
-    .select('id, girn_number, status, received_date, grand_total')
+    .select('id, girn_number, status, received_date, grand_total, invoice_id')
     .eq('purchase_order_id', id)
     .order('created_at', { ascending: false });
 
@@ -158,7 +185,7 @@ async function getPurchaseOrderById(id, { includeMatch = true } = {}) {
   ].filter(Boolean);
   const nameById = await loadEmployeeNames(employeeIds);
 
-  return enrichPoHeader({
+  const header = await enrichPoHeader({
     ...po,
     lines,
     girns: girns || [],
@@ -168,6 +195,16 @@ async function getPurchaseOrderById(id, { includeMatch = true } = {}) {
     sent_by_name: nameById.get(po.sent_by) || null,
     payment_recorded_by_name: nameById.get(po.payment_recorded_by) || null,
   });
+  if (header?.supplier_id) {
+    header.lines = (header.lines || []).map((l) => {
+      const source = pickCommercialSource(l.sources, header.supplier_id);
+      return {
+        ...l,
+        tax_gst: source?.tax_gst ?? l.tax_gst ?? null,
+      };
+    });
+  }
+  return header;
 }
 
 async function loadEmployeeNames(ids) {
@@ -250,6 +287,12 @@ async function buildDemandSummary() {
   const items = [];
   for (const cfg of configs) {
     const seen = new Set();
+    const candidateIds = [
+      ...(cfg.meta || []).map((row) => row.recordId),
+      ...cfg.campaignMap.keys(),
+    ];
+    const sourcesByRecord = await loadCommercialSourcesForRecords(candidateIds, cfg.masterSlug);
+
     for (const row of cfg.meta || []) {
       seen.add(row.recordId);
       const campaignReq = toNumber(cfg.campaignMap.get(row.recordId) || 0);
@@ -269,7 +312,8 @@ async function buildDemandSummary() {
       });
       if (suggestedQty <= 0) continue;
 
-      const supplierId = await loadSupplierIdForMasterRecord(row.recordId, cfg.masterSlug);
+      const sources = sourcesByRecord[row.recordId] || [];
+      const source = pickCommercialSource(sources);
       const trigger =
         netNeed > 0 && belowRol ? 'campaign_and_rol' : netNeed > 0 ? 'campaign' : 'rol';
       items.push({
@@ -285,7 +329,10 @@ async function buildDemandSummary() {
         suggested_qty: suggestedQty,
         moq: toNumber(row.moq),
         unit: stock.unit || cfg.defaultUnit,
-        supplier_id: supplierId,
+        supplier_id: source?.supplier_id || null,
+        sources,
+        unit_rate: source?.rate ?? 0,
+        tax_gst: source?.tax_gst ?? 0,
         trigger_reason: trigger,
       });
     }
@@ -304,7 +351,8 @@ async function buildDemandSummary() {
         isRawMaterial: cfg.itemCategory === 'raw_material',
       });
       if (suggestedQty <= 0) continue;
-      const supplierId = await loadSupplierIdForMasterRecord(recordId, cfg.masterSlug);
+      const sources = sourcesByRecord[recordId] || [];
+      const source = pickCommercialSource(sources);
       items.push({
         master_record_id: recordId,
         item_category: cfg.itemCategory,
@@ -318,7 +366,10 @@ async function buildDemandSummary() {
         suggested_qty: suggestedQty,
         moq: 0,
         unit: stock.unit || cfg.defaultUnit,
-        supplier_id: supplierId,
+        supplier_id: source?.supplier_id || null,
+        sources,
+        unit_rate: source?.rate ?? 0,
+        tax_gst: source?.tax_gst ?? 0,
         trigger_reason: 'campaign',
       });
     }
@@ -475,19 +526,21 @@ async function upsertLineOnDraft(poId, linePayload) {
     .maybeSingle();
 
   if (existing) {
-    await supabase
-      .from('purchase_order_lines')
-      .update({
-        quantity: roundQty(linePayload.quantity),
-        campaign_requirement: toNumber(linePayload.campaign_requirement) || 0,
-        moq: toNumber(linePayload.moq) || 0,
-        unit: linePayload.unit || null,
-        predicted_stockout_date: linePayload.predicted_stockout_date || null,
-        lead_time_days: linePayload.lead_time_days ?? null,
-        trigger_reason: linePayload.trigger_reason || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', existing.id);
+    const updates = {
+      quantity: roundQty(linePayload.quantity),
+      campaign_requirement: toNumber(linePayload.campaign_requirement) || 0,
+      moq: toNumber(linePayload.moq) || 0,
+      unit: linePayload.unit || null,
+      predicted_stockout_date: linePayload.predicted_stockout_date || null,
+      lead_time_days: linePayload.lead_time_days ?? null,
+      trigger_reason: linePayload.trigger_reason || null,
+      updated_at: new Date().toISOString(),
+    };
+    if (linePayload.unit_rate != null) {
+      updates.unit_rate = toNumber(linePayload.unit_rate);
+      updates.amount = computeLineAmount(linePayload.quantity, linePayload.unit_rate);
+    }
+    await supabase.from('purchase_order_lines').update(updates).eq('id', existing.id);
   } else {
     const { data: maxLine } = await supabase
       .from('purchase_order_lines')
@@ -540,6 +593,8 @@ async function buildCampaignLineCandidates() {
     if (qty <= 0) continue;
 
     const supplierId = await loadSupplierIdForMasterRecord(recordId, 'raw-material');
+    const sourcesByRecord = await loadCommercialSourcesForRecords([recordId], 'raw-material');
+    const source = pickCommercialSource(sourcesByRecord[recordId], supplierId);
     candidates.push({
       master_record_id: recordId,
       item_category: 'raw_material',
@@ -547,7 +602,8 @@ async function buildCampaignLineCandidates() {
       campaign_requirement: netNeed,
       moq: toNumber(meta.moq),
       unit: stock.unit || 'kg',
-      supplier_id: supplierId,
+      unit_rate: source?.rate ?? 0,
+      supplier_id: source?.supplier_id || supplierId,
       item_label: meta.label,
     });
   }
@@ -610,11 +666,16 @@ async function createFromAlert(payload, createdBy) {
     masterRecordId,
     masterSlug === 'tool' ? 'tool' : 'raw-material'
   );
+  const sourcesByRecord = await loadCommercialSourcesForRecords(
+    [masterRecordId],
+    masterSlug === 'tool' ? 'tool' : 'raw-material'
+  );
+  const source = pickCommercialSource(sourcesByRecord[masterRecordId], supplierId);
 
-  let poId = await findOpenDraftForSupplier(supplierId);
+  let poId = await findOpenDraftForSupplier(source?.supplier_id || supplierId);
   if (!poId) {
     const po = await insertPoWithLines({
-      supplierId,
+      supplierId: source?.supplier_id || supplierId,
       createdBy,
       lines: [],
     });
@@ -636,6 +697,7 @@ async function createFromAlert(payload, createdBy) {
     moq: toNumber(moq),
     campaign_requirement: toNumber(campaignReq),
     unit: unit || (itemCategory === 'raw_material' ? 'kg' : 'ea'),
+    unit_rate: source?.rate ?? 0,
     predicted_stockout_date: predictedStockoutDate || null,
     lead_time_days: leadTimeDays ?? null,
     trigger_reason: triggerReason || null,
@@ -927,7 +989,45 @@ async function buildGirnDraftFromPo(poId) {
   };
 }
 
+async function linkPoInvoiceFromGirn(girnId) {
+  const { data: girn } = await supabase
+    .from('girns')
+    .select('id, purchase_order_id, invoice_id')
+    .eq('id', girnId)
+    .maybeSingle();
+  if (!girn?.purchase_order_id || !girn.invoice_id) return null;
+
+  const { data: po } = await supabase
+    .from('purchase_orders')
+    .select('id, invoice_id, due_date, total_amount')
+    .eq('id', girn.purchase_order_id)
+    .maybeSingle();
+  if (!po) return null;
+
+  const { data: invoice } = await supabase
+    .from('invoices')
+    .select('id, total_amount, due_date')
+    .eq('id', girn.invoice_id)
+    .maybeSingle();
+
+  const updates = { updated_at: new Date().toISOString() };
+  if (!po.invoice_id) updates.invoice_id = girn.invoice_id;
+  if (!po.due_date && invoice?.due_date) updates.due_date = invoice.due_date;
+
+  await supabase.from('purchase_orders').update(updates).eq('id', po.id);
+
+  const { runThreeWayMatch } = require('./purchaseOrderMatchEngine');
+  await runThreeWayMatch(po.id).catch((e) =>
+    console.error('Three-way match after GIRN invoice link failed:', e.message)
+  );
+  return po.id;
+}
+
 async function rollupReceivedQtyFromGirn(girnId) {
+  await linkPoInvoiceFromGirn(girnId).catch((e) =>
+    console.error('Link PO invoice from GIRN failed:', e.message)
+  );
+
   const { data: girn } = await supabase
     .from('girns')
     .select('id, purchase_order_id, status')
@@ -1042,6 +1142,7 @@ module.exports = {
   splitPurchaseOrder,
   linkInvoiceToPo,
   buildGirnDraftFromPo,
+  linkPoInvoiceFromGirn,
   rollupReceivedQtyFromGirn,
   buildCampaignLineCandidates,
 };

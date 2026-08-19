@@ -4,6 +4,7 @@ import {
   CalendarCheck,
   ClipboardList,
   Factory,
+  FileX,
   PackageCheck,
   PackageX,
   Plus,
@@ -155,6 +156,7 @@ export default function DashboardKpiStrip({ data, editing, order, onChange }) {
                 title="Hide tile"
                 onClick={() => hideTile(id)}
                 disabled={visible.length <= 1}
+                style={{display: 'flex', alignItems: 'cneter', justifyContent: 'center'}}
               >
                 −
               </button>
@@ -197,8 +199,9 @@ export default function DashboardKpiStrip({ data, editing, order, onChange }) {
                   type="button"
                   role="menuitem"
                   onClick={() => addTile(id)}
+                  className='global-serach-result'
                 >
-                  {catalog[id].label}
+                 <span className='global-search-result-title'> {catalog[id].label}</span>
                 </button>
               ))}
             </div>

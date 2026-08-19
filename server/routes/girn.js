@@ -447,6 +447,13 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
 
     if (girnError) throw girnError;
 
+    try {
+      const { linkPoInvoiceFromGirn } = require('../services/purchaseOrderEngine');
+      await linkPoInvoiceFromGirn(newGirn.id);
+    } catch (linkErr) {
+      console.error('Link PO invoice from GIRN create failed:', linkErr.message);
+    }
+
     if (resolvedItems.length > 0) {
       const itemRows = resolvedItems.map((item) => mapItemToDbRow(newGirn.id, item));
 
@@ -747,6 +754,13 @@ router.put('/:id', verifyEmployeeAuth, async (req, res) => {
       .single();
 
     if (updateError) throw updateError;
+
+    try {
+      const { linkPoInvoiceFromGirn } = require('../services/purchaseOrderEngine');
+      await linkPoInvoiceFromGirn(updatedGirn.id);
+    } catch (linkErr) {
+      console.error('Link PO invoice from GIRN update failed:', linkErr.message);
+    }
 
     // Replace items — delete existing, re-insert
     const { error: deleteError } = await supabase

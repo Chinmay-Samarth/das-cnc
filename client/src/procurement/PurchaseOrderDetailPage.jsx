@@ -1,11 +1,31 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { pdf } from '@react-pdf/renderer';
 import api from '../api/client';
 import { formatDisplayDate } from '../utils/dateFormat';
 import { PageHeader, StatusBadge, AlertBanner, ProgressRing } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
-import { downloadPurchaseOrderPdf, printPurchaseOrderPdf, formatInr } from './downloadPurchaseOrderPdf';
-import { Download, Printer, Pencil, Split, PackagePlus, Truck, Banknote, ExternalLink, Link2, RefreshCw, Check, ClipboardList } from 'lucide-react';
+import InvoicePdfViewer from '../components/Invoices/InvoicePdfViewer';
+import PurchaseOrderPdfDocument from './PurchaseOrderPdfDocument';
+import {
+  downloadPurchaseOrderPdf,
+  printPurchaseOrderPdf,
+  regeneratePurchaseOrderPdf,
+  formatInr,
+} from './downloadPurchaseOrderPdf';
+import {
+  Download,
+  Printer,
+  Pencil,
+  Split,
+  PackagePlus,
+  Truck,
+  Banknote,
+  RefreshCw,
+  Check,
+  ClipboardList,
+  ExternalLink,
+} from 'lucide-react';
 
 function poStatusTone(status) {
   if (status === 'paid') return 'completed';
@@ -19,12 +39,14 @@ export default function PurchaseOrderDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [po, setPo] = useState(null);
+  const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [invoiceId, setInvoiceId] = useState('');
+  const [pdfFile, setPdfFile] = useState(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       setLoading(true);
       setError('');
@@ -35,11 +57,73 @@ export default function PurchaseOrderDetailPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [id]);
 
   useEffect(() => {
     load();
-  }, [id]);
+  }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get('/sales-invoices/company-settings')
+      .then(({ data }) => {
+        if (!cancelled) setCompany(data?.company_settings || {});
+      })
+      .catch(() => {
+        if (!cancelled) setCompany({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!po) {
+      setPdfFile(null);
+      setPdfLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    let blobUrl = null;
+    setPdfLoading(true);
+
+    async function resolvePdf() {
+      try {
+        if (po.pdf_url) {
+          if (!cancelled) setPdfFile(po.pdf_url);
+          return;
+        }
+        if (company == null) return;
+        const blob = await pdf(
+          <PurchaseOrderPdfDocument po={po} company={company || {}} />
+        ).toBlob();
+        if (cancelled) return;
+        blobUrl = URL.createObjectURL(blob);
+        setPdfFile(blobUrl);
+      } catch (err) {
+        console.error('Failed to preview purchase order PDF', err);
+        if (!cancelled) setPdfFile(null);
+      } finally {
+        if (!cancelled && (po.pdf_url || company != null)) setPdfLoading(false);
+      }
+    }
+
+    resolvePdf();
+    return () => {
+      cancelled = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [
+    po?.id,
+    po?.pdf_url,
+    po?.status,
+    po?.po_number,
+    po?.updated_at,
+    po?.notes,
+    company,
+  ]);
 
   async function runAction(label, fn) {
     setBusy(true);
@@ -58,6 +142,46 @@ export default function PurchaseOrderDetailPage() {
     }
   }
 
+  async function handlePrint() {
+    if (!po) return;
+    setBusy(true);
+    try {
+      const stored = await printPurchaseOrderPdf({ ...po, company: company || {} });
+      if (stored?.id) setPo(stored);
+    } catch (err) {
+      await appAlert({ title: 'Print failed', message: err.message, tone: 'danger' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDownload() {
+    if (!po) return;
+    setBusy(true);
+    try {
+      const stored = await downloadPurchaseOrderPdf({ ...po, company: company || {} });
+      if (stored?.id) setPo(stored);
+    } catch (err) {
+      await appAlert({ title: 'Download failed', message: err.message, tone: 'danger' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRegenerate() {
+    if (!po) return;
+    setBusy(true);
+    try {
+      const stored = await regeneratePurchaseOrderPdf({ ...po, company: company || {} });
+      if (stored?.id) setPo(stored);
+      await appAlert({ title: 'PDF regenerated', message: 'Purchase order PDF regenerated.', tone: 'success' });
+    } catch (err) {
+      await appAlert({ title: 'Regenerate failed', message: err.message, tone: 'danger' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (loading) return <p className="muted">Loading…</p>;
   if (error) return <AlertBanner tone="danger">{error}</AlertBanner>;
   if (!po) return null;
@@ -69,7 +193,7 @@ export default function PurchaseOrderDetailPage() {
   const allReceived = (po.lines || []).length > 0 && (po.lines || []).every((l) => Number(l.received_qty) >= Number(l.quantity));
 
   return (
-    <div>
+    <div className='app-shell'>
       <PageHeader
         title={po.po_number}
         subtitle={po.supplier_name || 'No supplier assigned'}
@@ -163,6 +287,23 @@ export default function PurchaseOrderDetailPage() {
         </AlertBanner>
       ) : null}
 
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+        <button type="button" className="neutral-button" disabled={busy} onClick={handlePrint}>
+          <Printer size={16} />
+          Print PO
+        </button>
+        <button type="button" className="neutral-button" disabled={busy} onClick={handleDownload}>
+          <Download size={16} />
+          Download PDF
+        </button>
+        <button type="button" className="neutral-button" disabled={busy} onClick={handleRegenerate}>
+          <RefreshCw size={16} />
+          Regenerate PDF
+        </button>
+      </div>
+
+      <div className="sales-invoice-detail-layout">
+      <div>
       <div className="card" style={{ marginBottom: 16, display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
         <ProgressRing value={po.fulfillment_pct || 0} max={100} label={`${Math.round(po.fulfillment_pct || 0)}%`} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 16, flex: 1 }}>
@@ -234,46 +375,6 @@ export default function PurchaseOrderDetailPage() {
         </div>
       </div>
 
-      <div className="card" style={{ marginBottom: 16 }}>
-        <h3 style={{ marginTop: 0 }}>PDF</h3>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <button
-            type="button"
-            className="neutral-button"
-            disabled={busy}
-            onClick={() =>
-              runAction('Download PDF', async () => {
-                const stored = await downloadPurchaseOrderPdf(po);
-                setPo(stored);
-              })
-            }
-          >
-            <Download size={16} />
-            Download PDF
-          </button>
-          <button
-            type="button"
-            className="primary-button"
-            disabled={busy}
-            onClick={() =>
-              runAction('Print PDF', async () => {
-                const stored = await printPurchaseOrderPdf(po);
-                setPo(stored);
-              })
-            }
-          >
-            <Printer size={16} />
-            Print PDF
-          </button>
-          {po.pdf_url ? (
-            <a href={po.pdf_url} target="_blank" rel="noreferrer" className="neutral-button">
-              <ExternalLink size={16} />
-              View stored PDF
-            </a>
-          ) : null}
-        </div>
-      </div>
-
       {openExceptions.length > 0 ? (
         <div className="card" style={{ marginBottom: 16 }}>
           <h3 style={{ marginTop: 0 }}>Match exceptions</h3>
@@ -298,46 +399,19 @@ export default function PurchaseOrderDetailPage() {
               </li>
             ))}
           </ul>
-        </div>
-      ) : null}
-
-      {isDue || isDelivered || po.status === 'paid' ? (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <h3 style={{ marginTop: 0 }}>Link vendor invoice</h3>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              placeholder="Invoice UUID"
-              value={invoiceId}
-              onChange={(e) => setInvoiceId(e.target.value)}
-              style={{ flex: 1 }}
-            />
-            <button
-              type="button"
-              className="neutral-button"
-              disabled={busy || !invoiceId.trim()}
-              onClick={() =>
-                runAction('Link invoice', async () => {
-                  await api.post(`/purchase-orders/${id}/link-invoice`, { invoice_id: invoiceId.trim() });
-                })
-              }
-            >
-              <Link2 size={16} />
-              Link
-            </button>
-            <button
-              type="button"
-              className="neutral-button"
-              disabled={busy}
-              onClick={() =>
-                runAction('Re-run match', async () => {
-                  await api.get(`/purchase-orders/${id}/match`);
-                })
-              }
-            >
-              <RefreshCw size={16} />
-              Re-run match
-            </button>
-          </div>
+          <button
+            type="button"
+            className="neutral-button"
+            disabled={busy}
+            onClick={() =>
+              runAction('Re-run match', async () => {
+                await api.get(`/purchase-orders/${id}/match`);
+              })
+            }
+          >
+            <RefreshCw size={16} />
+            Re-run match
+          </button>
         </div>
       ) : null}
 
@@ -351,6 +425,12 @@ export default function PurchaseOrderDetailPage() {
                   <ClipboardList size={16} />
                   {g.girn_number} — {g.status}
                 </Link>
+                {g.invoice_id ? (
+                  <Link to={`/invoices/${g.invoice_id}`} className="link-button" style={{ marginLeft: 8 }}>
+                    <ExternalLink size={14} />
+                    Vendor invoice
+                  </Link>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -370,6 +450,20 @@ export default function PurchaseOrderDetailPage() {
             Receive via GIRN
           </button>
         ) : null}
+      </div>
+      </div>
+
+      <section className="mes-card sales-invoice-pdf-card">
+        <InvoicePdfViewer
+          file={pdfFile}
+          title={`Purchase order ${po.po_number || 'draft'}`}
+          loading={pdfLoading}
+          emptyTitle="PDF not ready"
+          emptyDescription="Generate the purchase order PDF to preview it here."
+          emptyActionLabel={busy ? 'Printing…' : 'Print PO'}
+          onEmptyAction={busy ? undefined : handlePrint}
+        />
+      </section>
       </div>
     </div>
   );

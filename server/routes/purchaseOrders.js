@@ -19,6 +19,7 @@ const {
   linkInvoiceToPo,
   buildGirnDraftFromPo,
 } = require('../services/purchaseOrderEngine');
+const { loadCommercialSourcesForRecords } = require('../services/masterFieldEngine');
 const {
   runThreeWayMatch,
   resolveMatchException,
@@ -80,6 +81,20 @@ router.get(
   wrap(async (req, res) => {
     const summary = await buildDemandSummary();
     return res.json(summary);
+  })
+);
+
+router.get(
+  '/item-sources',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const ids = String(req.query.master_record_ids || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const masterSlug = req.query.master_slug === 'tool' ? 'tool' : 'raw-material';
+    const sources = await loadCommercialSourcesForRecords(ids, masterSlug);
+    return res.json({ sources });
   })
 );
 
