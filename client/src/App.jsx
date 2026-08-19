@@ -24,6 +24,7 @@ import MasterPage from './masters/MasterPage';
 import MasterBuilderPage from './masters/MasterBuilderPage';
 import MasterRecordDetailPage from './masters/MasterRecordDetailPage';
 import MasterRecordEditPage from './masters/MasterRecordEditPage';
+import MasterRecordCreatePage from './masters/MasterRecordCreatePage';
 import GIRNListPage from './girn/GIRNListPage';
 import CreateGIRNPage from './girn/CreateGIRNPage';
 import GIRNDetailPage from './girn/GIRNDetailPage';
@@ -52,6 +53,17 @@ import SalesInvoiceDetailsPage from './salesInvoices/SalesInvoiceDetailsPage';
 import AddSalesInvoiceWizard from './salesInvoices/AddSalesInvoiceWizard';
 import CompanySettingsPage from './salesInvoices/CompanySettingsPage';
 import NotFoundPage from './pages/NotFoundPage';
+import PurchaseOrderDetailPage from './procurement/PurchaseOrderDetailPage';
+import CreatePurchaseOrderPage from './procurement/CreatePurchaseOrderPage';
+import PurchaseOrdersTab from './procurement/PurchaseOrdersTab';
+
+function PurchaseOrdersListPage() {
+  return (
+    <main className="mes-shell">
+      <PurchaseOrdersTab />
+    </main>
+  );
+}
 
 function RequireAuth() {
   const { user, loading } = useAuth();
@@ -147,6 +159,9 @@ export default function App() {
               <Route element={<RequireAdmin />}>
                 <Route path="/home" element={<HomePage />} />
                 <Route path="/notifications" element={<NotificationsPage />} />
+                <Route path="/purchase-orders" element={<PurchaseOrdersListPage />} />
+                <Route path="/purchase-orders/create" element={<CreatePurchaseOrderPage />} />
+                <Route path="/purchase-orders/:id" element={<PurchaseOrderDetailPage />} />
               </Route>
               <Route path="/attendance" element={<AttendancePage />} />
               <Route path="/employees" element={<EmployeesPage />} />
@@ -170,6 +185,7 @@ export default function App() {
               <Route path="/customers/:id" element={<CustomerDetailsPage />} />
               <Route path="/customers/add" element={<AddCustomerPage />} />
               <Route path="/customers/:id/edit" element={<CustomerDetailsPage />} />
+              <Route path="/masters/:slug/records/new" element={<MasterRecordCreatePage />} />
               <Route path="/masters/:slug/records/:id/edit" element={<MasterRecordEditPage />} />
               <Route path="/masters/:slug/records/:id" element={<MasterRecordDetailPage />} />
               <Route path="/masters/:slug" element={<MasterPage />} />

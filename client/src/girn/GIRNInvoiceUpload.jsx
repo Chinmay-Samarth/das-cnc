@@ -54,7 +54,7 @@ export default function GIRNInvoiceUpload({ onExtracted, disabled = false }) {
       {isIdle ? (
         <button
           type="button"
-          className="primary-button"
+          className="neutral-button"
           disabled={disabled}
           onClick={() => inputRef.current?.click()}
         >

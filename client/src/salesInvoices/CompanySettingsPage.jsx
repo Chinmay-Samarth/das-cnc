@@ -1,26 +1,25 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save } from 'lucide-react';
 import api from '../api/client';
-import { PageHeader } from '../components/mes';
+import { FormActions, FormPage } from '../components/mes';
 import { appAlert } from '../components/dialog';
 
 const FIELDS = [
-  ['legal_name', 'Legal name'],
-  ['trade_name', 'Trade name'],
-  ['gstin', 'GSTIN'],
-  ['state_code', 'State code'],
-  ['state', 'State'],
-  ['city', 'City'],
-  ['address_line1', 'Address line 1'],
-  ['address_line2', 'Address line 2'],
-  ['pan', 'PAN'],
-  ['phone', 'Phone'],
-  ['email', 'Email'],
-  ['bank_name', 'Bank name'],
-  ['bank_account', 'Bank account'],
-  ['ifsc', 'IFSC'],
-  ['invoice_prefix', 'Invoice prefix'],
+  ['legal_name', 'Legal name', true],
+  ['trade_name', 'Trade name', false],
+  ['gstin', 'GSTIN', true],
+  ['state_code', 'State code', true],
+  ['state', 'State', false],
+  ['city', 'City', false],
+  ['address_line1', 'Address line 1', false],
+  ['address_line2', 'Address line 2', false],
+  ['pan', 'PAN', false],
+  ['phone', 'Phone', false],
+  ['email', 'Email', false],
+  ['bank_name', 'Bank name', false],
+  ['bank_account', 'Bank account', false],
+  ['ifsc', 'IFSC', false],
+  ['invoice_prefix', 'Invoice prefix', true],
 ];
 
 export default function CompanySettingsPage() {
@@ -66,38 +65,23 @@ export default function CompanySettingsPage() {
   }
 
   return (
-    <main className="mes-shell">
-      <PageHeader
-        eyebrow="Sales invoices"
-        title="Company settings"
-        subtitle="Seller details and invoice prefix used for new invoices"
-        actions={
-          <button
-            type="button"
-            className="mes-btn mes-btn-secondary"
-            onClick={() => navigate('/sales-invoices')}
-          >
-            <ArrowLeft size={15} />
-            Back
-          </button>
-        }
-      />
-
-      {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading…</p> : null}
-
-      {!loading ? (
-        <form className="mes-card" style={{ padding: 20 }} onSubmit={handleSave}>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-              gap: 12,
-            }}
-          >
-            {FIELDS.map(([key, label]) => (
-              <label key={key}>
+    <FormPage
+      eyebrow="Sales invoices"
+      title="Company settings"
+      subtitle="Seller details and invoice prefix used for new invoices."
+      onBack={() => navigate('/sales-invoices')}
+      backLabel="All invoices"
+      error={error}
+    >
+      {loading ? (
+        <p className="muted">Loading…</p>
+      ) : (
+        <form onSubmit={handleSave}>
+          <div className="form-page-grid">
+            {FIELDS.map(([key, label, required]) => (
+              <label key={key} className={key.startsWith('address') ? 'form-span-2' : undefined}>
                 {label}
+                {required ? <span className="required-mark"> *</span> : null}
                 <input
                   value={form[key] ?? ''}
                   onChange={(e) =>
@@ -109,19 +93,19 @@ export default function CompanySettingsPage() {
                           : e.target.value,
                     }))
                   }
-                  required={['legal_name', 'gstin', 'state_code', 'invoice_prefix'].includes(key)}
+                  required={required}
+                  disabled={saving}
                 />
               </label>
             ))}
           </div>
-          <div style={{ marginTop: 16 }}>
-            <button type="submit" className="mes-btn mes-btn-primary" disabled={saving}>
-              <Save size={15} />
-              Save
-            </button>
-          </div>
+          <FormActions
+            saving={saving}
+            onCancel={() => navigate('/sales-invoices')}
+            saveLabel={saving ? 'Saving…' : 'Save settings'}
+          />
         </form>
-      ) : null}
-    </main>
+      )}
+    </FormPage>
   );
 }

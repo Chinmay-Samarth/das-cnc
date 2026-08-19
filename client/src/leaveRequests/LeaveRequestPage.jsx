@@ -153,7 +153,7 @@ function ApplicantLeaveView() {
               disabled={saving}
             />
           </label>
-          <button type="submit" className="mes-btn primary-button" style={{marginTop: 16}} disabled={saving}>
+          <button type="submit" className="primary-button" style={{marginTop: 16}} disabled={saving}>
             {saving ? 'Applying…' : 'Apply'}
           </button>
         </div>

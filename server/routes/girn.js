@@ -167,7 +167,20 @@ function mapItemToDbRow(girnId, item) {
     vat_percentage: parseFloat(item.vat_percentage) || 0,
     vat_amount: parseFloat(item.vat_amount) || 0,
     total_amount: parseFloat(item.total_amount) || 0,
+    purchase_order_line_id: item.purchase_order_line_id || null,
   };
+}
+
+async function postGirnApprovedHooks(girnId) {
+  const { rollupReceivedQtyFromGirn } = require('../services/purchaseOrderEngine');
+  const { seedToolInstancesFromGirn } = require('../services/toolLifeEngine');
+  const { triggerPredictiveReorderEvaluation } = require('../services/predictiveReorderEngine');
+
+  await rollupReceivedQtyFromGirn(girnId);
+  await seedToolInstancesFromGirn(girnId).catch((e) =>
+    console.error('Tool instance seed failed:', e.message)
+  );
+  triggerPredictiveReorderEvaluation();
 }
 
 async function buildDraftGirnFromInvoice(invoice, employeeId) {
@@ -320,6 +333,7 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       items = [],
       auto_approve = false,
       outsource_shipment_id = null,
+      purchase_order_id = null,
     } = req.body;
 
     if (!received_by || !received_date) {
@@ -352,14 +366,28 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       return res.status(400).json({ error: 'Unable to resolve supplier from the provided details' });
     }
 
-    if (
-      isOutsourceReturn &&
+    if (isOutsourceReturn &&
       outsourceShipment.supplier_id &&
       resolvedSupplierId !== outsourceShipment.supplier_id
     ) {
       return res.status(400).json({
         error: 'GIRN supplier must match the outsource shipment supplier',
       });
+    }
+
+    let linkedPo = null;
+    if (purchase_order_id) {
+      const { data: poRow, error: poErr } = await supabase
+        .from('purchase_orders')
+        .select('id, po_number, supplier_id, status')
+        .eq('id', purchase_order_id)
+        .maybeSingle();
+      if (poErr) throw poErr;
+      if (!poRow) return res.status(404).json({ error: 'Purchase order not found' });
+      if (poRow.supplier_id && poRow.supplier_id !== resolvedSupplierId) {
+        return res.status(400).json({ error: 'GIRN supplier must match the purchase order supplier' });
+      }
+      linkedPo = poRow;
     }
 
     if (items.length === 0) {
@@ -394,7 +422,7 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
         invoice_id: invoice_id || null,
         supplier_id: resolvedSupplierId,
         received_by,
-        po_reference: po_reference || outsourceShipment?.shipment_number || null,
+        po_reference: po_reference || linkedPo?.po_number || outsourceShipment?.shipment_number || null,
         received_date,
         csr: csr || null,
         notes: notes || null,
@@ -402,6 +430,7 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
         status: initialStatus,
         source: isOutsourceReturn ? 'outsource_return' : 'standard',
         outsource_shipment_id: isOutsourceReturn ? outsource_shipment_id : null,
+        purchase_order_id: linkedPo?.id || purchase_order_id || null,
         ...(shouldAutoApprove
           ? {
               approved_by: req.user?.sub || received_by || null,
@@ -432,6 +461,7 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
 
       try {
         await applyStockForGirn(newGirn.id, insertedItems || []);
+        await postGirnApprovedHooks(newGirn.id);
       } catch (stockErr) {
         await supabase.from('girn_items').delete().eq('girn_id', newGirn.id);
         await supabase.from('girns').delete().eq('id', newGirn.id);
@@ -806,6 +836,7 @@ router.post('/:id/submit', verifyEmployeeAuth, async (req, res) => {
         if (!skipStock) {
           emitInventoryUpdated({ action: 'girn_approved', girnId: id });
         }
+        await postGirnApprovedHooks(id);
         return res.json({ message: 'GIRN approved (no inspection required)', girn: approved });
       } catch (approveErr) {
         await rollbackStock(stockUpdates, ledgerIds);
@@ -921,6 +952,8 @@ router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
     if (girn.source !== 'outsource_return') {
       emitInventoryUpdated({ action: 'girn_approved', girnId: id });
     }
+
+    await postGirnApprovedHooks(id);
 
     return res.json({
       message:

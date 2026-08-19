@@ -174,7 +174,7 @@ export default function MasterPage() {
             <div className="">
               <button
                 className="primary-button "
-                onClick={() => setPanel({ mode: 'create' })}
+                onClick={() => navigate(`/masters/${slug}/records/new`)}
               >
                 <Plus size={16} style={{display: 'inline', marginRight:4}}/>
                 New {master?.slug}
@@ -268,16 +268,10 @@ export default function MasterPage() {
                 <MasterForm
                   slug={slug}
                   recordId={panel.id}
+                  variant="edit"
+                  embedded
                   onSave={() => { loadRecords(); setPanel({ mode: 'view', id: panel.id }) }}
                   onCancel={() => setPanel({ mode: 'view', id: panel.id })}
-                />
-              )}
-
-              {panel.mode === 'create' && (
-                <MasterForm
-                  slug={slug}
-                  onSave={() => { loadRecords(); setPanel(null) }}
-                  onCancel={() => setPanel(null)}
                 />
               )}
 

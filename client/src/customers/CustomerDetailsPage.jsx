@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Pencil } from 'lucide-react';
 import api from '../api/client';
 import { formatDisplayDateTime } from '../utils/dateFormat';
+import { AlertBanner, FormActions } from '../components/mes';
 
 const emptyFormData = {
   name: '',
@@ -208,8 +209,9 @@ export default function CustomerDetailsPage() {
           </>
         ) : (
           <form onSubmit={handleSubmit}>
-            {error ? <p className="error-message">{error}</p> : null}
+            {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
 
+            <div className="form-page-grid">
             <label htmlFor="name">
               Customer Name <span style={{ color: '#b91c1c' }}>*</span>
               <input
@@ -343,7 +345,7 @@ export default function CustomerDetailsPage() {
               />
             </label>
 
-            <label htmlFor="payment_terms">
+            <label htmlFor="payment_terms" className="form-span-2">
               Payment Terms
               <input
                 id="payment_terms"
@@ -354,20 +356,13 @@ export default function CustomerDetailsPage() {
                 disabled={submitting}
               />
             </label>
-
-            <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
-              <button type="submit" className="primary-button" disabled={submitting}>
-                {submitting ? 'Saving...' : 'Save changes'}
-              </button>
-              <button
-                type="button"
-                className="cancel-button"
-                onClick={() => navigate(`/customers/${id}`)}
-                disabled={submitting}
-              >
-                Cancel
-              </button>
             </div>
+
+            <FormActions
+              saving={submitting}
+              onCancel={() => navigate(`/customers/${id}`)}
+              saveLabel={submitting ? 'Saving…' : 'Save changes'}
+            />
           </form>
         )}
       </section>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Check, Printer, Truck } from 'lucide-react';
 import api from '../api/client';
-import { PageHeader } from '../components/mes';
+import { PageHeader, AlertBanner } from '../components/mes';
 import { appAlert } from '../components/dialog';
 import { printSalesInvoicePdf, formatInr } from './downloadSalesInvoicePdf';
 
@@ -274,7 +274,7 @@ export default function AddSalesInvoiceWizard() {
         actions={
           <button
             type="button"
-            className="mes-btn mes-btn-secondary"
+            className="neutral-button"
             onClick={() => navigate('/production/dispatch')}
           >
             <ArrowLeft size={15} />
@@ -302,7 +302,7 @@ export default function AddSalesInvoiceWizard() {
         ))}
       </nav>
 
-      {error ? <p className="error-message">{error}</p> : null}
+      {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
 
       {step === 1 && preview ? (
         <section className="bpo-panel mes-card">
@@ -365,7 +365,7 @@ export default function AddSalesInvoiceWizard() {
               <button
                 key={s.code}
                 type="button"
-                className="mes-btn mes-btn-secondary"
+                className="neutral-button"
                 style={{ marginRight: 6, marginBottom: 6, padding: '2px 8px', fontSize: 12 }}
                 onClick={() => setPosCode(s.code)}
               >
@@ -460,7 +460,7 @@ export default function AddSalesInvoiceWizard() {
                 {invoice.status === 'draft' ? (
                   <button
                     type="button"
-                    className="mes-btn mes-btn-primary"
+                    className="primary-button"
                     disabled={busy}
                     onClick={handleIssue}
                   >
@@ -471,7 +471,7 @@ export default function AddSalesInvoiceWizard() {
                   <>
                     <button
                       type="button"
-                      className="mes-btn mes-btn-secondary"
+                      className="neutral-button"
                       disabled={busy}
                       onClick={handlePrint}
                     >
@@ -481,7 +481,7 @@ export default function AddSalesInvoiceWizard() {
                     {!invoice.printed_at ? (
                       <button
                         type="button"
-                        className="mes-btn mes-btn-primary"
+                        className="primary-button"
                         disabled={busy || !downloaded}
                         title={!downloaded ? 'Print the invoice first' : undefined}
                         onClick={handleConfirmPrinted}
@@ -492,7 +492,7 @@ export default function AddSalesInvoiceWizard() {
                     ) : (
                       <button
                         type="button"
-                        className="mes-btn mes-btn-primary"
+                        className="primary-button"
                         disabled={busy}
                         onClick={handleDispatch}
                       >
@@ -504,7 +504,7 @@ export default function AddSalesInvoiceWizard() {
                 ) : null}
                 <button
                   type="button"
-                  className="mes-btn mes-btn-secondary"
+                  className="neutral-button"
                   onClick={() => invoice?.id && navigate(`/sales-invoices/${invoice.id}`)}
                 >
                   Open invoice detail
@@ -520,7 +520,7 @@ export default function AddSalesInvoiceWizard() {
       <footer className="bpo-footer">
         <button
           type="button"
-          className="mes-btn mes-btn-secondary"
+          className="neutral-button"
           disabled={step <= 1 || busy}
           onClick={() => setStep((s) => Math.max(1, s - 1))}
         >
@@ -529,7 +529,7 @@ export default function AddSalesInvoiceWizard() {
         {step < 4 ? (
           <button
             type="button"
-            className="mes-btn mes-btn-primary"
+            className="primary-button"
             disabled={!canNext() || busy}
             onClick={goNext}
           >

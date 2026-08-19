@@ -18,6 +18,7 @@ export default function StockDetailPage() {
   const { subscribe } = useSocket();
   const [stock, setStock] = useState(null);
   const [ledger, setLedger] = useState([]);
+  const [toolInstances, setToolInstances] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -28,7 +29,14 @@ export default function StockDetailPage() {
       const { data } = await api.get(`/inventory/stock/${id}`);
       setStock(data.stock);
       setLedger(data.ledger || []);
-      
+      if (data.stock?.item_category === 'tool' && data.stock?.master_record_id) {
+        const ti = await api.get('/tool-instances', {
+          params: { master_record_id: data.stock.master_record_id },
+        });
+        setToolInstances(ti.data.tool_instances || []);
+      } else {
+        setToolInstances([]);
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Unable to load stock detail.');
     } finally {
@@ -153,6 +161,34 @@ export default function StockDetailPage() {
                 </tbody>
               </table>
             </div>
+
+            {stock?.item_category === 'tool' && toolInstances.length > 0 ? (
+              <div style={{ marginTop: 24 }}>
+                <h3>Tool instances</h3>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Serial</th>
+                      <th>Life remaining</th>
+                      <th>Life total</th>
+                      <th>Status</th>
+                      <th>Received</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {toolInstances.map((ti) => (
+                      <tr key={ti.id}>
+                        <td>{ti.serial_number}</td>
+                        <td>{fmt(ti.life_remaining)}</td>
+                        <td>{fmt(ti.life_total)}</td>
+                        <td>{ti.status}</td>
+                        <td>{formatDate(ti.received_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
           </>
         ) : null}
       </section>

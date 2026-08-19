@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { FormActions, FormPage } from '../components/mes';
 
 const initialFormData = {
   name: '',
@@ -37,10 +38,7 @@ export default function AddWorkCenterPage() {
 
   const handleChange = (event) => {
     const { name, value } = event.target;
-    setFormData((current) => ({
-      ...current,
-      [name]: value,
-    }));
+    setFormData((current) => ({ ...current, [name]: value }));
   };
 
   const handleSubmit = async (event) => {
@@ -58,7 +56,6 @@ export default function AddWorkCenterPage() {
         efficiency: Number(formData.efficiency),
         is_active: formData.is_active === 'true',
       };
-
       const { data } = await api.post('/work-centers', payload);
       navigate(`/work-centers/${data.work_center.id}`);
     } catch (err) {
@@ -70,139 +67,59 @@ export default function AddWorkCenterPage() {
   };
 
   return (
-    <main className="app-shell add-employee-page">
-      <header className="app-header">
-        <div className="header-title-block">
-          <p className="eyebrow">Production resources</p>
-          <h1>Add Work Center</h1>
-          <p className="muted">Create a new work center and assign machines on the detail page.</p>
-        </div>
-      </header>
-
-      <section className="card form-card">
-        {error ? <p className="error-message">{error}</p> : null}
-
-        <form onSubmit={handleSubmit}>
+    <FormPage
+      eyebrow="Production"
+      title="Add work center"
+      subtitle="Create a work center, then assign machines on the detail page."
+      onBack={() => navigate('/work-centers')}
+      backLabel="All work centers"
+      error={error}
+    >
+      <form onSubmit={handleSubmit}>
+        <div className="form-page-grid">
           <label htmlFor="name">
-            Name <span style={{ color: '#b91c1c' }}>*</span>
-            <input
-              id="name"
-              type="text"
-              name="name"
-              value={formData.name}
-              onChange={handleChange}
-              placeholder="e.g., Cutting Center"
-              required
-              disabled={submitting}
-            />
+            Name <span className="required-mark">*</span>
+            <input id="name" type="text" name="name" value={formData.name} onChange={handleChange} placeholder="e.g., Cutting Center" required disabled={submitting} />
           </label>
-
           <label htmlFor="code">
-            Code <span style={{ color: '#b91c1c' }}>*</span>
-            <input
-              id="code"
-              type="text"
-              name="code"
-              value={formData.code}
-              onChange={handleChange}
-              placeholder="e.g., CUT-01"
-              required
-              disabled={submitting}
-            />
+            Code <span className="required-mark">*</span>
+            <input id="code" type="text" name="code" value={formData.code} onChange={handleChange} placeholder="e.g., CUT-01" required disabled={submitting} />
           </label>
-
           <label htmlFor="department_id">
             Department
-            <select
-              id="department_id"
-              name="department_id"
-              value={formData.department_id}
-              onChange={handleChange}
-              disabled={submitting}
-            >
+            <select id="department_id" name="department_id" value={formData.department_id} onChange={handleChange} disabled={submitting}>
               <option value="">Select a department</option>
               {departments.map((dept) => (
-                <option key={dept.id} value={dept.id}>
-                  {dept.name}
-                </option>
+                <option key={dept.id} value={dept.id}>{dept.name}</option>
               ))}
             </select>
           </label>
-
-          <label htmlFor="overhead_hourly_rate">
-            Overhead hourly rate
-            <input
-              id="overhead_hourly_rate"
-              type="number"
-              name="overhead_hourly_rate"
-              value={formData.overhead_hourly_rate}
-              onChange={handleChange}
-              min="0"
-              step="0.01"
-              disabled={submitting}
-            />
-          </label>
-
-          <label htmlFor="speed">
-            Speed
-            <input
-              id="speed"
-              type="number"
-              name="speed"
-              value={formData.speed}
-              onChange={handleChange}
-              min="0.0001"
-              step="0.01"
-              required
-              disabled={submitting}
-            />
-          </label>
-
-          <label htmlFor="efficiency">
-            Efficiency (%)
-            <input
-              id="efficiency"
-              type="number"
-              name="efficiency"
-              value={formData.efficiency}
-              onChange={handleChange}
-              min="0.01"
-              max="100"
-              step="0.01"
-              required
-              disabled={submitting}
-            />
-          </label>
-
           <label htmlFor="is_active">
             Status
-            <select
-              id="is_active"
-              name="is_active"
-              value={formData.is_active}
-              onChange={handleChange}
-              disabled={submitting}
-            >
+            <select id="is_active" name="is_active" value={formData.is_active} onChange={handleChange} disabled={submitting}>
               <option value="true">Active</option>
               <option value="false">Inactive</option>
             </select>
           </label>
-
-          <div className="form-actions" style={{ display: 'flex', gap: 12, marginTop: 16 }}>
-            <button type="submit" className="primary-button" disabled={submitting}>
-              {submitting ? 'Creating...' : 'Create Work Center'}
-            </button>
-            <button
-              type="button"
-              className="neutral-button"
-              disabled={submitting}
-              onClick={() => navigate('/work-centers')}
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      </section>
-    </main>
+          <label htmlFor="overhead_hourly_rate">
+            Overhead hourly rate
+            <input id="overhead_hourly_rate" type="number" name="overhead_hourly_rate" value={formData.overhead_hourly_rate} onChange={handleChange} min="0" step="0.01" disabled={submitting} />
+          </label>
+          <label htmlFor="speed">
+            Speed
+            <input id="speed" type="number" name="speed" value={formData.speed} onChange={handleChange} min="0.0001" step="0.01" required disabled={submitting} />
+          </label>
+          <label htmlFor="efficiency">
+            Efficiency (%)
+            <input id="efficiency" type="number" name="efficiency" value={formData.efficiency} onChange={handleChange} min="0.01" max="100" step="0.01" required disabled={submitting} />
+          </label>
+        </div>
+        <FormActions
+          saving={submitting}
+          onCancel={() => navigate('/work-centers')}
+          saveLabel={submitting ? 'Creating…' : 'Create work center'}
+        />
+      </form>
+    </FormPage>
   );
 }

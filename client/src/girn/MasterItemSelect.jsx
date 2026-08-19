@@ -74,6 +74,7 @@ export default function MasterItemSelect({
   onChange,
   disabled = false,
   placeholder,
+  filterParams,
 }) {
   const [options, setOptions] = useState([]);
   const [open, setOpen] = useState(false);
@@ -99,7 +100,7 @@ export default function MasterItemSelect({
     const timer = setTimeout(() => {
       api
         .get(`/masters/${masterSlug}/lookup`, {
-          params: { search: search.trim() },
+          params: { search: search.trim(), ...(filterParams || {}) },
         })
         .then(({ data }) => setOptions(data || []))
         .catch((err) => {
@@ -110,7 +111,7 @@ export default function MasterItemSelect({
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [search, open, masterSlug]);
+  }, [search, open, masterSlug, filterParams]);
 
   const displayLabel = useMemo(() => {
     if (label) return label;

@@ -7,8 +7,26 @@ import ImageLightbox from '../components/shared/ImageLightBox';
 import AttendanceGauge from '../components/shared/Attendancegauge';
 import StatTile from '../components/shared/StatTile';
 import { ArrowLeft, ChevronLeft, ChevronRight, Factory, Pencil, TrendingUp } from 'lucide-react';
-import { EmptyState, MetricCard, StatusBadge, TruncatedText } from '../components/mes';
+import { EmptyState, MetricCard, StatusBadge, TruncatedText, AlertBanner, FilePicker, FormActions } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
+
+const JOB_DESCRIPTION_OPTIONS = [
+  { value: 'OPERATOR', label: 'Operator' },
+  { value: 'SUPERVISOR', label: 'Supervisor' },
+  { value: 'MANAGER', label: 'Manager' },
+  { value: 'ADMIN', label: 'Admin' },
+];
+
+const STATUS_OPTIONS = [
+  { value: 'true', label: 'Active' },
+  { value: 'false', label: 'Inactive' },
+];
+
+const ACCOUNT_TYPE_OPTIONS = [
+  { value: 'SAVINGS', label: 'Savings' },
+  { value: 'CURRENT', label: 'Current' },
+];
 
 const PLACEHOLDER_AVATAR =
   'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect fill="%23E5E7EB" width="100%25" height="100%25"/><text x="50%25" y="54%25" dominant-baseline="middle" text-anchor="middle" font-size="48" fill="%23717A83" font-family="system-ui, sans-serif">?</text></svg>';
@@ -338,9 +356,19 @@ export default function EmployeeDetailsPage() {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleFileChange = (e) => {
-    setPhoto(e.target.files[0] || null);
+  const setFieldValue = (name) => (value) => {
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
+
+  const departmentOptions = departments.map((dept) => ({
+    value: dept.id,
+    label: dept.name,
+  }));
+
+  const shiftOptions = shifts.map((shift) => ({
+    value: shift.id,
+    label: shift.name,
+  }));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1038,145 +1066,159 @@ export default function EmployeeDetailsPage() {
             {/* ── EDIT tab ──────────────────────────────────────────────── */}
             {tab === 'edit' && (
               <form onSubmit={handleSubmit}>
-                {error && <p className="error-message">{error}</p>}
+                {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
 
-                {/* Photo */}
-                <div className="flex flex-col md:flex-row gap-8 items-start">
-                  {employee.img_url && (
-                    <div style={{ marginBottom: '16px' }}>
-                      <p className="text-xl font-medium mb-3">Current photo</p>
-                      <img src={employee.img_url} alt={`${employee.full_name} current photo`} style={{ width: '140px', height: '140px', objectFit: 'cover', borderRadius: '12px', border: '1px solid #d1d5db' }} />
-                    </div>
-                  )}
-                  <label htmlFor="photo">
-                    <p className="text-xl font-medium mb-3">Photo</p>
-                    <input id="photo" type="file" accept="image/*" name="photo" onChange={handleFileChange} disabled={submitting} />
+                <div className="form-page-grid">
+                  <div className="form-span-2" style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 8 }}>
+                    {employee.img_url ? (
+                      <img src={employee.img_url} alt="" style={{ width: 88, height: 88, objectFit: 'cover', borderRadius: 12, border: '1px solid #e2e8f0' }} />
+                    ) : null}
+                    <label htmlFor="photo" style={{ marginBottom: 0, flex: 1, minWidth: 220 }}>
+                      Photo
+                      <FilePicker
+                        id="photo"
+                        accept="image/*"
+                        disabled={submitting}
+                        fileName={photo?.name}
+                        label={photo ? 'Replace photo' : 'Choose photo'}
+                        onChange={setPhoto}
+                      />
+                    </label>
+                  </div>
+
+                  <label htmlFor="employee_code">
+                    Employee code <span className="required-mark">*</span>
+                    <input id="employee_code" type="text" name="employee_code" value={formData.employee_code} onChange={handleChange} required disabled={submitting} />
                   </label>
-                </div>
+                  <label htmlFor="full_name">
+                    Full name <span className="required-mark">*</span>
+                    <input id="full_name" type="text" name="full_name" value={formData.full_name} onChange={handleChange} required disabled={submitting} />
+                  </label>
+                  <label htmlFor="job_description">
+                    Job description <span className="required-mark">*</span>
+                    <FormSearchSelect
+                      value={formData.job_description}
+                      onChange={setFieldValue('job_description')}
+                      options={JOB_DESCRIPTION_OPTIONS}
+                      placeholder="Select a role"
+                      disabled={submitting}
+                    />
+                  </label>
+                  <label htmlFor="is_active">
+                    Status
+                    <FormSearchSelect
+                      value={formData.is_active}
+                      onChange={setFieldValue('is_active')}
+                      options={STATUS_OPTIONS}
+                      placeholder="Select status"
+                      disabled={submitting}
+                      clearable={false}
+                    />
+                  </label>
+                  <label htmlFor="department_id">
+                    Department
+                    <FormSearchSelect
+                      value={formData.department_id}
+                      onChange={setFieldValue('department_id')}
+                      options={departmentOptions}
+                      placeholder="Select a department"
+                      disabled={submitting}
+                      searchable={departmentOptions.length > 6}
+                    />
+                  </label>
+                  <label htmlFor="shift_id">
+                    Shift
+                    <FormSearchSelect
+                      value={formData.shift_id}
+                      onChange={setFieldValue('shift_id')}
+                      options={shiftOptions}
+                      placeholder="Select a shift"
+                      disabled={submitting}
+                      searchable={shiftOptions.length > 6}
+                    />
+                  </label>
+                  <label htmlFor="password" className="form-span-2">
+                    Password
+                    <input id="password" type="password" name="password" value={formData.password} onChange={handleChange} placeholder="Leave blank to keep current password" disabled={submitting} />
+                  </label>
 
-                {/* Core fields */}
-                <label htmlFor="employee_code">
-                  <div className="flex item-center gap-1"><span>Employee Code</span><span style={{ color: '#b91c1c' }}>*</span></div>
-                  <input id="employee_code" type="text" name="employee_code" value={formData.employee_code} onChange={handleChange} required disabled={submitting} />
-                </label>
-
-                <label htmlFor="full_name">
-                  <div className="flex item-center gap-1"><span>Full Name</span><span style={{ color: '#b91c1c' }}>*</span></div>
-                  <input id="full_name" type="text" name="full_name" value={formData.full_name} onChange={handleChange} required disabled={submitting} />
-                </label>
-
-                {/* FIX: was name="role" reading value={formData.job_description} — now correctly bound */}
-                <label htmlFor="job_description">
-                  <div className="flex item-center gap-1"><span>Job Description</span><span style={{ color: '#b91c1c' }}>*</span></div>
-                  <select id="job_description" name="job_description" value={formData.job_description} onChange={handleChange} required disabled={submitting}>
-                    <option value="">Select a role</option>
-                    <option value="OPERATOR">Operator</option>
-                    <option value="SUPERVISOR">Supervisor</option>
-                    <option value="MANAGER">Manager</option>
-                    <option value="ADMIN">Admin</option>
-                  </select>
-                </label>
-
-                <label htmlFor="is_active">
-                  Status
-                  <select id="is_active" name="is_active" value={formData.is_active} onChange={handleChange} disabled={submitting}>
-                    <option value="true">Active</option>
-                    <option value="false">Inactive</option>
-                  </select>
-                </label>
-
-                <label htmlFor="department_id">
-                  Department
-                  <select id="department_id" name="department_id" value={formData.department_id} onChange={handleChange} disabled={submitting}>
-                    <option value="">Select a department</option>
-                    {departments.map((dept) => <option key={dept.id} value={dept.id}>{dept.name}</option>)}
-                  </select>
-                </label>
-
-                <label htmlFor="shift_id">
-                  Shift
-                  <select id="shift_id" name="shift_id" value={formData.shift_id} onChange={handleChange} disabled={submitting}>
-                    <option value="">Select a shift</option>
-                    {shifts.map((shift) => <option key={shift.id} value={shift.id}>{shift.name}</option>)}
-                  </select>
-                </label>
-
-                <label htmlFor="password">
-                  Password
-                  <input id="password" type="password" name="password" value={formData.password} onChange={handleChange} placeholder="Leave blank to keep current password" disabled={submitting} />
-                </label>
-
-                {/* Documents */}
-                <p className="text-xl font-medium" style={{ margin: '24px 0 8px' }}>Documents</p>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <p className="form-page-section-title form-span-2">Documents</p>
                   {[
-                    { label: 'Aadhar card',     urlKey: 'aadhar_url',         setter: setAadharFile },
-                    { label: 'Marks card',       urlKey: 'marks_card_url',     setter: setMarksCardFile },
-                    { label: 'Work experience',  urlKey: 'work_experience_url',setter: setWorkExperienceFile },
-                    { label: 'Thumb impression', urlKey: 'thumb_impression_url',setter: setThumbFile },
-                  ].map(({ label, urlKey, setter }) => (
-                    <div key={urlKey} style={{ border: '1px solid #e5e7eb', borderRadius: '10px', padding: '12px' }}>
-                      <p className="text-xl font-medium" style={{ marginBottom: '8px' }}>{label}</p>
-                      {employee[urlKey] && (
-                        <div style={{ marginBottom: '8px' }}>
+                    { label: 'Aadhar card', urlKey: 'aadhar_url', setter: setAadharFile, file: aadharFile },
+                    { label: 'Marks card', urlKey: 'marks_card_url', setter: setMarksCardFile, file: marksCardFile },
+                    { label: 'Work experience', urlKey: 'work_experience_url', setter: setWorkExperienceFile, file: workExperienceFile },
+                    { label: 'Thumb impression', urlKey: 'thumb_impression_url', setter: setThumbFile, file: thumbFile },
+                  ].map(({ label, urlKey, setter, file }) => (
+                    <label key={urlKey}>
+                      {label}
+                      {employee[urlKey] ? (
+                        <div style={{ marginBottom: 8 }}>
                           <DocPreview url={employee[urlKey]} label={label} onImageClick={(src, alt) => setLightBox({ src, alt })} />
                         </div>
-                      )}
-                      <input type="file" accept="image/*,application/pdf" onChange={(e) => setter(e.target.files[0] || null)} disabled={submitting} />
-                    </div>
+                      ) : null}
+                      <FilePicker
+                        accept="image/*,application/pdf"
+                        disabled={submitting}
+                        fileName={file?.name}
+                        label={file ? 'Replace file' : 'Choose file'}
+                        onChange={setter}
+                      />
+                    </label>
                   ))}
+                  {lightBox && <ImageLightbox src={lightBox.src} alt={lightBox.alt} onClose={() => setLightBox(null)} />}
+
+                  <p className="form-page-section-title form-span-2">Address</p>
+                  <label htmlFor="temporary_address">
+                    Temporary address
+                    <textarea id="temporary_address" name="temporary_address" value={formData.temporary_address} onChange={handleChange} disabled={submitting} rows={3} />
+                  </label>
+                  <label htmlFor="permanent_address">
+                    Permanent address
+                    <textarea id="permanent_address" name="permanent_address" value={formData.permanent_address} onChange={handleChange} disabled={submitting} rows={3} />
+                  </label>
+
+                  <p className="form-page-section-title form-span-2">Bank details</p>
+                  <label htmlFor="bank_name">
+                    Bank name
+                    <input id="bank_name" type="text" name="bank_name" value={formData.bank_name} onChange={handleChange} disabled={submitting} />
+                  </label>
+                  <label htmlFor="bank_account_number">
+                    Account number
+                    <input id="bank_account_number" type="text" name="bank_account_number" value={formData.bank_account_number} onChange={handleChange} disabled={submitting} />
+                  </label>
+                  <label htmlFor="account_type">
+                    Account type
+                    <FormSearchSelect
+                      value={formData.account_type}
+                      onChange={setFieldValue('account_type')}
+                      options={ACCOUNT_TYPE_OPTIONS}
+                      placeholder="Select account type"
+                      disabled={submitting}
+                      clearable={false}
+                    />
+                  </label>
+                  <label htmlFor="ifsc">
+                    IFSC code
+                    <input id="ifsc" type="text" name="ifsc" value={formData.ifsc} onChange={handleChange} disabled={submitting} />
+                  </label>
+                  <label htmlFor="esi_no">
+                    ESI number
+                    <input id="esi_no" type="text" name="ESI_no" value={formData.ESI_no} onChange={handleChange} disabled={submitting} />
+                  </label>
+
+                  <p className="form-page-section-title form-span-2">Compensation</p>
+                  <label htmlFor="basic_salary">Basic salary (₹/mo)<input id="basic_salary" type="number" name="basic_salary" value={formData.basic_salary} onChange={handleChange} disabled={submitting} /></label>
+                  <label htmlFor="allowance">Allowance (₹/mo)<input id="allowance" type="number" name="allowance" value={formData.allowance} onChange={handleChange} disabled={submitting} /></label>
+                  <label htmlFor="PA">PA — personal allowance (₹/mo)<input id="PA" type="number" name="PA" value={formData.PA} onChange={handleChange} disabled={submitting} /></label>
+                  <label htmlFor="OT">OT rate (₹/hr)<input id="OT" type="number" name="OT" value={formData.OT} onChange={handleChange} disabled={submitting} /></label>
+                  <label htmlFor="PT">PT — professional tax (₹/mo)<input id="PT" type="number" name="PT" value={formData.PT} onChange={handleChange} disabled={submitting} /></label>
                 </div>
-                {lightBox && <ImageLightbox src={lightBox.src} alt={lightBox.alt} onClose={() => setLightBox(null)} />}
 
-                {/* Address */}
-                <p className="text-xl font-medium" style={{ margin: '24px 0 8px' }}>Address</p>
-                <label htmlFor="temporary_address">
-                  Temporary address
-                  <textarea id="temporary_address" name="temporary_address" value={formData.temporary_address} onChange={handleChange} disabled={submitting} rows={3} />
-                </label>
-                <label htmlFor="permanent_address">
-                  Permanent address
-                  <textarea id="permanent_address" name="permanent_address" value={formData.permanent_address} onChange={handleChange} disabled={submitting} rows={3} />
-                </label>
-
-                {/* Bank details */}
-                <p className="text-xl font-medium" style={{ margin: '24px 0 8px' }}>Bank details</p>
-                <label htmlFor="bank_name">
-                  Bank name
-                  <input id="bank_name" type="text" name="bank_name" value={formData.bank_name} onChange={handleChange} disabled={submitting} />
-                </label>
-                <label htmlFor="bank_account_number">
-                  Account number
-                  <input id="bank_account_number" type="text" name="bank_account_number" value={formData.bank_account_number} onChange={handleChange} disabled={submitting} />
-                </label>
-                <label htmlFor="account_type">
-                  Account type
-                  <select id="account_type" name="account_type" value={formData.account_type} onChange={handleChange} disabled={submitting}>
-                    <option value="SAVINGS">Savings</option>
-                    <option value="CURRENT">Current</option>
-                  </select>
-                </label>
-                <label htmlFor="ifsc">
-                  IFSC code
-                  <input id="ifsc" type="text" name="ifsc" value={formData.ifsc} onChange={handleChange} disabled={submitting} />
-                </label>
-                <label htmlFor="esi_no">
-                  ESI Number
-                  <input id="esi_no" type="text" name="ESI_no" value={formData.ESI_no} onChange={handleChange} disabled={submitting} />
-                </label>
-
-                {/* Compensation */}
-                <p className="text-xl font-medium" style={{ margin: '24px 0 8px' }}>Compensation</p>
-                <label htmlFor="basic_salary">Basic salary (₹/mo)<input id="basic_salary" type="number" name="basic_salary" value={formData.basic_salary} onChange={handleChange} disabled={submitting} /></label>
-                <label htmlFor="allowance">Allowance (₹/mo)<input id="allowance" type="number" name="allowance" value={formData.allowance} onChange={handleChange} disabled={submitting} /></label>
-                <label htmlFor="PA">PA — personal allowance (₹/mo)<input id="PA" type="number" name="PA" value={formData.PA} onChange={handleChange} disabled={submitting} /></label>
-                <label htmlFor="OT">OT rate (₹/hr)<input id="OT" type="number" name="OT" value={formData.OT} onChange={handleChange} disabled={submitting} /></label>
-                <label htmlFor="PT">PT — professional tax (₹/mo)<input id="PT" type="number" name="PT" value={formData.PT} onChange={handleChange} disabled={submitting} /></label>
-
-                <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
-                  <button type="submit" className="primary-button" disabled={submitting}>{submitting ? 'Saving...' : 'Save changes'}</button>
-                  <button type="button" className="cancel-button" onClick={() => navigate(`/employees/${id}`)} disabled={submitting}>Cancel</button>
-                </div>
+                <FormActions
+                  saving={submitting}
+                  onCancel={() => navigate(`/employees/${id}`)}
+                  saveLabel={submitting ? 'Saving…' : 'Save changes'}
+                />
               </form>
             )}
           </>

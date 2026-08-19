@@ -14,12 +14,7 @@ import {
 import api from '../api/client';
 import { appConfirm } from '../components/dialog';
 import AvailableMachineSelect from './AvailableMachineSelect';
-import {
-  StatusBadge,
-  EmptyState,
-  MetricCard,
-  TruncatedText,
-} from '../components/mes';
+import { AlertBanner, EmptyState, FormActions, MetricCard, StatusBadge, TruncatedText } from '../components/mes';
 
 function initials(name) {
   if (!name) return '?';
@@ -786,8 +781,9 @@ export default function WorkCenterDetailsPage() {
           </>
         ) : (
           <form onSubmit={handleSubmit}>
-            {error ? <p className="error-message">{error}</p> : null}
+            {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
 
+            <div className="form-page-grid">
             <label htmlFor="name">
               Name <span style={{ color: '#b91c1c' }}>*</span>
               <input
@@ -891,19 +887,12 @@ export default function WorkCenterDetailsPage() {
               </select>
             </label>
 
-            <div className="form-actions" style={{ display: 'flex', gap: 12, marginTop: 16 }}>
-              <button type="submit" className="primary-button" disabled={submitting}>
-                {submitting ? 'Saving...' : 'Save Changes'}
-              </button>
-              <button
-                type="button"
-                className="neutral-button"
-                disabled={submitting}
-                onClick={() => navigate(`/work-centers/${id}`)}
-              >
-                Cancel
-              </button>
             </div>
+            <FormActions
+              saving={submitting}
+              onCancel={() => navigate(`/work-centers/${id}`)}
+              saveLabel={submitting ? 'Saving…' : 'Save changes'}
+            />
           </form>
         )}
       </section>

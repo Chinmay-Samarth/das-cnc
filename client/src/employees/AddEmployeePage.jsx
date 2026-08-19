@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
+import { FilePicker, FormActions, FormPage } from '../components/mes';
+
+const JOB_DESCRIPTION_OPTIONS = [
+  { value: 'OPERATOR', label: 'Operator' },
+  { value: 'SUPERVISOR', label: 'Supervisor' },
+  { value: 'MANAGER', label: 'Manager' },
+  { value: 'ADMIN', label: 'Admin' },
+];
 
 export default function AddEmployeePage() {
   const navigate = useNavigate();
@@ -20,7 +29,6 @@ export default function AddEmployeePage() {
     password: '',
   });
 
-  // Fetch departments and shifts on mount
   useEffect(() => {
     let mounted = true;
 
@@ -31,7 +39,6 @@ export default function AddEmployeePage() {
           api.get('/employees/departments'),
           api.get('/employees/shifts'),
         ]);
-
         if (!mounted) return;
         setDepartments(deptRes.data.departments || []);
         setShifts(shiftsRes.data.shifts || []);
@@ -40,8 +47,7 @@ export default function AddEmployeePage() {
         if (!mounted) return;
         setError('Unable to load departments and shifts.');
       } finally {
-        if (!mounted) return;
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     }
 
@@ -53,15 +59,15 @@ export default function AddEmployeePage() {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleFileChange = (e) => {
-    setPhoto(e.target.files[0] || null);
+  const setFieldValue = (name) => (value) => {
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
+
+  const departmentOptions = departments.map((dept) => ({ value: dept.id, label: dept.name }));
+  const shiftOptions = shifts.map((shift) => ({ value: shift.id, label: shift.name }));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -76,13 +82,8 @@ export default function AddEmployeePage() {
       payload.append('department_id', formData.department_id || '');
       payload.append('shift_id', formData.shift_id || '');
       payload.append('password', formData.password || '');
-      if (photo) {
-        payload.append('photo', photo);
-      }
-
+      if (photo) payload.append('photo', photo);
       await api.post('/employees', payload);
-
-      // Navigate back to employees page on success
       navigate('/employees');
     } catch (err) {
       console.error('Failed to create employee:', err);
@@ -93,21 +94,18 @@ export default function AddEmployeePage() {
   };
 
   return (
-    <main className="app-shell add-employee-page">
-      <header className="app-header">
-        <div className="header-title-block">
-          <p className="eyebrow">Workforce management</p>
-          <h1>Add New Employee</h1>
-          <p className="muted">Create a new employee record in the system.</p>
-        </div>
-      </header>
-
-      <section className="card form-card">
-        {error ? <p className="error-message">{error}</p> : null}
-
-        <form onSubmit={handleSubmit}>
+    <FormPage
+      eyebrow="Workforce"
+      title="Add employee"
+      subtitle="Create a new employee record."
+      onBack={() => navigate('/employees')}
+      backLabel="All employees"
+      error={error}
+    >
+      <form onSubmit={handleSubmit}>
+        <div className="form-page-grid">
           <label htmlFor="employee_code">
-            Employee Code <span style={{ color: '#b91c1c' }}>*</span>
+            Employee code <span className="required-mark">*</span>
             <input
               id="employee_code"
               type="text"
@@ -121,7 +119,7 @@ export default function AddEmployeePage() {
           </label>
 
           <label htmlFor="full_name">
-            Full Name <span style={{ color: '#b91c1c' }}>*</span>
+            Full name <span className="required-mark">*</span>
             <input
               id="full_name"
               type="text"
@@ -135,68 +133,39 @@ export default function AddEmployeePage() {
           </label>
 
           <label htmlFor="job_description">
-            Job Description <span style={{ color: '#b91c1c' }}>*</span>
-            <select
-              id="job_description"
-              name="job_description"
+            Job description <span className="required-mark">*</span>
+            <FormSearchSelect
               value={formData.job_description}
-              onChange={handleChange}
-              required
+              onChange={setFieldValue('job_description')}
+              options={JOB_DESCRIPTION_OPTIONS}
+              placeholder="Select a role"
               disabled={submitting}
-            >
-              <option value="OPERATOR">Operator</option>
-              <option value="SUPERVISOR">Supervisor</option>
-              <option value="MANAGER">Manager</option>
-              <option value="ADMIN">Admin</option>
-            </select>
+              clearable={false}
+            />
           </label>
 
           <label htmlFor="department_id">
             Department
-            <select
-              id="department_id"
-              name="department_id"
+            <FormSearchSelect
               value={formData.department_id}
-              onChange={handleChange}
+              onChange={setFieldValue('department_id')}
+              options={departmentOptions}
+              placeholder="Select a department"
               disabled={submitting || loading}
-            >
-              <option value="">Select a department</option>
-              {departments.map((dept) => (
-                <option key={dept.id} value={dept.id}>
-                  {dept.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label htmlFor="photo">
-            Photo
-            <input
-              id="photo"
-              type="file"
-              accept="image/*"
-              name="photo"
-              onChange={handleFileChange}
-              disabled={submitting}
+              searchable={departmentOptions.length > 6}
             />
           </label>
 
           <label htmlFor="shift_id">
             Shift
-            <select
-              id="shift_id"
-              name="shift_id"
+            <FormSearchSelect
               value={formData.shift_id}
-              onChange={handleChange}
+              onChange={setFieldValue('shift_id')}
+              options={shiftOptions}
+              placeholder="Select a shift"
               disabled={submitting || loading}
-            >
-              <option value="">Select a shift</option>
-              {shifts.map((shift) => (
-                <option key={shift.id} value={shift.id}>
-                  {shift.name}
-                </option>
-              ))}
-            </select>
+              searchable={shiftOptions.length > 6}
+            />
           </label>
 
           <label htmlFor="password">
@@ -212,25 +181,25 @@ export default function AddEmployeePage() {
             />
           </label>
 
-          <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
-            <button
-              type="submit"
-              className="primary-button"
+          <label htmlFor="photo" className="form-span-2">
+            Photo
+            <FilePicker
+              id="photo"
+              accept="image/*"
               disabled={submitting}
-            >
-              {submitting ? 'Creating...' : 'Create Employee'}
-            </button>
-            <button
-              type="button"
-              className="cancel-button"
-              onClick={() => navigate('/employees')}
-              disabled={submitting}
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      </section>
-    </main>
+              fileName={photo?.name}
+              label={photo ? 'Replace photo' : 'Choose photo'}
+              onChange={setPhoto}
+            />
+          </label>
+        </div>
+
+        <FormActions
+          saving={submitting}
+          onCancel={() => navigate('/employees')}
+          saveLabel={submitting ? 'Creating…' : 'Create employee'}
+        />
+      </form>
+    </FormPage>
   );
 }

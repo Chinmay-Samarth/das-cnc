@@ -14,13 +14,12 @@ export default function MasterRecordEditPage() {
   }
 
   return (
-    <div className="page-shell fade-up">
-      <MasterForm
-        slug={slug}
-        recordId={id}
-        onSave={handleSave}
-        onCancel={handleCancel}
-      />
-    </div>
+    <MasterForm
+      slug={slug}
+      recordId={id}
+      variant="edit"
+      onSave={handleSave}
+      onCancel={handleCancel}
+    />
   )
 }

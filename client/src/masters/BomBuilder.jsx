@@ -9,6 +9,7 @@ import { formatDisplayDate } from '../utils/dateFormat';
 const CHILD_TYPE_OPTIONS = [
   { value: 'component', label: 'Component', masterSlug: 'component', category: 'component' },
   { value: 'raw-material', label: 'Raw Material', masterSlug: 'raw-material', category: 'raw_material' },
+  { value: 'tool', label: 'Tool', masterSlug: 'tool', category: 'tool' },
 ];
 
 function StatusBadge({ status, revision }) {
@@ -26,7 +27,8 @@ function StatusBadge({ status, revision }) {
 }
 
 function TypeBadge({ slug }) {
-  const label = slug === 'raw-material' ? 'Raw Material' : slug === 'component' ? 'Component' : slug || '—';
+  const label =
+    slug === 'raw-material' ? 'Raw Material' : slug === 'component' ? 'Component' : slug === 'tool' ? 'Tool' : slug || '—';
   return <span className={`bom-type-badge bom-type-badge--${slug || 'unknown'}`}>{label}</span>;
 }
 
@@ -45,7 +47,7 @@ function formatDate(d) {
   return formatDisplayDate(d);
 }
 
-function AddChildForm({ parentId, onSave, onCancel, saving }) {
+function AddChildForm({ parentId, componentRecordId, onSave, onCancel, saving }) {
   const [childType, setChildType] = useState('component');
   const [childId, setChildId] = useState('');
   const [childLabel, setChildLabel] = useState('');
@@ -100,6 +102,7 @@ function AddChildForm({ parentId, onSave, onCancel, saving }) {
             value={childId}
             label={childLabel}
             onChange={handleChildChange}
+            filterParams={childType === 'tool' && componentRecordId ? { for_component: componentRecordId } : undefined}
           />
         </label>
         <label>
@@ -166,6 +169,7 @@ function BomTreeNode({
   onUpdateEdge,
   onDeleteEdge,
   saving,
+  componentRecordId,
 }) {
   const { edge, label, slug, children, recordId, source, cyclic } = node;
   const isInherited = source === 'inherited';
@@ -274,6 +278,7 @@ function BomTreeNode({
             <li className="bom-tree-item bom-tree-item--form">
               <AddChildForm
                 parentId={recordId}
+                componentRecordId={componentRecordId}
                 saving={saving}
                 onCancel={onCloseAddForm}
                 onSave={async (payload) => {
@@ -301,6 +306,7 @@ function BomTreeNode({
                 onUpdateEdge={onUpdateEdge}
                 onDeleteEdge={onDeleteEdge}
                 saving={saving}
+                componentRecordId={componentRecordId}
               />
             ))
           ) : canAddChildren && !isAddingHere ? (
@@ -653,6 +659,7 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
                   <li className="bom-tree-item bom-tree-item--form">
                     <AddChildForm
                       parentId={recordId}
+                      componentRecordId={recordId}
                       saving={saving}
                       onCancel={onCloseAddForm}
                       onSave={async (payload) => {
@@ -680,6 +687,7 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
                       onUpdateEdge={handleUpdateEdge}
                       onDeleteEdge={handleDeleteEdge}
                       saving={saving}
+                      componentRecordId={recordId}
                     />
                   ))
                 ) : !rootAdding ? (

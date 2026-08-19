@@ -175,7 +175,7 @@ export default function ComponentDrawer({ componentId, onClose, onSaved }) {
             <button type="button" className="primary-button" onClick={handleSave} disabled={saving || loading}>
               {saving ? 'Saving...' : 'Save'}
             </button>
-            <button type="button" className="secondary-button" onClick={onClose} disabled={saving}>
+            <button type="button" className="cancel-button" onClick={onClose} disabled={saving}>
               Close
             </button>
           </div>

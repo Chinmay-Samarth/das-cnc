@@ -298,7 +298,17 @@ router.get('/:slug/records/:id', wrap(async (req, res) => {
  
   if (recErr || !record) throw { status: 404, message: 'Record not found' }
  
-  // Flat values
+  const {data: label, error: labelErr} = await supabase
+    .from('v_master_lookup')
+    .select('label')
+    .eq("record_id", id)
+    .single()
+
+  console.log(label)
+
+  if (labelErr) throw {status: 404, message: "Record not found"}
+
+    // Flat values
   const { data: flatValues } = await supabase
     .from('record_values')
     .select(`
@@ -360,7 +370,7 @@ router.get('/:slug/records/:id', wrap(async (req, res) => {
     repeatable[slug].push({ row_id: row.id, row_order: row.row_order, ...cells })
   }
  
-  res.json({ record, flat, repeatable })
+  res.json({label: label.label, record, flat, repeatable })
 }))
  
 // POST /api/masters/:slug/records
@@ -711,7 +721,25 @@ router.delete('/:slug/records/:id', wrap(async (req, res) => {
 router.get('/:slug/lookup', wrap(async (req, res) => {
   const master = await getMaster(req.params.slug)
   const search = req.query.search || ''
- 
+  const forComponent = req.query.for_component || ''
+
+  if (master.slug === 'tool' && forComponent) {
+    const { loadToolRecordIdsForComponent } = require('../services/masterFieldEngine');
+    const allowedIds = await loadToolRecordIdsForComponent(forComponent);
+    if (!allowedIds.length) return res.json([]);
+    let query = supabase
+      .from('v_master_lookup')
+      .select('record_id, label')
+      .eq('master_slug', master.slug)
+      .in('record_id', allowedIds)
+      .order('label')
+      .limit(50);
+    if (search) query = query.ilike('label', `%${search}%`);
+    const { data, error } = await query;
+    if (error) throw { status: 500, message: error.message };
+    return res.json(data);
+  }
+
   let query = supabase
     .from('v_master_lookup')
     .select('record_id, label')

@@ -83,7 +83,7 @@ async function evaluateReorderAlertsForMaster({
       continue;
     }
 
-    const campaignReq = isRawMaterial ? campaignMap.get(row.recordId) || 0 : 0;
+    const campaignReq = campaignMap.get(row.recordId) || 0;
     const moq = toNumber(row.moq);
     const suggestedQty = computeSuggestedOrderQty({
       isRawMaterial,
@@ -96,7 +96,7 @@ async function evaluateReorderAlertsForMaster({
     const itemLabel = isRawMaterial ? 'raw material' : 'tool';
     const moqNote = moq > 0 ? ` (MOQ ${moq})` : '';
     const campaignNote =
-      isRawMaterial && campaignReq > 0 ? ` Campaign need ${campaignReq}.` : '';
+      campaignReq > 0 ? ` Campaign need ${campaignReq}.` : '';
 
     const result = await ensureNotification({
       audience: 'admin',

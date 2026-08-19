@@ -6,7 +6,7 @@ const {
   getLineWithBlanket,
   todayDateString,
 } = require('./blanketPosEngine');
-const { backflushRawMaterials } = require('./backflushEngine');
+const { backflushRawMaterials, backflushTools } = require('./backflushEngine');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -814,6 +814,13 @@ async function reportProgress(cardId, payload, actorEmployeeId, { isManager = fa
     const bomVersionId = card.bom_version_id;
     if (bomVersionId) {
       await backflushRawMaterials({
+        bomVersionId,
+        deltaGood: goodDelta,
+        productionCardId: cardId,
+        parentMasterRecordId: card.master_record_id,
+        cardNumber: card.card_number,
+      });
+      await backflushTools({
         bomVersionId,
         deltaGood: goodDelta,
         productionCardId: cardId,

@@ -21,6 +21,16 @@ function computeAccessLevel(role) {
   return 'OPERATOR';
 }
 
+function accessLevelFromUser(user) {
+  return computeAccessLevel(
+    user?.access_level || user?.accessLevel || user?.job_description || user?.role
+  );
+}
+
+function isAdminUser(user) {
+  return accessLevelFromUser(user) === 'ADMIN';
+}
+
 function isAdminJob(role) {
   return computeAccessLevel(role) === 'ADMIN';
 }
@@ -35,6 +45,8 @@ function isWorkforceEmployee(employee) {
 module.exports = {
   normalizeRole,
   computeAccessLevel,
+  accessLevelFromUser,
+  isAdminUser,
   isAdminJob,
   isWorkforceEmployee,
 };

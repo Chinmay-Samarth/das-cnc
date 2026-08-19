@@ -6,4 +6,6 @@ export { default as ProgressRing } from './ProgressRing';
 export { default as TruncatedText } from './TruncatedText';
 export { default as PageHeader } from './PageHeader';
 export { default as AlertBanner } from './AlertBanner';
+export { default as FormPage, FormActions } from './FormPage';
+export { default as FilePicker } from './FilePicker';
 export { appAlert, appConfirm, appPrompt, DialogProvider } from '../dialog';

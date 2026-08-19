@@ -101,9 +101,44 @@ async function getActiveCampaignRmRequirements() {
   return required;
 }
 
-/** Placeholder until tool BOM consumption is implemented. */
+/** Direct BOM tool requirements for all active campaigns. */
 async function getActiveCampaignToolRequirements() {
-  return new Map();
+  const { data: campaigns, error } = await supabase
+    .from('production_campaigns')
+    .select('id, master_record_id, target_quantity, good_quantity')
+    .eq('status', 'active');
+  if (error) throw error;
+
+  const required = new Map();
+  const bomCache = {};
+
+  for (const camp of campaigns || []) {
+    const componentId = camp.master_record_id;
+    if (!componentId) continue;
+
+    const remaining = Math.max(0, toNumber(camp.target_quantity) - toNumber(camp.good_quantity));
+    if (remaining <= 0) continue;
+
+    if (!(componentId in bomCache)) {
+      bomCache[componentId] = await getActiveBomVersionId(componentId);
+    }
+    const bomVersionId = bomCache[componentId];
+    if (!bomVersionId) continue;
+
+    const rawEdges = await loadBomEdges(bomVersionId);
+    const edges = await enrichEdges(rawEdges);
+    const toolEdges = (edges || []).filter(
+      (e) => e.child_slug === 'tool' && e.parent_element_id === componentId
+    );
+
+    for (const edge of toolEdges) {
+      const need = roundQty(toNumber(edge.quantity) * remaining);
+      if (need <= 0) continue;
+      required.set(edge.child_element_id, roundQty((required.get(edge.child_element_id) || 0) + need));
+    }
+  }
+
+  return required;
 }
 
 module.exports = {

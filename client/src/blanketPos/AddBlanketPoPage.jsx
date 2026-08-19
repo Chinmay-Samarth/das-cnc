@@ -5,7 +5,7 @@ import api from '../api/client';
 import ComponentSelect from './ComponentSelect';
 import { WEEKDAYS, weekdayName } from './scheduleLabels';
 import { formatDisplayDate, parseDateListToISO } from '../utils/dateFormat';
-import { EmptyState, PageHeader } from '../components/mes';
+import { EmptyState, PageHeader, AlertBanner } from '../components/mes';
 
 const STEPS = [
   { id: 1, title: 'Customer', hint: 'Who is this contract for?' },
@@ -260,7 +260,7 @@ export default function AddBlanketPoPage() {
         title="New customer contract"
         subtitle="Pick the customer, lock the part price, choose a delivery cadence, and generate dated schedules."
         actions={
-          <button type="button" className="mes-btn mes-btn-secondary" onClick={() => navigate('/blanket-pos')}>
+          <button type="button" className="neutral-button" onClick={() => navigate('/blanket-pos')}>
             <ArrowLeft size={16} />
             All contracts
           </button>
@@ -291,7 +291,7 @@ export default function AddBlanketPoPage() {
       </nav>
 
       <section className="card bpo-setup-card">
-        {error ? <p className="error-message">{error}</p> : null}
+        {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
 
         {step === 1 ? (
           <div className="bpo-panel">
@@ -648,7 +648,7 @@ export default function AddBlanketPoPage() {
           {step > 1 ? (
             <button
               type="button"
-              className="mes-btn mes-btn-secondary"
+              className="neutral-button"
               disabled={submitting}
               onClick={() => setStep((s) => s - 1)}
             >
@@ -657,7 +657,7 @@ export default function AddBlanketPoPage() {
           ) : (
             <button
               type="button"
-              className="mes-btn mes-btn-secondary"
+              className="cancel-button"
               disabled={submitting}
               onClick={() => navigate('/blanket-pos')}
             >
@@ -668,7 +668,7 @@ export default function AddBlanketPoPage() {
           {step < 3 ? (
             <button
               type="button"
-              className="mes-btn mes-btn-primary"
+              className="primary-button"
               disabled={submitting || !canNext()}
               onClick={() => setStep((s) => s + 1)}
             >
@@ -677,7 +677,7 @@ export default function AddBlanketPoPage() {
           ) : (
             <button
               type="button"
-              className="mes-btn mes-btn-primary"
+              className="primary-button"
               disabled={submitting || !cadenceValid()}
               onClick={handleSubmit}
             >

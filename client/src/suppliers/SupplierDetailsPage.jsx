@@ -4,6 +4,7 @@ import api from '../api/client';
 import ImageLightbox from '../components/shared/ImageLightBox';
 import { Pencil, ArrowLeft } from 'lucide-react';
 import { formatDisplayDate } from '../utils/dateFormat';
+import { AlertBanner, FilePicker, FormActions } from '../components/mes';
 
 const emptyFormData = {
   name: '',
@@ -152,10 +153,6 @@ export default function SupplierDetailsPage() {
       ...current,
       [name]: value,
     }));
-  };
-
-  const handleFileChange = (event) => {
-    setCertificate(event.target.files?.[0] || null);
   };
 
   const handleSubmit = async (event) => {
@@ -407,8 +404,9 @@ export default function SupplierDetailsPage() {
           </section>
         ) : (
           <form onSubmit={handleSubmit}>
-            {error ? <p className="error-message">{error}</p> : null}
+            {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
 
+            <div className="form-page-grid">
             <label htmlFor="name">
               Supplier Name <span style={{ color: '#b91c1c' }}>*</span>
               <input
@@ -583,39 +581,32 @@ export default function SupplierDetailsPage() {
             </label>
 
             {supplier.iso_certificate_url ? (
-              <div style={{ marginBottom: '16px' }}>
-                <p className="text-xl font-medium mb-3">Current ISO Certificate</p>
+              <div className="form-span-2" style={{ marginBottom: 8 }}>
+                <p className="employee-detail-label">Current ISO certificate</p>
                 <a href={supplier.iso_certificate_url} target="_blank" rel="noreferrer" style={{ color: '#1d4ed8', fontWeight: 700 }}>
                   Open certificate
                 </a>
               </div>
             ) : null}
 
-            <label htmlFor="certificate">
-              ISO Certificate
-              <input
+            <label htmlFor="certificate" className="form-span-2">
+              ISO certificate
+              <FilePicker
                 id="certificate"
-                type="file"
                 accept="image/*,application/pdf"
-                name="certificate"
-                onChange={handleFileChange}
                 disabled={submitting}
+                fileName={certificate?.name}
+                label={certificate ? 'Replace file' : 'Choose file'}
+                onChange={setCertificate}
               />
             </label>
-
-            <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
-              <button type="submit" className="primary-button" disabled={submitting}>
-                {submitting ? 'Saving...' : 'Save changes'}
-              </button>
-              <button
-                type="button"
-                className="cancel-button"
-                onClick={() => navigate(`/suppliers/${id}`)}
-                disabled={submitting}
-              >
-                Cancel
-              </button>
             </div>
+
+            <FormActions
+              saving={submitting}
+              onCancel={() => navigate(`/suppliers/${id}`)}
+              saveLabel={submitting ? 'Saving…' : 'Save changes'}
+            />
           </form>
         )}
       </section>

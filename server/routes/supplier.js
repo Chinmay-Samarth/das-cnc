@@ -87,6 +87,8 @@ router.get('/',verifyEmployeeAuth, async(req,res)=>{
             IFSC: s.ifsc,
             payment_details: s.payment_details,
             iso_certificate_url: s.iso_certificate_url,
+            lead_time_days: s.lead_time_days,
+            credit_period_days: s.credit_period_days,
         }))
 
         return res.json({ suppliers })
@@ -113,7 +115,9 @@ router.post('/', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>{
             account_number,
             account_type,
             IFSC,
-            payment_details
+            payment_details,
+            lead_time_days,
+            credit_period_days,
         } = req.body
 
         if (!name || !GSTIN || !account_number ){
@@ -152,7 +156,9 @@ router.post('/', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>{
             account_number: account_number,
             account_type: account_type || null,
             ifsc: IFSC,
-            payment_details: payment_details || null
+            payment_details: payment_details || null,
+            lead_time_days: lead_time_days != null && lead_time_days !== '' ? Number(lead_time_days) : null,
+            credit_period_days: credit_period_days != null && credit_period_days !== '' ? Number(credit_period_days) : null,
         }
 
         const  {data: newSupplier, error:insertError} = await supabase
@@ -206,7 +212,9 @@ router.put('/:id', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>
             account_number,
             account_type,
             IFSC,
-            payment_details
+            payment_details,
+            lead_time_days,
+            credit_period_days,
         } = req.body
 
         if (!name || !GSTIN || !account_number ){
@@ -229,7 +237,9 @@ router.put('/:id', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>
             account_number: account_number,
             account_type: account_type || null,
             ifsc: IFSC || null,
-            payment_details: payment_details || null
+            payment_details: payment_details || null,
+            lead_time_days: lead_time_days != null && lead_time_days !== '' ? Number(lead_time_days) : null,
+            credit_period_days: credit_period_days != null && credit_period_days !== '' ? Number(credit_period_days) : null,
         }
 
         if(req.file){

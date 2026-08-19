@@ -190,6 +190,26 @@ async function backflushRawMaterials({
   return { lines };
 }
 
+/**
+ * Decrement tool life from BOM tool edges after RM backflush.
+ */
+async function backflushTools({
+  bomVersionId,
+  deltaGood,
+  productionCardId,
+  parentMasterRecordId,
+  cardNumber = null,
+}) {
+  const { backflushToolLifeFromBom } = require('./toolLifeEngine');
+  return backflushToolLifeFromBom({
+    bomVersionId,
+    deltaGood,
+    productionCardId,
+    parentMasterRecordId,
+    cardNumber,
+  });
+}
+
 /** One-shot repair: align all inventory_stock rows to their ledger sums. */
 async function reconcileAllStockFromLedger() {
   const { data: stocks, error } = await supabase
@@ -211,6 +231,7 @@ async function reconcileAllStockFromLedger() {
 
 module.exports = {
   backflushRawMaterials,
+  backflushTools,
   syncStockFromLedger,
   reconcileAllStockFromLedger,
 };

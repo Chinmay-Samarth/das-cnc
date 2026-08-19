@@ -125,7 +125,7 @@ function ConfirmDialog({ message, onConfirm, onCancel }) {
       <div style={styles.dialog} className="card">
         <p style={{ marginBottom: 20, fontSize: 15, lineHeight: 1.6 }}>{message}</p>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button className="secondary-btn" onClick={onCancel} style={styles.dialogBtn}>
+          <button className="cancel-button" onClick={onCancel} style={styles.dialogBtn}>
             Cancel
           </button>
           <button onClick={onConfirm} style={{ ...styles.dialogBtn, background: "#dc2626" }}>
@@ -178,7 +178,7 @@ function OptionsEditor({ options, onChange }) {
           onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), add())}
           placeholder="Type an option and press Enter"
         />
-        <button type="button" className="secondary-btn" onClick={add} style={{ whiteSpace: "nowrap" }}>
+        <button type="button" className="neutral-button" onClick={add} style={{ whiteSpace: "nowrap" }}>
           Add
         </button>
       </div>
@@ -247,7 +247,7 @@ function FieldDrawer({ field, availableMasters, onSave, onClose }) {
               {field.id || field._uid.startsWith("tmp_") ? (local.label || "New Field") : local.label}
             </h2>
           </div>
-          <button className="secondary-btn" onClick={onClose} style={{ padding: "8px 14px" }}>
+          <button className="neutral-button" onClick={onClose} style={{ padding: "8px 14px" }}>
             ✕ Close
           </button>
         </div>
@@ -340,10 +340,10 @@ function FieldDrawer({ field, availableMasters, onSave, onClose }) {
 
         {/* Footer */}
         <div style={styles.drawerFooter}>
-          <button className="secondary-btn" onClick={onClose} style={{ flex: 1 }}>
+          <button className="cancel-button" onClick={onClose} style={{ flex: 1 }}>
             Cancel
           </button>
-          <button onClick={handleSave} style={{ flex: 2 }}>
+          <button className="primary-button" onClick={handleSave} style={{ flex: 2 }}>
             Save Field
           </button>
         </div>
@@ -362,7 +362,7 @@ function FieldRow({ field, isFirst, isLast, onEdit, onDelete, onMoveUp, onMoveDo
       <div className="master-field-reorder">
         <button
           type="button"
-          className="secondary-btn"
+          className="neutral-button"
           style={styles.iconBtn}
           onClick={onMoveUp}
           disabled={isFirst}
@@ -370,7 +370,7 @@ function FieldRow({ field, isFirst, isLast, onEdit, onDelete, onMoveUp, onMoveDo
         >▲</button>
         <button
           type="button"
-          className="secondary-btn"
+          className="neutral-button"
           style={styles.iconBtn}
           onClick={onMoveDown}
           disabled={isLast}
@@ -418,7 +418,7 @@ function FieldRow({ field, isFirst, isLast, onEdit, onDelete, onMoveUp, onMoveDo
       {/* Edit */}
       <button
         type="button"
-        className="secondary-btn"
+        className="neutral-button"
         style={{ padding: "8px 14px", fontSize: 13 }}
         onClick={onEdit}
         title="Edit field"
@@ -518,7 +518,7 @@ function SectionCard({
         {/* Collapse toggle */}
         <button
           type="button"
-          className="secondary-btn"
+          className="neutral-button"
           style={{ ...styles.iconBtn, fontSize: 16 }}
           onClick={() => onChange({ ...section, _collapsed: !section._collapsed })}
           title={section._collapsed ? "Expand" : "Collapse"}
@@ -566,7 +566,7 @@ function SectionCard({
         <div style={{ display: "flex", gap: 6 }}>
           <button
             type="button"
-            className="secondary-btn"
+            className="neutral-button"
             style={styles.iconBtn}
             onClick={onMoveUp}
             disabled={isFirst}
@@ -574,7 +574,7 @@ function SectionCard({
           >↑</button>
           <button
             type="button"
-            className="secondary-btn"
+            className="neutral-button"
             style={styles.iconBtn}
             onClick={onMoveDown}
             disabled={isLast}
@@ -619,7 +619,7 @@ function SectionCard({
 
           {/* Add field button */}
           <div style={{ marginTop: 12 }}>
-            <button type="button" className="secondary-btn" onClick={addField} style={{ fontSize: 13 }}>
+            <button type="button" className="neutral-button" onClick={addField} style={{ fontSize: 13 }}>
               + Add Field
             </button>
           </div>
@@ -867,7 +867,7 @@ export default function MasterBuilderPage() {
 
   if (loading) {
     return (
-      <div className="page-shell master-builder-page">
+      <div className="mes-shell master-builder-page">
         <div className="card" style={{ display: "grid", gap: 16, padding: 32 }}>
           <div className="skeleton" style={{ height: 40, width: "50%", borderRadius: 10 }} />
           <div className="skeleton" style={{ height: 20, width: "70%", borderRadius: 8 }} />
@@ -881,7 +881,7 @@ export default function MasterBuilderPage() {
   const globalErrorList = Object.values(errors).filter(Boolean);
 
   return (
-    <div className="page-shell master-builder-page fade-up">
+    <div className="mes-shell master-builder-page fade-up">
       {/* ── Page header ── */}
       <div className="master-builder-header">
         <div className="master-builder-title-block">
@@ -908,7 +908,7 @@ export default function MasterBuilderPage() {
         <div style={{ display: "flex", gap: 10, flexShrink: 0, alignItems: "flex-start", paddingTop: 8 }}>
           <button
             type="button"
-            className="secondary-btn"
+            className="neutral-button"
             onClick={() => navigate(-1)}
             style={{ whiteSpace: "nowrap" }}
           >
@@ -916,6 +916,7 @@ export default function MasterBuilderPage() {
           </button>
           <button
             type="button"
+            className="primary-button"
             onClick={handleSave}
             disabled={saving}
             style={{ whiteSpace: "nowrap", minWidth: 120 }}
@@ -996,7 +997,7 @@ export default function MasterBuilderPage() {
             <div style={{ position: "relative" }}>
               <button
                 type="button"
-                className="secondary-btn"
+                className="neutral-button"
                 style={{ fontSize: 22, padding: "8px 16px", width: "100%" }}
                 onClick={() => setShowIconPicker((p) => !p)}
               >
@@ -1008,7 +1009,7 @@ export default function MasterBuilderPage() {
                     <button
                       key={ic}
                       type="button"
-                      className="secondary-btn"
+                      className="neutral-button"
                       style={{ fontSize: 20, padding: 8, background: master.icon === ic ? "#dbeafe" : undefined }}
                       onClick={() => { setMasterProp("icon", ic); setShowIconPicker(false); }}
                     >
@@ -1030,7 +1031,7 @@ export default function MasterBuilderPage() {
             {sections.length}
           </span>
         </h2>
-        <button type="button" onClick={addSection} style={{ fontSize: 13, padding: "10px 18px" }}>
+        <button type="button" className="neutral-button" onClick={addSection} style={{ fontSize: 13, padding: "10px 18px" }}>
           + Add Section
         </button>
       </div>
@@ -1041,7 +1042,7 @@ export default function MasterBuilderPage() {
           <p style={{ marginBottom: 16, fontSize: 15 }}>
             No sections yet. Sections group related fields together.
           </p>
-          <button type="button" onClick={addSection}>
+          <button type="button" className="neutral-button" onClick={addSection}>
             + Add your first section
           </button>
         </div>
@@ -1073,13 +1074,14 @@ export default function MasterBuilderPage() {
           <div style={{ display: "flex", gap: 10 }}>
             <button
               type="button"
-              className="secondary-btn"
+              className="cancel-button"
               onClick={() => navigate(-1)}
             >
               Cancel
             </button>
             <button
               type="button"
+              className="primary-button"
               onClick={handleSave}
               disabled={saving}
               style={{ minWidth: 140 }}

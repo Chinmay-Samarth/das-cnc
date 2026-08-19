@@ -5,7 +5,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
-const ALLOWED_CHILD_SLUGS = ['component', 'raw-material'];
+const ALLOWED_CHILD_SLUGS = ['component', 'raw-material', 'tool'];
 
 function todayDateString() {
   return new Date().toISOString().slice(0, 10);

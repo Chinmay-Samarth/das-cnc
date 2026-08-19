@@ -76,6 +76,12 @@ async function recordVendorInvoicePayment(id, actorId, body = {}) {
     .eq('id', id);
 
   if (error) throw httpError(error.message, 500);
+
+  const { syncPoPaidFromInvoice } = require('./purchaseOrderEngine');
+  await syncPoPaidFromInvoice(id).catch((e) =>
+    console.error('PO paid sync failed:', e.message)
+  );
+
   return getInvoice(id);
 }
 

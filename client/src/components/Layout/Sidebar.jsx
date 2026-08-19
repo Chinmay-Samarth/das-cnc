@@ -26,6 +26,7 @@ import {
   Layers,
   IndianRupee,
   Plus,
+  ShoppingCart,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'das-sidebar-open-sections';
@@ -36,6 +37,7 @@ const NAV_SECTIONS = [
     label: 'Sourcing',
     items: [
       { to: '/blanket-pos', label: 'Blanket POs', icon: FileText },
+      { to: '/purchase-orders', label: 'Purchase Orders', icon: ShoppingCart, adminOnly: true },
       { to: '/delivery-schedules', label: 'Delivery Schedules', icon: Truck },
     ],
   },
@@ -197,6 +199,7 @@ export default function Sidebar({ onNavigate }) {
       items: section.items.filter((item) => {
         if (item.managerOnly && !managesWorkCenter) return false;
         if (item.adminOrSupervisorOnly && !isReviewer) return false;
+        if (item.adminOnly && !isAdmin()) return false;
         return true;
       }),
     })).filter((section) => section.items.length > 0);

@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
 import { appAlert } from '../components/dialog';
+import { AlertBanner, PageHeader } from '../components/mes';
+import { ArrowLeft } from 'lucide-react';
 import EmployeeSelect from './EmployeeSelect';
 import GIRNInvoiceUpload from './GIRNInvoiceUpload';
 import MasterItemSelect from './MasterItemSelect';
@@ -169,7 +171,7 @@ function HeaderReview({
             <strong>{employeeLabel}</strong>
             <button
               type="button"
-              className="secondary-button"
+              className="neutral-button"
               onClick={() => setOverrideEmployee(true)}
             >
               Change employee
@@ -203,7 +205,7 @@ function ItemsReview({ items, onItemChange, onMasterSelect, onCategoryChange, on
           <h2>Review Line Items</h2>
           <p className="muted">OCR suggests a category per line. Each stocked item must be linked to an existing master record.</p>
         </div>
-        <button type="button" className="secondary-button" onClick={onAddItem}>
+        <button type="button" className="neutral-button" onClick={onAddItem}>
           + Add Item
         </button>
       </div>
@@ -236,7 +238,7 @@ function ItemsReview({ items, onItemChange, onMasterSelect, onCategoryChange, on
             {items.length > 1 ? (
               <button
                 type="button"
-                className="secondary-button"
+                className="neutral-button"
                 style={{ fontSize: 12, padding: '2px 10px' }}
                 onClick={() => onRemoveItem(idx)}
               >
@@ -390,6 +392,7 @@ export default function CreateGIRNPage() {
   const outsourceShipmentId = searchParams.get('outsource_shipment_id') || '';
   const querySupplierId = searchParams.get('supplier_id') || '';
   const queryPoReference = searchParams.get('po_reference') || '';
+  const purchaseOrderId = searchParams.get('purchase_order_id') || '';
   const isOutsourceReturn = Boolean(outsourceShipmentId);
 
   const [suppliers, setSuppliers] = useState([]);
@@ -411,6 +414,7 @@ export default function CreateGIRNPage() {
     csr: '',
     notes: '',
     outsource_shipment_id: outsourceShipmentId || '',
+    purchase_order_id: purchaseOrderId || '',
   });
   const [items, setItems] = useState([{ ...EMPTY_ITEM }]);
 
@@ -418,6 +422,37 @@ export default function CreateGIRNPage() {
     api.get('/suppliers').then(({ data }) => setSuppliers(data.suppliers || []));
     api.get('/employees').then(({ data }) => setEmployees(data.employees || []));
   }, []);
+
+  useEffect(() => {
+    if (!purchaseOrderId || isOutsourceReturn) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/purchase-orders/${purchaseOrderId}/girn-draft`);
+        const draft = data.draft;
+        if (cancelled || !draft) return;
+        setSupplierLocked(true);
+        setHeader((prev) => ({
+          ...prev,
+          purchase_order_id: draft.purchase_order_id,
+          supplier_id: draft.supplier_id || prev.supplier_id,
+          supplier_name: draft.supplier_name || prev.supplier_name,
+          supplier_gstin: draft.supplier_gstin || prev.supplier_gstin,
+          po_reference: draft.po_reference || prev.po_reference,
+          received_date: draft.received_date || prev.received_date,
+        }));
+        if (draft.items?.length) {
+          setItems(normalizeDraftItems(draft.items));
+        }
+        setStep('review');
+      } catch (err) {
+        if (!cancelled) {
+          setError(err.response?.data?.error || 'Unable to load PO for GIRN.');
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [purchaseOrderId, isOutsourceReturn]);
 
   useEffect(() => {
     if (!outsourceShipmentId) return;
@@ -617,6 +652,7 @@ export default function CreateGIRNPage() {
     try {
       const payload = {
         ...header,
+        purchase_order_id: header.purchase_order_id || purchaseOrderId || null,
         outsource_shipment_id: header.outsource_shipment_id || outsourceShipmentId || null,
         auto_approve: allOilOrOther && !submitForInspection && !isOutsourceReturn,
         items: items.map((item) => ({
@@ -666,22 +702,24 @@ export default function CreateGIRNPage() {
   }
 
   return (
-    <main className="app-shell employees-page">
-      <header className="app-header">
-        <div className="header-title-block">
-          <p className="eyebrow">{isOutsourceReturn ? 'Outsourcing return' : 'Procurement'}</p>
-          <h1>{isOutsourceReturn ? 'GIRN — outsource inward' : 'New GIRN'}</h1>
-          {isOutsourceReturn ? (
-            <p className="muted">
-              Upload the supplier invoice for shipment{' '}
-              <strong>{outsourceShipment?.shipment_number || header.po_reference || 'OS'}</strong>.
-              Registering this GIRN receives the lots and resumes routing.
-            </p>
-          ) : null}
-        </div>
-      </header>
+    <main className="mes-shell form-page-wide">
+      <PageHeader
+        eyebrow={isOutsourceReturn ? 'Outsourcing return' : 'Procurement'}
+        title={isOutsourceReturn ? 'GIRN — outsource inward' : 'New GIRN'}
+        subtitle={
+          isOutsourceReturn
+            ? `Upload the supplier invoice for shipment ${outsourceShipment?.shipment_number || header.po_reference || 'OS'}. Registering this GIRN receives the lots and resumes routing.`
+            : 'Scan the invoice, review details, then register.'
+        }
+        actions={
+          <button type="button" className="neutral-button" onClick={() => navigate(isOutsourceReturn ? '/production/outsource' : '/girn')}>
+            <ArrowLeft size={16} />
+            Back
+          </button>
+        }
+      />
 
-      <section className="card form-card">
+      <section className="mes-card form-page-card">
         <div style={{ display: 'flex', gap: 8, marginBottom: 28, flexWrap: 'wrap', alignItems: 'center' }}>
           {['Scan Invoice', 'Review Details', 'Register GIRN'].map((label, idx) => {
             const currentIdx = step === 'scan' ? 0 : 1;
@@ -712,7 +750,7 @@ export default function CreateGIRNPage() {
           })}
         </div>
 
-        {error ? <p className="error-message" style={{ marginBottom: 16 }}>{error}</p> : null}
+        {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
 
         {step === 'scan' ? (
           <div style={{ display: 'flex', flexDirection: 'row', gap: 20 }}>
@@ -758,7 +796,7 @@ export default function CreateGIRNPage() {
                   Invoice {invoice.invoice_number || invoice.id} has been added to the Invoices tab.
                 </p>
                 {invoice.file_url ? (
-                  <a href={invoice.file_url} target="_blank" rel="noreferrer" className="primary-button" style={{ display: 'inline-block', marginTop: 8 }}>
+                  <a href={invoice.file_url} target="_blank" rel="noreferrer" className="neutral-button" style={{ display: 'inline-flex', marginTop: 8 }}>
                     View scanned invoice
                   </a>
                 ) : null}
@@ -785,7 +823,7 @@ export default function CreateGIRNPage() {
               onRemoveItem={removeItem}
             />
 
-            <div style={{ display: 'flex', gap: 12, marginTop: 24, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, marginTop: 24, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               <button
                 type="button"
                 className="neutral-button"
@@ -796,7 +834,15 @@ export default function CreateGIRNPage() {
               </button>
               <button
                 type="button"
-                className="neutral-button"
+                className="cancel-button"
+                disabled={submitting}
+                onClick={() => navigate(isOutsourceReturn ? '/production/outsource' : '/girn')}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary-button"
                 disabled={!canRegister || submitting}
                 onClick={() => registerGirn(false)}
               >

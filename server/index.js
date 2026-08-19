@@ -13,6 +13,7 @@ const { evaluateTomorrowDeliveryStockAlerts } = require('./services/inventoryAle
 const { evaluateSalesInvoiceOverdueAlerts } = require('./services/salesInvoiceAlertEngine');
 const { evaluateProductionAlerts } = require('./services/productionAlertEngine');
 const { evaluateReorderAlerts } = require('./services/reorderAlertEngine');
+const { evaluatePredictiveReorder } = require('./services/predictiveReorderEngine');
 const cors = require('cors');
 const { initSocket, attachConnectionHandlers } = require('./socket');
  
@@ -47,6 +48,8 @@ app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/search', require('./routes/search'));
 app.use('/api/work-centers', require('./routes/workCenters'));
 app.use('/api/blanket-pos', require('./routes/blanketPos'));
+app.use('/api/purchase-orders', require('./routes/purchaseOrders'));
+app.use('/api/tool-instances', require('./routes/toolInstances'));
 app.use('/api/delivery-schedules', require('./routes/deliverySchedules'));
 app.use('/api/production', require('./routes/production'));
 app.use('/api/campaigns', require('./routes/campaigns'));
@@ -131,6 +134,11 @@ cron.schedule('*/20 * * * *', async () => {
     console.error('Reorder alert evaluation failed:', err);
   }
   try {
+    await evaluatePredictiveReorder();
+  } catch (err) {
+    console.error('Predictive reorder evaluation failed:', err);
+  }
+  try {
     await evaluateProductionAlerts();
   } catch (err) {
     console.error('Production alert evaluation failed:', err);
@@ -154,6 +162,8 @@ setTimeout(() => {
     .catch((err) => console.error('Initial inventory delivery alert evaluation failed:', err));
   evaluateReorderAlerts()
     .catch((err) => console.error('Initial reorder alert evaluation failed:', err));
+  evaluatePredictiveReorder()
+    .catch((err) => console.error('Initial predictive reorder evaluation failed:', err));
   evaluateProductionAlerts()
     // .then((result) => console.log('Initial production alerts:', result.created))
     .catch((err) => console.error('Initial production alert evaluation failed:', err));

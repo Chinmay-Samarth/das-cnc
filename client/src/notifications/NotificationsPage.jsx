@@ -19,6 +19,7 @@ import {
   CalendarOff,
   PackageCheck,
   ShoppingCart,
+  Wrench,
 } from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
@@ -44,6 +45,8 @@ const TYPE_META = {
   },
   insufficient_stock: { icon: PackageX, label: 'Stock short', category: 'inventory' },
   reorder_purchase_required: { icon: ShoppingCart, label: 'Reorder purchase', category: 'inventory' },
+  predictive_reorder: { icon: ShoppingCart, label: 'Predictive reorder', category: 'inventory' },
+  tool_life_low: { icon: Wrench, label: 'Tool life low', category: 'inventory' },
   girn_pending_inspection: { icon: ClipboardCheck, label: 'GIRN inspection', category: 'inventory' },
   girn_ready_for_approval: { icon: ClipboardCheck, label: 'GIRN approval', category: 'inventory' },
   invoice_overdue: { icon: FileText, label: 'Invoice overdue', category: 'finance' },
@@ -194,7 +197,19 @@ export default function NotificationsPage() {
         navigate(`/employees/${n.employee_id}`);
       } else if (n.type === 'girn_pending_inspection') {
         navigate('/approvals?tab=girn&status=awaiting_inspection');
-      } else if (n.type === 'reorder_purchase_required') {
+      } else if (n.type === 'reorder_purchase_required' || n.type === 'predictive_reorder') {
+        if (isAdmin) {
+          try {
+            const { data } = await api.post('/purchase-orders/from-alert', {
+              ...n.payload,
+              notification_id: n.id,
+            });
+            navigate(`/purchase-orders/${data.purchase_order.id}`);
+            return;
+          } catch {
+            /* fall through to stock */
+          }
+        }
         const cat = n.payload?.item_category || 'raw_material';
         const masterId = n.payload?.master_record_id;
         navigate(

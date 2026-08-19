@@ -6,6 +6,8 @@ import api from '../api/client';
 import { formatDisplayDate, toISODateString } from '../utils/dateFormat';
 import { PageHeader, EmptyState, StatusBadge, AlertBanner } from '../components/mes';
 import { appAlert } from '../components/dialog';
+import { useAuth } from '../auth/authContext';
+import PurchaseOrdersTab from '../procurement/PurchaseOrdersTab';
 
 const STATUS_OPTIONS = [
   { id: 'all', label: 'All statuses' },
@@ -93,6 +95,8 @@ async function readExportError(err) {
 
 export default function InvoicesPage() {
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
+  const [pageTab, setPageTab] = useState('invoices');
   const monthRange = useMemo(() => currentMonthRange(), []);
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -226,6 +230,29 @@ export default function InvoicesPage() {
 
   return (
     <main className="mes-shell">
+      {isAdmin() ? (
+        <div className="mrd-tabs" style={{ marginBottom: 16 }}>
+          <button
+            type="button"
+            className={`mrd-tab${pageTab === 'invoices' ? ' is-active' : ''}`}
+            onClick={() => setPageTab('invoices')}
+          >
+            Vendor Invoices
+          </button>
+          <button
+            type="button"
+            className={`mrd-tab${pageTab === 'purchase-orders' ? ' is-active' : ''}`}
+            onClick={() => setPageTab('purchase-orders')}
+          >
+            Purchase Orders
+          </button>
+        </div>
+      ) : null}
+
+      {pageTab === 'purchase-orders' && isAdmin() ? (
+        <PurchaseOrdersTab />
+      ) : (
+        <>
       <PageHeader
         eyebrow="Accounts payable"
         title="Invoices"
@@ -404,6 +431,8 @@ export default function InvoicesPage() {
           </div>
         </section>
       ) : null}
+        </>
+      )}
     </main>
   );
 }
