@@ -29,7 +29,7 @@ export default function NotFoundPage() {
             <Home size={16} style={{ display: 'inline', marginRight: 6, verticalAlign: 'middle' }} />
             Go to Home
           </button>
-          <button type="button" className="secondary-button" onClick={() => navigate(-1)}>
+          <button type="button" className="neutral-button" onClick={() => navigate(-1)}>
             <ArrowLeft size={16} style={{ display: 'inline', marginRight: 6, verticalAlign: 'middle' }} />
             Go Back
           </button>

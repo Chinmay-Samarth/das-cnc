@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 
 export default function AddTypeDropdown({ buttonLabel, options, onSelect }) {
   const [open, setOpen] = useState(false);
@@ -21,15 +22,13 @@ export default function AddTypeDropdown({ buttonLabel, options, onSelect }) {
     <div className="master-field-add-dropdown" ref={containerRef}>
       <button
         type="button"
-        className="secondary-button master-field-add-trigger"
+        className="neutral-button master-field-add-trigger"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
         aria-haspopup="menu"
       >
         {buttonLabel}
-        <span className="master-field-add-caret" aria-hidden="true">
-          ▾
-        </span>
+        <ChevronDown size={16} aria-hidden="true" />
       </button>
 
       {open ? (

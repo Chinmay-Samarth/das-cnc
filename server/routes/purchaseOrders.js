@@ -1,5 +1,6 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
 const { accessLevelFromUser, isAdminUser } = require('../utils/accessLevel');
 const {
   listPurchaseOrders,
@@ -10,6 +11,9 @@ const {
   updatePurchaseOrder,
   sendPurchaseOrder,
   markPurchaseOrderPaid,
+  markPurchaseOrderDelivered,
+  storePurchaseOrderPdf,
+  buildDemandSummary,
   cancelPurchaseOrder,
   splitPurchaseOrder,
   linkInvoiceToPo,
@@ -20,6 +24,11 @@ const {
   resolveMatchException,
   hasUnresolvedMatchExceptions,
 } = require('../services/purchaseOrderMatchEngine');
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
@@ -66,6 +75,15 @@ function wrap(fn) {
 router.use(verifyEmployeeAuth);
 
 router.get(
+  '/demand-summary',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const summary = await buildDemandSummary();
+    return res.json(summary);
+  })
+);
+
+router.get(
   '/:id/girn-draft',
   requireAdminOrSupervisor,
   wrap(async (req, res) => {
@@ -108,6 +126,24 @@ router.post(
   })
 );
 
+router.post(
+  '/:id/pdf',
+  upload.single('pdf'),
+  wrap(async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'PDF file is required' });
+    const purchase_order = await storePurchaseOrderPdf(req.params.id, req.file);
+    return res.json({ purchase_order });
+  })
+);
+
+router.post(
+  '/:id/delivered',
+  wrap(async (req, res) => {
+    const purchase_order = await markPurchaseOrderDelivered(req.params.id);
+    return res.json({ purchase_order });
+  })
+);
+
 router.get(
   '/:id',
   wrap(async (req, res) => {
@@ -119,7 +155,7 @@ router.get(
 router.patch(
   '/:id',
   wrap(async (req, res) => {
-    const purchase_order = await updatePurchaseOrder(req.params.id, req.body || {});
+    const purchase_order = await updatePurchaseOrder(req.params.id, req.body || {}, req.user?.sub);
     return res.json({ purchase_order });
   })
 );
@@ -127,7 +163,7 @@ router.patch(
 router.post(
   '/:id/send',
   wrap(async (req, res) => {
-    const purchase_order = await sendPurchaseOrder(req.params.id);
+    const purchase_order = await sendPurchaseOrder(req.params.id, req.user?.sub);
     return res.json({ purchase_order });
   })
 );

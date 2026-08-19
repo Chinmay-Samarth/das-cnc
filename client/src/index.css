@@ -119,12 +119,18 @@ button:disabled {
 .secondary-button {
   background: #64748b;
   color: white;
-  padding:11px;
+  padding: 11px;
   border-radius: 13px;
 }
 
 .secondary-button:hover:not(:disabled) {
   background: #475569;
+}
+
+svg.lucide {
+  display: inline;
+  vertical-align: middle;
+  flex-shrink: 0;
 }
 
 .neutral-button {
@@ -134,6 +140,13 @@ button:disabled {
   border-radius: 6px;
   border: 1px solid #dfe3e8;
   margin: 10px 0px;
+  width: auto;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .neutral-button:hover:not(:disabled) {
@@ -5248,6 +5261,39 @@ textarea {
 
 .bpo-setup-page {
   max-width: 880px;
+}
+
+.po-setup-page {
+  max-width: 1080px;
+}
+
+.po-setup-page .app-table-wrap {
+  margin: 4px 0 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+
+.po-setup-page .app-table {
+  min-width: 720px;
+}
+
+.po-setup-page .app-table input[type='number'] {
+  width: 96px;
+  max-width: 100%;
+  padding: 8px 10px;
+  margin: 0;
+}
+
+.po-setup-page .app-table input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+}
+
+.po-setup-page .bpo-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
 }
 
 .bpo-setup-header {

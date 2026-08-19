@@ -268,7 +268,7 @@ export default function AttendancePage() {
         
         <button
           type="button"
-          className="secondary-button"
+          className="neutral-button"
           onClick={handleSyncBiometric}
           disabled={loading || syncing}
         >

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
 import { appAlert } from '../components/dialog';
@@ -31,6 +31,7 @@ const EMPTY_ITEM = {
   vat_amount: '',
   total_amount: '',
   match_confidence: '',
+  purchase_order_line_id: null,
 };
 
 function toNumber(value) {
@@ -133,13 +134,22 @@ function HeaderReview({
         </label>
 
         <label>
-          PO / Invoice Reference
-          <input
-            type="text"
-            name="po_reference"
-            value={header.po_reference}
-            onChange={onChange}
-          />
+          Linked purchase order
+          {header.purchase_order_id ? (
+            <div>
+              <Link to={`/purchase-orders/${header.purchase_order_id}`} className="neutral-button" style={{ display: 'inline-flex', width: 'fit-content' }}>
+                {header.po_reference || 'Open PO'}
+              </Link>
+            </div>
+          ) : (
+            <input
+              type="text"
+              name="po_reference"
+              value={header.po_reference}
+              onChange={onChange}
+              placeholder="Optional text reference"
+            />
+          )}
         </label>
 
         <label>
@@ -673,6 +683,7 @@ export default function CreateGIRNPage() {
           amount: toNumber(item.amount),
           vat_amount: toNumber(item.vat_amount),
           total_amount: toNumber(item.total_amount),
+          purchase_order_line_id: item.purchase_order_line_id || null,
         })),
       };
 
@@ -751,6 +762,15 @@ export default function CreateGIRNPage() {
         </div>
 
         {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
+        {header.purchase_order_id ? (
+          <AlertBanner tone="amber">
+            Receiving against{' '}
+            <Link to={`/purchase-orders/${header.purchase_order_id}`}>
+              {header.po_reference || 'purchase order'}
+            </Link>
+            . Lines stay linked so receipts roll up on the PO.
+          </AlertBanner>
+        ) : null}
 
         {step === 'scan' ? (
           <div style={{ display: 'flex', flexDirection: 'row', gap: 20 }}>

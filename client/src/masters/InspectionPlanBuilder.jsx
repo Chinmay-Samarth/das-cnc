@@ -1,6 +1,6 @@
 import { useEffect, useState, Fragment } from 'react';
 import api from '../api/client'
-import {Plus, X} from 'lucide-react';
+import {Plus, X, CirclePlay} from 'lucide-react';
 
 const CHECK_TYPES = ['dimensional', 'visual', 'functional', 'document'];
 const UNIT_OPTIONS = [
@@ -215,7 +215,8 @@ export default function InspectionPlanBuilder({ slug, recordId }) {
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {planMeta?.status === 'draft' ? (
-            <button type="button" className="secondary-button" disabled={activating || saving} onClick={handleActivate}>
+            <button type="button" className="neutral-button" disabled={activating || saving} onClick={handleActivate}>
+              <CirclePlay size={16} />
               {activating ? 'Activating...' : 'Activate Plan'}
             </button>
           ) : null}

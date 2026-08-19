@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Plus, X } from 'lucide-react';
 import api from '../../api/client';
 
 export default function DrawingsTab({ items, setItems, newKey }) {
@@ -75,7 +76,7 @@ export default function DrawingsTab({ items, setItems, newKey }) {
                 onClick={() => removeItem(item._key)}
                 aria-label="Remove drawing"
               >
-                ×
+                <X size={16} />
               </button>
             </div>
 
@@ -131,7 +132,8 @@ export default function DrawingsTab({ items, setItems, newKey }) {
         ))}
       </div>
 
-      <button type="button" className="secondary-button" onClick={addItem}>
+      <button type="button" className="neutral-button" onClick={addItem}>
+        <Plus size={16} />
         Add drawing
       </button>
     </div>

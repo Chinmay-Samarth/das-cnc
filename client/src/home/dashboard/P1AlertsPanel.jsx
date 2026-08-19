@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import { useAuth } from '../../auth/authContext';
 import { EmptyState, StatusBadge } from '../../components/mes';
+import { ShoppingCart } from 'lucide-react';
 
 const TYPE_LABEL = {
   insufficient_stock: 'Stock short',
@@ -99,10 +100,11 @@ export default function P1AlertsPanel({ alerts, inventory }) {
               {canCreatePo ? (
                 <button
                   type="button"
-                  className="secondary-button"
+                  className="neutral-button"
                   style={{ marginTop: 8 }}
                   onClick={(e) => handleCreatePo(e, n)}
                 >
+                  <ShoppingCart size={16} />
                   Create PO
                 </button>
               ) : null}

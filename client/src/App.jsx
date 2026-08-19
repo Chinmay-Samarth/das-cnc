@@ -54,7 +54,7 @@ import AddSalesInvoiceWizard from './salesInvoices/AddSalesInvoiceWizard';
 import CompanySettingsPage from './salesInvoices/CompanySettingsPage';
 import NotFoundPage from './pages/NotFoundPage';
 import PurchaseOrderDetailPage from './procurement/PurchaseOrderDetailPage';
-import CreatePurchaseOrderPage from './procurement/CreatePurchaseOrderPage';
+import CreatePurchaseOrderWizard from './procurement/CreatePurchaseOrderWizard';
 import PurchaseOrdersTab from './procurement/PurchaseOrdersTab';
 
 function PurchaseOrdersListPage() {
@@ -160,7 +160,7 @@ export default function App() {
                 <Route path="/home" element={<HomePage />} />
                 <Route path="/notifications" element={<NotificationsPage />} />
                 <Route path="/purchase-orders" element={<PurchaseOrdersListPage />} />
-                <Route path="/purchase-orders/create" element={<CreatePurchaseOrderPage />} />
+                <Route path="/purchase-orders/create" element={<CreatePurchaseOrderWizard />} />
                 <Route path="/purchase-orders/:id" element={<PurchaseOrderDetailPage />} />
               </Route>
               <Route path="/attendance" element={<AttendancePage />} />

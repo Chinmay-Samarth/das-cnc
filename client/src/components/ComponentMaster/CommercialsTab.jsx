@@ -1,3 +1,5 @@
+import { Plus, X } from 'lucide-react';
+
 export default function CommercialsTab({ items, setItems, newKey }) {
   const updateItem = (key, field, value) => {
     setItems((current) =>
@@ -53,13 +55,14 @@ export default function CommercialsTab({ items, setItems, newKey }) {
               onClick={() => removeItem(item._key)}
               aria-label="Remove commercial row"
             >
-              ×
+              <X size={16} />
             </button>
           </div>
         ))}
       </div>
 
-      <button type="button" className="secondary-button" onClick={addItem}>
+      <button type="button" className="neutral-button" onClick={addItem}>
+        <Plus size={16} />
         Add row
       </button>
     </div>

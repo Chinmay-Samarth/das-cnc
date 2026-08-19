@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, FileText } from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
 import { useSocket } from '../socket/socketContext';
@@ -84,7 +84,17 @@ function OverviewTab({ girn, onAction, actionLoading, canReview }) {
               : null
           }
         />
-        <DetailItem label="PO Reference" value={girn.po_reference} />
+        <div>
+          <p className="component-detail-label">Purchase order</p>
+          {girn.purchase_order_id ? (
+            <Link to={`/purchase-orders/${girn.purchase_order_id}`} className="neutral-button" style={{ display: 'inline-flex', width: 'fit-content', gap: 6, alignItems: 'center' }}>
+              <FileText size={16} />
+              {girn.purchase_order_number || girn.po_reference || 'Open PO'}
+            </Link>
+          ) : (
+            <p className="component-detail-value">{girn.po_reference || '—'}</p>
+          )}
+        </div>
         <div>
           <p className="component-detail-label">Source Invoice</p>
           {girn.invoice_id ? (

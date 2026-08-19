@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { Plus } from 'lucide-react';
 import api from '../api/client';
 import { useSocket } from '../socket/socketContext';
 import { formatDisplayDate } from '../utils/dateFormat';
@@ -88,7 +89,7 @@ export default function GIRNListPage() {
     const matches = girns.filter((g) => {
       if (statusFilter !== 'all' && g.status !== statusFilter) return false;
       if (!query) return true;
-      return [g.girn_number, g.supplier_name, g.received_by_name, g.received_by_code, g.po_reference, g.csr]
+      return [g.girn_number, g.supplier_name, g.received_by_name, g.received_by_code, g.po_reference, g.purchase_order_number, g.csr]
         .join(' ')
         .toLowerCase()
         .includes(query);
@@ -147,6 +148,7 @@ export default function GIRNListPage() {
               className="primary-button"
               onClick={() => navigate('/girn/create')}
             >
+              <Plus size={16} />
               New GIRN
             </button>
           </div>
@@ -165,6 +167,9 @@ export default function GIRNListPage() {
                   </th>
                   <th onClick={() => handleSort('supplier_name')}>
                     Supplier<span className="sort-indicator">{sortArrow('supplier_name')}</span>
+                  </th>
+                  <th onClick={() => handleSort('purchase_order_number')}>
+                    Purchase order<span className="sort-indicator">{sortArrow('purchase_order_number')}</span>
                   </th>
                   <th className="hide-mobile" onClick={() => handleSort('received_date')}>
                     Received Date<span className="sort-indicator">{sortArrow('received_date')}</span>
@@ -194,11 +199,20 @@ export default function GIRNListPage() {
                   >
                     <td>
                       <strong>{g.girn_number}</strong>
-                      {g.po_reference ? (
-                        <div className="table-subtext">PO: {g.po_reference}</div>
-                      ) : null}
                     </td>
                     <td>{g.supplier_name || '—'}</td>
+                    <td>
+                      {g.purchase_order_id ? (
+                        <Link
+                          to={`/purchase-orders/${g.purchase_order_id}`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {g.purchase_order_number || g.po_reference || 'Open PO'}
+                        </Link>
+                      ) : (
+                        g.po_reference || '—'
+                      )}
+                    </td>
                     <td className="hide-mobile">{formatDisplayDate(g.received_date)}</td>
                     <td className="hide-mobile">
                       {g.received_by_name || '—'}
@@ -214,7 +228,7 @@ export default function GIRNListPage() {
                 ))}
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="muted">
+                    <td colSpan={7} className="muted">
                       No GIRNs found.
                     </td>
                   </tr>

@@ -6,6 +6,7 @@ const {
 } = require('./masterFieldEngine');
 const {
   getActiveCampaignRmRequirements,
+  getActiveCampaignToolRequirements,
   loadOnHandByMasterRecordId,
 } = require('./materialRequirementsEngine');
 const { dismissReorderNotification } = require('./reorderAlertEngine');
@@ -149,7 +150,189 @@ async function getPurchaseOrderById(id, { includeMatch = true } = {}) {
     match_exceptions = ex || [];
   }
 
-  return enrichPoHeader({ ...po, lines, girns: girns || [], match_exceptions });
+  const employeeIds = [
+    po.created_by,
+    po.edited_by,
+    po.sent_by,
+    po.payment_recorded_by,
+  ].filter(Boolean);
+  const nameById = await loadEmployeeNames(employeeIds);
+
+  return enrichPoHeader({
+    ...po,
+    lines,
+    girns: girns || [],
+    match_exceptions,
+    created_by_name: nameById.get(po.created_by) || null,
+    edited_by_name: nameById.get(po.edited_by) || null,
+    sent_by_name: nameById.get(po.sent_by) || null,
+    payment_recorded_by_name: nameById.get(po.payment_recorded_by) || null,
+  });
+}
+
+async function loadEmployeeNames(ids) {
+  const unique = [...new Set((ids || []).filter(Boolean))];
+  const map = new Map();
+  if (!unique.length) return map;
+  const { data, error } = await supabase
+    .from('employees')
+    .select('id, full_name, employee_code')
+    .in('id', unique);
+  if (error) throw error;
+  for (const row of data || []) {
+    map.set(row.id, row.full_name || row.employee_code || row.id);
+  }
+  return map;
+}
+
+async function loadOpenPoQtyByMaster() {
+  const { data: pos, error: poErr } = await supabase
+    .from('purchase_orders')
+    .select('id')
+    .in('status', ['draft', 'due', 'delivered']);
+  if (poErr) throw poErr;
+  const poIds = (pos || []).map((p) => p.id);
+  const map = new Map();
+  if (!poIds.length) return map;
+
+  const { data: lines, error } = await supabase
+    .from('purchase_order_lines')
+    .select('master_record_id, quantity, received_qty')
+    .in('purchase_order_id', poIds);
+  if (error) throw error;
+
+  for (const line of lines || []) {
+    const open = Math.max(0, toNumber(line.quantity) - toNumber(line.received_qty));
+    if (open <= 0 || !line.master_record_id) continue;
+    map.set(line.master_record_id, roundQty((map.get(line.master_record_id) || 0) + open));
+  }
+  return map;
+}
+
+async function buildDemandSummary() {
+  const [
+    campaignRm,
+    campaignTools,
+    onHandRm,
+    onHandTools,
+    metaRm,
+    metaTools,
+    openPoQty,
+  ] = await Promise.all([
+    getActiveCampaignRmRequirements(),
+    getActiveCampaignToolRequirements(),
+    loadOnHandByMasterRecordId('raw_material'),
+    loadOnHandByMasterRecordId('tool'),
+    loadProcurementMetaForMaster('raw-material').catch(() => []),
+    loadProcurementMetaForMaster('tool').catch(() => []),
+    loadOpenPoQtyByMaster(),
+  ]);
+
+  const configs = [
+    {
+      meta: metaRm,
+      campaignMap: campaignRm,
+      onHandMap: onHandRm,
+      itemCategory: 'raw_material',
+      masterSlug: 'raw-material',
+      defaultUnit: 'kg',
+    },
+    {
+      meta: metaTools,
+      campaignMap: campaignTools,
+      onHandMap: onHandTools,
+      itemCategory: 'tool',
+      masterSlug: 'tool',
+      defaultUnit: 'ea',
+    },
+  ];
+
+  const items = [];
+  for (const cfg of configs) {
+    const seen = new Set();
+    for (const row of cfg.meta || []) {
+      seen.add(row.recordId);
+      const campaignReq = toNumber(cfg.campaignMap.get(row.recordId) || 0);
+      const stock = cfg.onHandMap.get(row.recordId) || { onHand: 0, unit: cfg.defaultUnit };
+      const onHand = toNumber(stock.onHand);
+      const rol = toNumber(row.reorderLevel);
+      const belowRol = rol > 0 && onHand <= rol;
+      const netNeed = Math.max(0, campaignReq - onHand);
+      if (netNeed <= 0 && !belowRol) continue;
+
+      const suggestedQty = computeOrderQtyWithMoq({
+        netNeed: netNeed > 0 ? netNeed : 0,
+        moq: row.moq,
+        reorderLevel: rol,
+        onHand,
+        isRawMaterial: cfg.itemCategory === 'raw_material',
+      });
+      if (suggestedQty <= 0) continue;
+
+      const supplierId = await loadSupplierIdForMasterRecord(row.recordId, cfg.masterSlug);
+      const trigger =
+        netNeed > 0 && belowRol ? 'campaign_and_rol' : netNeed > 0 ? 'campaign' : 'rol';
+      items.push({
+        master_record_id: row.recordId,
+        item_category: cfg.itemCategory,
+        master_slug: cfg.masterSlug,
+        item_label: row.label,
+        campaign_requirement: roundQty(campaignReq),
+        on_hand: roundQty(onHand),
+        reorder_level: rol,
+        rol_gap: roundQty(Math.max(0, rol - onHand)),
+        open_po_qty: roundQty(openPoQty.get(row.recordId) || 0),
+        suggested_qty: suggestedQty,
+        moq: toNumber(row.moq),
+        unit: stock.unit || cfg.defaultUnit,
+        supplier_id: supplierId,
+        trigger_reason: trigger,
+      });
+    }
+
+    for (const [recordId, campaignReq] of cfg.campaignMap.entries()) {
+      if (seen.has(recordId)) continue;
+      const stock = cfg.onHandMap.get(recordId) || { onHand: 0, unit: cfg.defaultUnit };
+      const onHand = toNumber(stock.onHand);
+      const netNeed = Math.max(0, toNumber(campaignReq) - onHand);
+      if (netNeed <= 0) continue;
+      const suggestedQty = computeOrderQtyWithMoq({
+        netNeed,
+        moq: 0,
+        reorderLevel: 0,
+        onHand,
+        isRawMaterial: cfg.itemCategory === 'raw_material',
+      });
+      if (suggestedQty <= 0) continue;
+      const supplierId = await loadSupplierIdForMasterRecord(recordId, cfg.masterSlug);
+      items.push({
+        master_record_id: recordId,
+        item_category: cfg.itemCategory,
+        master_slug: cfg.masterSlug,
+        item_label: recordId,
+        campaign_requirement: roundQty(campaignReq),
+        on_hand: roundQty(onHand),
+        reorder_level: 0,
+        rol_gap: 0,
+        open_po_qty: roundQty(openPoQty.get(recordId) || 0),
+        suggested_qty: suggestedQty,
+        moq: 0,
+        unit: stock.unit || cfg.defaultUnit,
+        supplier_id: supplierId,
+        trigger_reason: 'campaign',
+      });
+    }
+  }
+
+  items.sort((a, b) => String(a.item_label).localeCompare(String(b.item_label)));
+  return {
+    items,
+    totals: {
+      item_count: items.length,
+      campaign_items: items.filter((i) => i.trigger_reason !== 'rol').length,
+      rol_items: items.filter((i) => i.trigger_reason !== 'campaign').length,
+    },
+  };
 }
 
 async function listPurchaseOrders() {
@@ -170,16 +353,33 @@ async function listPurchaseOrders() {
     supplierMap = new Map((suppliers || []).map((s) => [s.id, s.name]));
   }
 
+  const poIds = rows.map((r) => r.id);
+  const girnsByPo = new Map();
+  if (poIds.length) {
+    const { data: girnRows } = await supabase
+      .from('girns')
+      .select('id, girn_number, status, purchase_order_id')
+      .in('purchase_order_id', poIds)
+      .order('created_at', { ascending: false });
+    for (const g of girnRows || []) {
+      if (!girnsByPo.has(g.purchase_order_id)) girnsByPo.set(g.purchase_order_id, []);
+      girnsByPo.get(g.purchase_order_id).push(g);
+    }
+  }
+
   return Promise.all(
     rows.map(async (po) => {
       const lines = await loadPoLines(po.id);
       const totalQty = lines.reduce((s, l) => s + toNumber(l.quantity), 0);
       const receivedQty = lines.reduce((s, l) => s + toNumber(l.received_qty), 0);
+      const girns = girnsByPo.get(po.id) || [];
       return {
         ...po,
         supplier_name: supplierMap.get(po.supplier_id) || null,
         line_count: lines.length,
         fulfillment_pct: totalQty > 0 ? round2((receivedQty / totalQty) * 100) : 0,
+        girns,
+        girn_count: girns.length,
       };
     })
   );
@@ -199,7 +399,15 @@ async function recomputePoTotal(poId) {
   return total;
 }
 
-async function insertPoWithLines({ supplierId, createdBy, notes, lines, campaignSnapshot, parentPoId }) {
+async function insertPoWithLines({
+  supplierId,
+  createdBy,
+  notes,
+  lines,
+  campaignSnapshot,
+  parentPoId,
+  expectedDeliveryDate,
+}) {
   const poNumber = await nextPoNumber();
   const { data: po, error } = await supabase
     .from('purchase_orders')
@@ -212,6 +420,7 @@ async function insertPoWithLines({ supplierId, createdBy, notes, lines, campaign
       campaign_snapshot: campaignSnapshot || null,
       parent_po_id: parentPoId || null,
       created_by: createdBy || null,
+      expected_delivery_date: expectedDeliveryDate || null,
       total_amount: 0,
     })
     .select()
@@ -449,21 +658,25 @@ async function createPurchaseOrder(payload, createdBy) {
     createdBy,
     notes: payload.notes,
     lines: payload.lines || [],
+    expectedDeliveryDate: payload.expected_delivery_date || null,
   });
 }
 
-async function updatePurchaseOrder(id, payload) {
+async function updatePurchaseOrder(id, payload, actorId) {
   const po = await getPurchaseOrderById(id);
   if (po.status !== 'draft') throw httpError('Only draft POs can be edited', 409);
 
-  const updates = { updated_at: new Date().toISOString() };
+  const now = new Date().toISOString();
+  const updates = { updated_at: now, edited_at: now };
+  if (actorId) updates.edited_by = actorId;
   if (payload.supplier_id !== undefined) updates.supplier_id = payload.supplier_id || null;
   if (payload.notes !== undefined) updates.notes = payload.notes || null;
-
-  if (Object.keys(updates).length > 1) {
-    const { error } = await supabase.from('purchase_orders').update(updates).eq('id', id);
-    if (error) throw error;
+  if (payload.expected_delivery_date !== undefined) {
+    updates.expected_delivery_date = payload.expected_delivery_date || null;
   }
+
+  const { error } = await supabase.from('purchase_orders').update(updates).eq('id', id);
+  if (error) throw error;
 
   if (Array.isArray(payload.lines)) {
     await supabase.from('purchase_order_lines').delete().eq('purchase_order_id', id);
@@ -480,6 +693,7 @@ async function updatePurchaseOrder(id, payload) {
       amount: computeLineAmount(l.quantity, l.unit_rate),
       campaign_requirement: toNumber(l.campaign_requirement) || 0,
       moq: toNumber(l.moq) || 0,
+      trigger_reason: l.trigger_reason || null,
       notes: l.notes || null,
     }));
     if (lineRows.length) {
@@ -492,7 +706,7 @@ async function updatePurchaseOrder(id, payload) {
   return getPurchaseOrderById(id);
 }
 
-async function sendPurchaseOrder(id) {
+async function sendPurchaseOrder(id, actorId) {
   const po = await getPurchaseOrderById(id);
   if (po.status !== 'draft') throw httpError('Only draft POs can be sent', 409);
   if (!po.supplier_id) throw httpError('Supplier is required before sending PO', 400);
@@ -507,14 +721,15 @@ async function sendPurchaseOrder(id) {
   const leadDays = supplier?.lead_time_days ?? 7;
   const creditDays = supplier?.credit_period_days ?? 30;
   const sentAt = new Date().toISOString();
-  const expectedDelivery = addDays(todayDateString(), leadDays);
-  const dueDate = addDays(expectedDelivery, creditDays);
+  const expectedDelivery = po.expected_delivery_date || addDays(todayDateString(), leadDays);
+  const dueDate = po.due_date || addDays(expectedDelivery, creditDays);
 
   const { error } = await supabase
     .from('purchase_orders')
     .update({
       status: 'due',
       sent_at: sentAt,
+      sent_by: actorId || null,
       expected_delivery_date: expectedDelivery,
       due_date: dueDate,
       updated_at: sentAt,
@@ -525,15 +740,44 @@ async function sendPurchaseOrder(id) {
   return getPurchaseOrderById(id);
 }
 
-async function markPurchaseOrderPaid(id, actorId) {
+async function markPurchaseOrderDelivered(id) {
   const po = await getPurchaseOrderById(id);
-  if (po.status === 'paid') throw httpError('PO is already paid', 409);
-  if (po.status !== 'due') throw httpError('Only due POs can be marked paid', 409);
+  if (po.status === 'delivered') return po;
+  if (po.status === 'paid') throw httpError('Paid POs cannot be marked delivered', 409);
+  if (po.status !== 'due') throw httpError('Only due POs can be marked delivered', 409);
+
+  const incomplete = (po.lines || []).some(
+    (l) => toNumber(l.received_qty) + 0.0001 < toNumber(l.quantity)
+  );
+  if (incomplete) {
+    throw httpError('All lines must be fully received before marking delivered', 409);
+  }
 
   const now = new Date().toISOString();
   const { error } = await supabase
     .from('purchase_orders')
-    .update({ status: 'paid', paid_at: now, updated_at: now })
+    .update({ status: 'delivered', delivered_at: now, updated_at: now })
+    .eq('id', id);
+  if (error) throw error;
+  return getPurchaseOrderById(id);
+}
+
+async function markPurchaseOrderPaid(id, actorId) {
+  const po = await getPurchaseOrderById(id);
+  if (po.status === 'paid') throw httpError('PO is already paid', 409);
+  if (po.status !== 'due' && po.status !== 'delivered') {
+    throw httpError('Only due or delivered POs can be marked paid', 409);
+  }
+
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from('purchase_orders')
+    .update({
+      status: 'paid',
+      paid_at: now,
+      payment_recorded_by: actorId || null,
+      updated_at: now,
+    })
     .eq('id', id);
   if (error) throw error;
 
@@ -728,6 +972,57 @@ async function rollupReceivedQtyFromGirn(girnId) {
   await runThreeWayMatch(girn.purchase_order_id).catch((e) =>
     console.error('Three-way match failed:', e.message)
   );
+
+  const { data: refreshedLines } = await supabase
+    .from('purchase_order_lines')
+    .select('quantity, received_qty')
+    .eq('purchase_order_id', girn.purchase_order_id);
+  const fullyReceived =
+    (refreshedLines || []).length > 0 &&
+    (refreshedLines || []).every(
+      (l) => toNumber(l.received_qty) + 0.0001 >= toNumber(l.quantity)
+    );
+  if (fullyReceived) {
+    await markPurchaseOrderDelivered(girn.purchase_order_id).catch((e) => {
+      if (e.status !== 409) console.error('Auto-deliver PO failed:', e.message);
+    });
+  }
+}
+
+async function storePurchaseOrderPdf(poId, file) {
+  if (!poId) throw httpError('Invalid purchase order id');
+  if (!file?.buffer?.length) throw httpError('PDF file is required', 400);
+
+  const po = await getPurchaseOrderById(poId, { includeMatch: false });
+  const original = String(file.originalname || '').trim();
+  const safeName = (po.po_number || `draft-${poId}`)
+    .replace(/[/\\]+/g, '-')
+    .replace(/[^\w.\-]+/g, '_');
+  const filename =
+    original && original.toLowerCase().endsWith('.pdf')
+      ? original.replace(/[/\\]+/g, '-')
+      : `${safeName}.pdf`;
+  const storagePath = `purchase-orders/${poId}/${Date.now()}_${filename}`;
+
+  const { error: storageError } = await supabase.storage
+    .from('invoices')
+    .upload(storagePath, file.buffer, {
+      contentType: file.mimetype || 'application/pdf',
+      upsert: true,
+    });
+  if (storageError) throw httpError(storageError.message || 'Unable to store PO PDF', 500);
+
+  const { data: publicUrlData } = supabase.storage.from('invoices').getPublicUrl(storagePath);
+  const publicUrl = publicUrlData?.publicUrl || null;
+  if (!publicUrl) throw httpError('Unable to resolve stored PO URL', 500);
+
+  const { error } = await supabase
+    .from('purchase_orders')
+    .update({ pdf_url: publicUrl, updated_at: new Date().toISOString() })
+    .eq('id', poId);
+  if (error) throw error;
+
+  return getPurchaseOrderById(poId);
 }
 
 module.exports = {
@@ -739,6 +1034,9 @@ module.exports = {
   updatePurchaseOrder,
   sendPurchaseOrder,
   markPurchaseOrderPaid,
+  markPurchaseOrderDelivered,
+  storePurchaseOrderPdf,
+  buildDemandSummary,
   syncPoPaidFromInvoice,
   cancelPurchaseOrder,
   splitPurchaseOrder,

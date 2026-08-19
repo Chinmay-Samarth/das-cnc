@@ -5,6 +5,7 @@ import { GIRN_CATEGORIES } from '../girn/girnCategoryConfig';
 import StatTile from '../components/shared/StatTile';
 import { useSocket } from '../socket/socketContext';
 import { formatDisplayDateTime } from '../utils/dateFormat';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val)) ? '—' : Number(val).toLocaleString('en-IN');
@@ -261,20 +262,22 @@ export default function StockListPage() {
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 16 }}>
             <button
               type="button"
-              className="secondary-button"
+              className="neutral-button"
               disabled={page <= 1}
               onClick={() => setPage((p) => p - 1)}
             >
+              <ChevronLeft size={16} />
               Previous
             </button>
             <span className="muted">Page {page} of {totalPages}</span>
             <button
               type="button"
-              className="secondary-button"
+              className="neutral-button"
               disabled={page >= totalPages}
               onClick={() => setPage((p) => p + 1)}
             >
               Next
+              <ChevronRight size={16} />
             </button>
           </div>
         ) : null}

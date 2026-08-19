@@ -208,7 +208,7 @@ export default function ComponentMaster() {
             <div className="modal-actions">
               <button
                 type="button"
-                className="secondary-button"
+                className="neutral-button"
                 onClick={() => {
                   setDeleteTarget(null);
                   setDeleteError('');

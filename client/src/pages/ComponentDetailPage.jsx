@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, Pencil } from 'lucide-react';
 import api from '../api/client';
 import ComponentDrawer from '../components/ComponentMaster/Drawer';
 import { getStandard } from '../components/ComponentMaster/utils';
@@ -65,11 +66,13 @@ export default function ComponentDetailPage() {
 
       <section className="card form-card">
         <div className="component-detail-actions">
-          <button type="button" className="secondary-button" onClick={() => navigate('/components')}>
+          <button type="button" className="neutral-button" onClick={() => navigate('/components')}>
+            <ArrowLeft size={16} />
             Back to list
           </button>
           {component ? (
             <button type="button" className="primary-button" onClick={() => setDrawerOpen(true)}>
+              <Pencil size={16} />
               Edit component
             </button>
           ) : null}
