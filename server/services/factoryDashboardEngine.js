@@ -155,7 +155,7 @@ async function loadProduction(date) {
 }
 
 async function loadDeliverySchedules(date) {
-  const to = addDaysYmd(date, 6);
+  const to = addDaysYmd(date, 13);
   const rows = await listSchedules({ from: date, to });
   const upcoming = rows.filter((r) => ['planned', 'released'].includes(r.status));
   const slim = upcoming.map((r) => ({
@@ -181,11 +181,226 @@ async function loadDeliverySchedules(date) {
     });
   }
 
+  const delivery_series = [];
+  for (let i = 0; i < 14; i += 1) {
+    const ymd = addDaysYmd(date, i);
+    const dayRows = slim.filter((r) => String(r.due_date || '').slice(0, 10) === ymd);
+    delivery_series.push({
+      date: ymd,
+      qty: dayRows.reduce((sum, r) => sum + toNumber(r.quantity), 0),
+      count: dayRows.length,
+    });
+  }
+
   return {
     upcoming: slim,
     week,
-    count_7d: slim.length,
+    delivery_series,
+    count_7d: week.reduce((sum, d) => sum + d.count, 0),
     qty_7d: week.reduce((sum, d) => sum + d.qty, 0),
+  };
+}
+
+function startOfIsoWeekYmd(ymd) {
+  const [y, m, d] = String(ymd).split('-').map((x) => Number(x));
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const dow = dt.getUTCDay(); // 0 Sun … 6 Sat
+  const mondayOffset = dow === 0 ? -6 : 1 - dow;
+  dt.setUTCDate(dt.getUTCDate() + mondayOffset);
+  return dt.toISOString().slice(0, 10);
+}
+
+function emptyDaySeries(fromYmd, toYmd, extra = {}) {
+  const out = [];
+  let cur = fromYmd;
+  while (cur <= toYmd) {
+    out.push({ date: cur, ...extra });
+    cur = addDaysYmd(cur, 1);
+  }
+  return out;
+}
+
+async function loadAnalytics(day) {
+  const from30 = addDaysYmd(day, -29);
+  const from14 = addDaysYmd(day, -13);
+  const from56 = addDaysYmd(day, -55);
+  const monthStart = `${String(day).slice(0, 7)}-01`;
+
+  const [
+    invoicesRes,
+    posRes,
+    girnsRes,
+    cardsRes,
+    openPosRes,
+    overdueSchedRes,
+    otRes,
+  ] = await Promise.all([
+    supabase
+      .from('sales_invoices')
+      .select('id, status, total_amount, issued_at, created_at, paid_at')
+      .in('status', ['due', 'paid'])
+      .gte('created_at', `${from30}T00:00:00.000Z`),
+    supabase
+      .from('purchase_orders')
+      .select('id, status, total_amount, created_at, sent_at')
+      .neq('status', 'cancelled')
+      .gte('created_at', `${from56}T00:00:00.000Z`),
+    supabase
+      .from('girns')
+      .select('id, status, grand_total, received_date, created_at')
+      .gte('received_date', from56),
+    supabase
+      .from('production_cards')
+      .select('id, work_date, total_good_produced, total_scrap_produced, work_center_id')
+      .gte('work_date', from14)
+      .lte('work_date', day),
+    supabase
+      .from('purchase_orders')
+      .select('id, total_amount, status')
+      .in('status', ['draft', 'due', 'delivered']),
+    listSchedules({ from: addDaysYmd(day, -30), to: addDaysYmd(day, -1) }).catch(() => []),
+    supabase
+      .from('attendance_records')
+      .select('shift_date, overtime_minutes, minutes_worked')
+      .gte('shift_date', monthStart)
+      .lte('shift_date', day),
+  ]);
+
+  if (invoicesRes.error) throw invoicesRes.error;
+  if (posRes.error) throw posRes.error;
+  if (girnsRes.error) throw girnsRes.error;
+  if (cardsRes.error) throw cardsRes.error;
+  if (openPosRes.error) throw openPosRes.error;
+  if (otRes.error) throw otRes.error;
+
+  // Revenue series (30d) — billed by issue/create day; paid by paid_at day
+  const revenueMap = new Map(
+    emptyDaySeries(from30, day, { billed: 0, paid: 0 }).map((r) => [r.date, r])
+  );
+  for (const inv of invoicesRes.data || []) {
+    const billedYmd =
+      ymdFromIso(inv.issued_at) || ymdFromIso(inv.created_at) || String(inv.created_at || '').slice(0, 10);
+    const amt = toNumber(inv.total_amount);
+    if (billedYmd && revenueMap.has(billedYmd)) {
+      revenueMap.get(billedYmd).billed += amt;
+    }
+    if (inv.status === 'paid') {
+      const paidYmd = ymdFromIso(inv.paid_at) || billedYmd;
+      if (paidYmd && revenueMap.has(paidYmd)) {
+        revenueMap.get(paidYmd).paid += amt;
+      }
+    }
+  }
+  const revenue_series = [...revenueMap.values()].map((r) => ({
+    date: r.date,
+    billed: Math.round(r.billed * 100) / 100,
+    paid: Math.round(r.paid * 100) / 100,
+  }));
+
+  // Procurement by ISO week (last 8 weeks)
+  const weekStarts = [];
+  let wk = startOfIsoWeekYmd(from56);
+  const lastWeek = startOfIsoWeekYmd(day);
+  while (wk <= lastWeek) {
+    weekStarts.push(wk);
+    wk = addDaysYmd(wk, 7);
+  }
+  const procMap = new Map(
+    weekStarts.map((w) => [w, { week: w, po_opened: 0, girn_received: 0 }])
+  );
+  for (const po of posRes.data || []) {
+    const ymd = ymdFromIso(po.sent_at) || ymdFromIso(po.created_at);
+    if (!ymd) continue;
+    const bucket = startOfIsoWeekYmd(ymd);
+    if (procMap.has(bucket)) {
+      procMap.get(bucket).po_opened += toNumber(po.total_amount);
+    }
+  }
+  for (const g of girnsRes.data || []) {
+    const ymd = String(g.received_date || '').slice(0, 10) || ymdFromIso(g.created_at);
+    if (!ymd) continue;
+    const bucket = startOfIsoWeekYmd(ymd);
+    if (procMap.has(bucket)) {
+      procMap.get(bucket).girn_received += toNumber(g.grand_total);
+    }
+  }
+  const procurement_series = [...procMap.values()]
+    .slice(-8)
+    .map((r) => ({
+      week: r.week,
+      po_opened: Math.round(r.po_opened * 100) / 100,
+      girn_received: Math.round(r.girn_received * 100) / 100,
+    }));
+
+  // Yield series (14d)
+  const yieldMap = new Map(
+    emptyDaySeries(from14, day, { good: 0, scrap: 0 }).map((r) => [r.date, r])
+  );
+  for (const card of cardsRes.data || []) {
+    const ymd = String(card.work_date || '').slice(0, 10);
+    if (!ymd || !yieldMap.has(ymd)) continue;
+    yieldMap.get(ymd).good += toNumber(card.total_good_produced);
+    yieldMap.get(ymd).scrap += toNumber(card.total_scrap_produced);
+  }
+  const yield_series = [...yieldMap.values()].map((r) => ({
+    date: r.date,
+    good: Math.round(r.good * 1000) / 1000,
+    scrap: Math.round(r.scrap * 1000) / 1000,
+  }));
+
+  const goodTotal = yield_series.reduce((s, r) => s + r.good, 0);
+  const scrapTotal = yield_series.reduce((s, r) => s + r.scrap, 0);
+  const produced = goodTotal + scrapTotal;
+  const scrap_rate_pct = produced > 0 ? Math.round((scrapTotal / produced) * 1000) / 10 : 0;
+
+  const revenue_mtd = revenue_series
+    .filter((r) => r.date >= monthStart)
+    .reduce((s, r) => s + r.billed, 0);
+  const revenue_7d = revenue_series.slice(-7).map((r) => ({ date: r.date, value: r.billed }));
+
+  const open_po_exposure = (openPosRes.data || []).reduce(
+    (s, r) => s + toNumber(r.total_amount),
+    0
+  );
+
+  const overdueRows = (overdueSchedRes || []).filter(
+    (r) =>
+      ['planned', 'released'].includes(r.status) &&
+      String(r.due_date || '').slice(0, 10) < day
+  );
+  const overdue_qty = overdueRows.reduce((s, r) => s + toNumber(r.quantity), 0);
+
+  const otByDay = new Map(
+    emptyDaySeries(monthStart, day, { ot_minutes: 0 }).map((r) => [r.date, r])
+  );
+  for (const row of otRes.data || []) {
+    const ymd = String(row.shift_date || '').slice(0, 10);
+    if (!ymd || !otByDay.has(ymd)) continue;
+    otByDay.get(ymd).ot_minutes += toNumber(row.overtime_minutes);
+  }
+  const ot_series = [...otByDay.values()];
+  const ot_minutes_mtd = ot_series.reduce((s, r) => s + r.ot_minutes, 0);
+
+  const scrap_spark = yield_series.slice(-7).map((r) => {
+    const t = r.good + r.scrap;
+    return { date: r.date, value: t > 0 ? Math.round((r.scrap / t) * 1000) / 10 : 0 };
+  });
+
+  return {
+    revenue_series,
+    procurement_series,
+    yield_series,
+    delivery_series: null, // filled by caller from schedules
+    kpis: {
+      revenue_mtd: Math.round(revenue_mtd * 100) / 100,
+      revenue_7d,
+      scrap_rate_pct,
+      scrap_spark,
+      overdue_qty: Math.round(overdue_qty * 1000) / 1000,
+      open_po_exposure: Math.round(open_po_exposure * 100) / 100,
+      ot_minutes_mtd: Math.round(ot_minutes_mtd),
+      ot_series,
+    },
   };
 }
 
@@ -504,13 +719,14 @@ async function getFactoryDashboard({ date } = {}) {
     inventory_p1,
     approvals,
     horizon_waves,
+    analyticsRaw,
   ] = await Promise.all([
     safe('attendance', () => loadAttendance(day), emptyAttendance),
     safe('production', () => loadProduction(day), emptyProduction),
     safe(
       'schedules',
       () => loadDeliverySchedules(day),
-      { upcoming: [], week: [], count_7d: 0, qty_7d: 0 }
+      { upcoming: [], week: [], delivery_series: [], count_7d: 0, qty_7d: 0 }
     ),
     safe('campaigns', () => loadCampaigns(), { active: [], count: 0 }),
     safe('outsource', () => loadOutsource(day), {
@@ -540,6 +756,22 @@ async function getFactoryDashboard({ date } = {}) {
       in_window: [],
       counts: { stuck: 0, in_progress: 0, locked: 0 },
     }),
+    safe('analytics', () => loadAnalytics(day), {
+      revenue_series: [],
+      procurement_series: [],
+      yield_series: [],
+      delivery_series: null,
+      kpis: {
+        revenue_mtd: 0,
+        revenue_7d: [],
+        scrap_rate_pct: 0,
+        scrap_spark: [],
+        overdue_qty: 0,
+        open_po_exposure: 0,
+        ot_minutes_mtd: 0,
+        ot_series: [],
+      },
+    }),
   ]);
 
   const work_centers = await safe(
@@ -549,6 +781,12 @@ async function getFactoryDashboard({ date } = {}) {
   );
 
   const { all_today, ...productionOut } = production;
+
+  const analytics = {
+    ...analyticsRaw,
+    delivery_series:
+      delivery_schedules.delivery_series || analyticsRaw.delivery_series || [],
+  };
 
   return {
     date: day,
@@ -563,6 +801,7 @@ async function getFactoryDashboard({ date } = {}) {
     approvals,
     horizon_waves,
     work_centers,
+    analytics,
   };
 }
 

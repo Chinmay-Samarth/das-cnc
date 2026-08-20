@@ -1,13 +1,12 @@
-const STORAGE_KEY = 'das-admin-dashboard-kpi-tiles';
+const STORAGE_KEY = 'das-admin-dashboard-kpi-tiles-v2';
 
+/** Sparkline KPI strip — finance / quality / delivery / labor / spend */
 export const KPI_IDS = [
+  'revenue',
+  'scrap_rate',
+  'delivery_risk',
   'attendance',
-  'running',
-  'schedules',
-  'dispatch',
-  'approvals',
-  'p1',
-  'inventory',
+  'open_po',
 ];
 
 export const DEFAULT_KPI_ORDER = [...KPI_IDS];
@@ -25,6 +24,9 @@ export function readKpiOrder() {
       if (!known.has(id) || seen.has(id)) continue;
       seen.add(id);
       next.push(id);
+    }
+    for (const id of KPI_IDS) {
+      if (!seen.has(id)) next.push(id);
     }
     return next.length ? next : [...DEFAULT_KPI_ORDER];
   } catch {

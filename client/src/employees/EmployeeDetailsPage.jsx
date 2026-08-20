@@ -10,6 +10,8 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Factory, Pencil, TrendingUp } fro
 import { EmptyState, MetricCard, StatusBadge, TruncatedText, AlertBanner, FilePicker, FormActions } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import FormSearchSelect from '../components/shared/FormSearchSelect';
+import EmployeeMinutesBarChart from './EmployeeMinutesBarChart';
+import EmployeeEfficiencyLineChart from './EmployeeEfficiencyLineChart';
 
 const JOB_DESCRIPTION_OPTIONS = [
   { value: 'OPERATOR', label: 'Operator' },
@@ -757,7 +759,20 @@ export default function EmployeeDetailsPage() {
                         </div>
                       </div>
 
-                      
+                      <section className="mes-card emp-chart-card" style={{ padding: 16, marginBottom: 20 }} aria-label="Minutes worked">
+                        <h3 className="mes-section-title" style={{ marginTop: 0, marginBottom: 4, fontSize: 15 }}>
+                          Minutes worked
+                        </h3>
+                        {attendanceRecords.length === 0 ? (
+                          <EmptyState
+                            icon={TrendingUp}
+                            title="No minutes recorded"
+                            description={`No attendance punches for ${formatMonthLabel(selectedMonth)}.`}
+                          />
+                        ) : (
+                          <EmployeeMinutesBarChart records={attendanceRecords} monthDate={selectedMonth} />
+                        )}
+                      </section>
 
                       {attendanceRecords.length === 0 ? (
                         <p className="muted">No attendance records found for {formatMonthLabel(selectedMonth)}.</p>
@@ -977,6 +992,21 @@ export default function EmployeeDetailsPage() {
                         icon={Factory}
                       />
                     </div>
+
+                    <section className="mes-card emp-chart-card" style={{ padding: 16 }} aria-label="Efficiency trend">
+                      <h3 className="mes-section-title" style={{ marginTop: 0, marginBottom: 4, fontSize: 15 }}>
+                        Efficiency trend
+                      </h3>
+                      {!efficiencyData?.entries?.length ? (
+                        <EmptyState
+                          icon={TrendingUp}
+                          title="No efficiency recorded"
+                          description="Entries appear here after the work-center manager saves team efficiency on My Today."
+                        />
+                      ) : (
+                        <EmployeeEfficiencyLineChart entries={efficiencyData.entries} />
+                      )}
+                    </section>
 
                     <section className="mes-card" style={{ padding: 16 }} aria-label="Work centers">
                       <h3 className="mes-section-title" style={{ marginTop: 0, marginBottom: 12, fontSize: 15 }}>

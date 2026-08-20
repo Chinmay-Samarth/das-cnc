@@ -282,7 +282,6 @@ export default function MasterDetail({ slug, recordId, onEdit, onBack }) {
               <i className="ti ti-arrow-left" />
             </button>
           )}
-          <i className={`ti ${master.icon || 'ti-database'} md-master-icon`} aria-hidden="true" />
           <div>
             <div className="md-master-name">{master.name}</div>
             <div className="md-record-id">{recordId.slice(0, 8)}…</div>
@@ -366,10 +365,6 @@ const MD_STYLES = `
   transition: background 0.1s;
 }
 .md-back-btn:hover { background: var(--color-background-secondary, #f0f0f0); }
-.md-master-icon {
-  font-size: 22px;
-  color: var(--color-text-secondary, #555);
-}
 .md-master-name {
   font-size: 18px;
   font-weight: 600;

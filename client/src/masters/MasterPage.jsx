@@ -142,7 +142,6 @@ export default function MasterPage() {
       {/* Page header */}
       <header className="app-header">
         <div className="header-title-block">
-          <i className={`ti ${master?.icon || 'ti-database'}`} aria-hidden="true" />
           <h1>{master?.name || '…'}</h1>
         </div>
         <div className="">

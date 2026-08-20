@@ -35,6 +35,10 @@ const EVENING_OUT_START_MINUTES = 16 * 60; // 16:00
 const MAX_SHORT_BREAK_GAP_MINUTES = 180; // incomplete lunch return vs evening out
 /** Ignore near-instant second punch after lunch OUT (device double-tap → fake BREAK_IN). */
 const MIN_BREAK_DURATION_MINUTES = 8;
+/** Day IN→OUT must stay same calendar day (blocks next-day punches closing yesterday). */
+const MAX_DAY_SESSION_MINUTES = 16 * 60;
+/** Night IN→OUT across midnight; hard cap against multi-day attach. */
+const MAX_NIGHT_SESSION_MINUTES = 14 * 60;
 
 /** Permanent (non-retriable) error codes — sync may advance past these punch ids. */
 const TERMINAL_ERRORS = new Set([
@@ -47,6 +51,7 @@ const TERMINAL_ERRORS = new Set([
   'DUPLICATE_BREAK_OUT',
   'MIDDAY_AFTER_LUNCH',
   'OUT_BEFORE_IN',
+  'SESSION_SPAN_TOO_LONG',
 ]);
 
 async function notifyAttendanceRecordChange(employeeId, shiftDate, action) {
@@ -262,6 +267,30 @@ async function findOpenSession(employeeId, notAfterDateStr) {
   return data || null;
 }
 
+/**
+ * Whether an unfinished session may absorb this punch.
+ * Day shifts: same calendar shift_date only (never steal tomorrow's lunch/out).
+ * Night shifts: today or yesterday, within a sane span.
+ */
+function canAttachOpenSession(open, punchTime, shiftForOpen) {
+  if (!open?.punched_in_at || open.punched_out_at) return false;
+  const span = minutesBetween(open.punched_in_at, punchTime);
+  if (!(span > 0)) return false;
+
+  const punchDate = parseLocalTimestamp(punchTime).dateStr;
+  const night = isCrossesMidnightShift(shiftForOpen);
+
+  if (night) {
+    if (open.shift_date !== punchDate && open.shift_date !== subtractOneDay(punchDate)) {
+      return false;
+    }
+    return span <= MAX_NIGHT_SESSION_MINUTES;
+  }
+
+  if (open.shift_date !== punchDate) return false;
+  return span <= MAX_DAY_SESSION_MINUTES;
+}
+
 // ─────────────────────────────────────────────
 // SESSION CLASSIFICATION (shift-aware state machine)
 // ─────────────────────────────────────────────
@@ -315,14 +344,14 @@ function classifyPunchForSession(shift, existingRecord, punchTime) {
     if (gap >= 0 && gap < MIN_BREAK_DURATION_MINUTES) {
       return 'DUPLICATE_BREAK_OUT';
     }
-    if (punchMinutes < EVENING_OUT_START_MINUTES) {
-      return 'BREAK_IN';
+    // Lunch return only within a short window; long gaps are abandoned lunch
+    if (gap < 0 || gap > MAX_SHORT_BREAK_GAP_MINUTES) {
+      if (punchMinutes >= EVENING_OUT_START_MINUTES) {
+        return 'CHECK_OUT';
+      }
+      return 'MIDDAY_AFTER_LUNCH';
     }
-    if (gap >= 0 && gap < MAX_SHORT_BREAK_GAP_MINUTES) {
-      return 'BREAK_IN';
-    }
-    // Evening punch with abandoned lunch return → close day
-    return 'CHECK_OUT';
+    return 'BREAK_IN';
   }
 
   // Lunch completed — only evening/late punches may close the day
@@ -496,6 +525,9 @@ async function applyBreakIn({ existingRecord, punchTime }) {
   if (breakMinutes < MIN_BREAK_DURATION_MINUTES) {
     return { applied: false, reason: 'DUPLICATE_BREAK_OUT', event_type: 'BREAK_IN' };
   }
+  if (breakMinutes > MAX_SHORT_BREAK_GAP_MINUTES) {
+    return { applied: false, reason: 'BREAK_SPAN_TOO_LONG', event_type: 'BREAK_IN' };
+  }
 
   const { error } = await supabase
     .from('attendance_records')
@@ -538,6 +570,18 @@ async function applyCheckOut({ employee, shift, shift_date, punchTime, biometric
   const rawMinutes = minutesBetween(existingRecord.punched_in_at, punchTime);
   if (rawMinutes < 0) {
     return { applied: false, reason: 'OUT_BEFORE_IN', terminal: true, event_type: 'CHECK_OUT' };
+  }
+
+  const maxSpan = isCrossesMidnightShift(shift)
+    ? MAX_NIGHT_SESSION_MINUTES
+    : MAX_DAY_SESSION_MINUTES;
+  if (rawMinutes > maxSpan) {
+    return {
+      applied: false,
+      reason: 'SESSION_SPAN_TOO_LONG',
+      terminal: true,
+      event_type: 'CHECK_OUT',
+    };
   }
 
   let breakMinutes = 0;
@@ -680,48 +724,22 @@ async function processBiometricEvent(payload, options = {}) {
     if (!resolved) {
       const open = await findOpenSession(employee.id, parseLocalTimestamp(punchTime).dateStr);
       if (open && open.punched_in_at && !open.punched_out_at) {
-        existingRecord = open;
-        shift_date = open.shift_date;
+        let openShift = emshift;
         if (open.shift_id && open.shift_id !== emshift.id) {
-          const { data: openShift } = await supabase
+          const { data: fetchedShift } = await supabase
             .from('shifts')
             .select('*')
             .eq('id', open.shift_id)
             .maybeSingle();
-          if (openShift) shift = openShift;
-        } else {
-          shift = emshift;
+          if (fetchedShift) openShift = fetchedShift;
         }
-        resolved = { shift, shift_date };
-      }
-    }
-
-    // Prefer closing an older open session over opening a new day when punch is clearly after in
-    if (
-      resolved &&
-      (!existingRecord || !existingRecord.punched_in_at)
-    ) {
-      const open = await findOpenSession(employee.id, parseLocalTimestamp(punchTime).dateStr);
-      if (
-        open &&
-        open.punched_in_at &&
-        !open.punched_out_at &&
-        minutesBetween(open.punched_in_at, punchTime) > 0 &&
-        open.shift_date !== shift_date
-      ) {
-        existingRecord = open;
-        shift_date = open.shift_date;
-        resolved = { shift: emshift, shift_date };
-        if (open.shift_id) {
-          const { data: openShift } = await supabase
-            .from('shifts')
-            .select('*')
-            .eq('id', open.shift_id)
-            .maybeSingle();
-          if (openShift) {
-            shift = openShift;
-            resolved.shift = openShift;
-          }
+        // Day shifts: only same-calendar-day late outs (e.g. after 22:00).
+        // Never attach yesterday's open IN to today's lunch/evening punches.
+        if (canAttachOpenSession(open, punchTime, openShift)) {
+          existingRecord = open;
+          shift_date = open.shift_date;
+          shift = openShift;
+          resolved = { shift, shift_date };
         }
       }
     }
@@ -1191,6 +1209,7 @@ module.exports = {
   minutesBetween,
   calculateMinutesDifference,
   classifyPunchForSession,
+  canAttachOpenSession,
   isTerminalError,
   TERMINAL_ERRORS,
   parseLocalTimestamp,
@@ -1199,4 +1218,6 @@ module.exports = {
   LUNCH_START_MINUTES,
   LUNCH_END_MINUTES,
   EVENING_OUT_START_MINUTES,
+  MAX_DAY_SESSION_MINUTES,
+  MAX_NIGHT_SESSION_MINUTES,
 };

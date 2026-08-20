@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'das-admin-dashboard-widget-order';
+const STORAGE_KEY = 'das-admin-dashboard-widget-order-v2';
 
 export const SIZE_OPTIONS = [
   { id: 'quarter', label: 'Small', hint: 'Quarter width', span: 3, title: 'Small · 1/4 width' },
@@ -12,15 +12,24 @@ const ALLOWED_SIZES = {
   attendance: ['half', 'full'],
   approvals: ['half', 'full'],
   delivery: ['full'],
+  revenue: ['half', 'full'],
+  yield: ['half', 'full'],
+  delivery_load: ['half', 'full'],
+  procurement: ['half', 'full'],
+  heatmap: ['half', 'full'],
+  campaigns: ['half', 'full'],
 };
 
 const DEFAULT_SIZES = {
+  revenue: 'half',
+  yield: 'half',
+  delivery_load: 'half',
+  procurement: 'half',
+  campaigns: 'half',
+  heatmap: 'half',
   attendance: 'half',
-  production: 'quarter',
-  campaigns: 'quarter',
-  dispatch: 'quarter',
-  heatmap: 'full',
   delivery: 'full',
+  dispatch: 'quarter',
   alerts: 'half',
   approvals: 'half',
   outsource: 'half',
@@ -28,14 +37,17 @@ const DEFAULT_SIZES = {
 };
 
 export const DEFAULT_WIDGET_ORDER = [
-  'attendance',
-  'production',
+  'revenue',
+  'yield',
+  'delivery_load',
+  'procurement',
   'campaigns',
-  'dispatch',
   'heatmap',
+  'attendance',
   'delivery',
   'alerts',
   'approvals',
+  'dispatch',
   'outsource',
   'waves',
 ];

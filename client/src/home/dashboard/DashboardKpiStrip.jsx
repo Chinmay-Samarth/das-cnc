@@ -2,10 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CalendarCheck,
-  ClipboardList,
-  Factory,
-  FileX,
-  PackageCheck,
+  IndianRupee,
   PackageX,
   Plus,
   ShoppingCart,
@@ -13,20 +10,52 @@ import {
 } from 'lucide-react';
 import { MetricCard } from '../../components/mes';
 import { KPI_IDS } from './kpiTiles';
+import Sparkline from './Sparkline';
+import { formatInr, formatQty } from './chartUtils';
 
 function buildCatalog(data) {
   const att = data?.attendance?.summary || {};
   const presentPct =
     att.total > 0 ? Math.round((Number(att.present || 0) / att.total) * 100) : 0;
-  const running = data?.production?.counts?.running || 0;
-  const schedules = data?.delivery_schedules?.count_7d || 0;
-  const dispatchable = data?.dispatch?.counts?.dispatchable || 0;
-  const p1 = data?.notifications_p1?.count || 0;
-  const invP1 = data?.inventory_p1?.count || 0;
-  const approvals =
-    (data?.approvals?.dispatch_shortfall_pending || 0) + (data?.approvals?.girn_ready || 0);
+  const kpis = data?.analytics?.kpis || {};
+  const scrapPct = kpis.scrap_rate_pct ?? 0;
+  const overdueQty = kpis.overdue_qty ?? 0;
+  const revenueMtd = kpis.revenue_mtd ?? 0;
+  const openPo = kpis.open_po_exposure ?? 0;
 
   return {
+    revenue: {
+      label: 'Revenue MTD',
+      value: formatInr(revenueMtd),
+      hint: 'Billed sales invoices',
+      icon: IndianRupee,
+      tone: revenueMtd > 0 ? 'success' : 'neutral',
+      to: '/sales-invoices',
+      spark: kpis.revenue_7d,
+      sparkColor: '#2563eb',
+    },
+    scrap_rate: {
+      label: 'Scrap rate',
+      value: `${scrapPct}%`,
+      hint: 'Last 14 days good vs scrap',
+      icon: PackageX,
+      tone: scrapPct >= 8 ? 'danger' : scrapPct >= 3 ? 'amber' : 'success',
+      to: '/production',
+      spark: kpis.scrap_spark,
+      sparkColor: '#dc2626',
+    },
+    delivery_risk: {
+      label: 'Overdue qty',
+      value: formatQty(overdueQty),
+      hint: 'Past-due delivery schedules',
+      icon: Truck,
+      tone: overdueQty > 0 ? 'danger' : 'success',
+      to: '/delivery-schedules',
+      spark: (data?.analytics?.delivery_series || data?.delivery_schedules?.delivery_series || [])
+        .slice(0, 7)
+        .map((d) => ({ value: d.qty })),
+      sparkColor: '#d97706',
+    },
     attendance: {
       label: 'Attendance',
       value: `${presentPct}%`,
@@ -34,54 +63,18 @@ function buildCatalog(data) {
       icon: CalendarCheck,
       tone: presentPct >= 90 ? 'success' : presentPct >= 75 ? 'amber' : 'danger',
       to: '/attendance',
+      spark: null,
+      sparkColor: '#047857',
     },
-    running: {
-      label: 'Running cards',
-      value: running,
-      hint: `${data?.production?.counts?.scheduled || 0} scheduled today`,
-      icon: Factory,
-      tone: running ? 'info' : 'neutral',
-      to: '/production?status=RUNNING',
-    },
-    schedules: {
-      label: 'Schedules (7d)',
-      value: schedules,
-      hint: 'Planned / released deliveries',
-      icon: Truck,
-      tone: 'neutral',
-      to: '/delivery-schedules',
-    },
-    dispatch: {
-      label: 'Dispatch ready',
-      value: dispatchable,
-      hint: `${data?.dispatch?.counts?.blocked || 0} blocked`,
-      icon: PackageCheck,
-      tone: dispatchable ? 'success' : 'neutral',
-      to: '/production/dispatch',
-    },
-    approvals: {
-      label: 'Approvals',
-      value: approvals,
-      hint: `${data?.approvals?.dispatch_shortfall_pending || 0} shortfall · ${data?.approvals?.girn_ready || 0} GIRN`,
-      icon: ClipboardList,
-      tone: approvals ? 'amber' : 'success',
-      to: '/approvals',
-    },
-    p1: {
-      label: 'P1 alerts',
-      value: p1,
-      hint: 'Unread critical alerts',
-      icon: PackageX,
-      tone: p1 ? 'danger' : 'success',
-      to: '/notifications?priority=1',
-    },
-    inventory: {
-      label: 'Inventory P1',
-      value: invP1,
-      hint: `${data?.inventory_p1?.insufficient_stock || 0} short · ${data?.inventory_p1?.reorder_purchase_required || 0} reorder`,
+    open_po: {
+      label: 'Open PO ₹',
+      value: formatInr(openPo),
+      hint: 'Draft + due + delivered exposure',
       icon: ShoppingCart,
-      tone: invP1 ? 'danger' : 'success',
-      to: '/notifications?category=inventory',
+      tone: openPo > 0 ? 'info' : 'neutral',
+      to: '/purchase-orders',
+      spark: (data?.analytics?.procurement_series || []).map((d) => ({ value: d.po_opened })),
+      sparkColor: '#6366f1',
     },
   };
 }
@@ -156,14 +149,14 @@ export default function DashboardKpiStrip({ data, editing, order, onChange }) {
                 title="Hide tile"
                 onClick={() => hideTile(id)}
                 disabled={visible.length <= 1}
-                style={{display: 'flex', alignItems: 'cneter', justifyContent: 'center'}}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
               >
                 −
               </button>
             ) : null}
             <button
               type="button"
-              className="mes-metric-btn"
+              className="mes-metric-btn mes-metric-btn-spark"
               onClick={() => {
                 if (!editing) navigate(card.to);
               }}
@@ -175,6 +168,7 @@ export default function DashboardKpiStrip({ data, editing, order, onChange }) {
                 icon={card.icon}
                 tone={card.tone}
               />
+              <Sparkline data={card.spark} color={card.sparkColor} />
             </button>
           </div>
         );
@@ -199,9 +193,9 @@ export default function DashboardKpiStrip({ data, editing, order, onChange }) {
                   type="button"
                   role="menuitem"
                   onClick={() => addTile(id)}
-                  className='global-serach-result'
+                  className="global-serach-result"
                 >
-                 <span className='global-search-result-title'> {catalog[id].label}</span>
+                  <span className="global-search-result-title">{catalog[id].label}</span>
                 </button>
               ))}
             </div>

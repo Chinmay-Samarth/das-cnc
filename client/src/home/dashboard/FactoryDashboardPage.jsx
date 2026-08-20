@@ -8,15 +8,18 @@ import { readKpiOrder, saveKpiOrder, resetKpiOrder } from './kpiTiles';
 import DashboardWidget from './DashboardWidget';
 import DashboardKpiStrip from './DashboardKpiStrip';
 import AttendanceHealthPanel from './AttendanceHealthPanel';
-import ProductionPulsePanel from './ProductionPulsePanel';
-import CampaignProgressPanel from './CampaignProgressPanel';
+import CampaignBarsPanel from './CampaignBarsPanel';
 import DeliveryTimelinePanel from './DeliveryTimelinePanel';
+import DeliveryLoadPanel from './DeliveryLoadPanel';
 import OutsourceDuePanel from './OutsourceDuePanel';
 import DispatchReadyPanel from './DispatchReadyPanel';
 import P1AlertsPanel from './P1AlertsPanel';
 import ApprovalsShortcutPanel from './ApprovalsShortcutPanel';
 import HorizonWavePanel from './HorizonWavePanel';
-import WcHeatmapPanel from './WcHeatmapPanel';
+import WcLoadPanel from './WcLoadPanel';
+import YieldTrendPanel from './YieldTrendPanel';
+import RevenuePulsePanel from './RevenuePulsePanel';
+import ProcurementSpendPanel from './ProcurementSpendPanel';
 
 export default function FactoryDashboardPage() {
   const { data, loading, error, reload } = useFactoryDashboard();
@@ -59,26 +62,43 @@ export default function FactoryDashboardPage() {
     saveKpiOrder(next);
   }
 
+  const analytics = data?.analytics;
+
   const widgets = {
+    revenue: {
+      title: 'Revenue pulse',
+      to: '/sales-invoices',
+      body: <RevenuePulsePanel analytics={analytics} />,
+    },
+    yield: {
+      title: 'Good vs scrap',
+      to: '/production',
+      body: <YieldTrendPanel analytics={analytics} />,
+    },
+    delivery_load: {
+      title: 'Delivery load',
+      to: '/delivery-schedules',
+      body: <DeliveryLoadPanel analytics={analytics} schedules={data?.delivery_schedules} />,
+    },
+    procurement: {
+      title: 'Procurement spend',
+      to: '/purchase-orders',
+      body: <ProcurementSpendPanel analytics={analytics} />,
+    },
     attendance: {
       title: 'Attendance health',
       to: '/attendance',
       body: <AttendanceHealthPanel attendance={data?.attendance} />,
     },
-    production: {
-      title: 'Production pulse',
-      to: '/production?status=RUNNING',
-      body: <ProductionPulsePanel production={data?.production} />,
-    },
     campaigns: {
       title: 'Campaign progress',
       to: '/production/campaigns',
-      body: <CampaignProgressPanel campaigns={data?.campaigns} />,
+      body: <CampaignBarsPanel campaigns={data?.campaigns} />,
     },
     heatmap: {
-      title: 'Work-center heatmap',
+      title: 'Work-center load',
       to: '/production/work-centers',
-      body: <WcHeatmapPanel workCenters={data?.work_centers} />,
+      body: <WcLoadPanel workCenters={data?.work_centers} />,
     },
     delivery: {
       title: 'Weekly deliveries',
