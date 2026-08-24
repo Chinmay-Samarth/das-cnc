@@ -105,14 +105,13 @@ export default function PurchaseOrdersTab() {
     <div>
       <PageHeader
         title="Purchase Orders"
-        subtitle="Campaign demand, reorder gaps, drafts, and supplier orders"
         actions={
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button type="button" className="neutral-button" onClick={handleGenerate} disabled={generating}>
+            <button type="button" className="mes-btn secondary-btn" onClick={handleGenerate} disabled={generating}>
               <Sparkles size={16} />
               {generating ? 'Generating…' : 'Generate from campaigns'}
             </button>
-            <button type="button" className="primary-button" onClick={() => navigate('/purchase-orders/create')}>
+            <button type="button" className="mes-btn primary-btn" onClick={() => navigate('/purchase-orders/create')}>
               <Plus size={16} />
               New PO wizard
             </button>
@@ -125,7 +124,7 @@ export default function PurchaseOrdersTab() {
       <section className="mes-card" style={{ marginBottom: 20 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
           <h2 style={{ margin: 0 }}>Demand overview</h2>
-          <button type="button" className="link-button" onClick={() => setDemandOpen((v) => !v)}>
+          <button type="button" className="neutral-button" onClick={() => setDemandOpen((v) => !v)}>
             {demandOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             {demandOpen ? 'Hide' : 'Show'}
           </button>

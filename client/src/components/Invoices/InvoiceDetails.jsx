@@ -59,10 +59,80 @@ const fmtMoney = (val) => isNaN(Number(val)) || val == null
   ? '—'
   : Number(val).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function taxAmount(tax, baseAmount) {
-  if (tax.amount != null) return Number(tax.amount);
-  const base = tax.base ?? baseAmount ?? 0;
-  return Number(tax.rate) * Number(base);
+function toNumberOrNull(value) {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** InvoiceOCR uses percent (9/18); Mindee used fractions (0.09/0.18). */
+function taxRatePercent(rate) {
+  const n = Number(rate);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n > 0 && n <= 1 ? n * 100 : n;
+}
+
+function taxRateFraction(rate) {
+  const pct = taxRatePercent(rate);
+  return pct == null ? null : pct / 100;
+}
+
+function taxLineAmount(tax, baseAmount) {
+  const amount = Number(tax?.amount);
+  if (Number.isFinite(amount) && amount !== 0) return amount;
+  const base = Number(tax?.base ?? baseAmount ?? 0);
+  const fraction = taxRateFraction(tax?.rate);
+  if (Number.isFinite(base) && fraction != null) return base * fraction;
+  return 0;
+}
+
+function taxKindFromRate(rate) {
+  const pct = taxRatePercent(rate);
+  if (pct == null) return 'GST';
+  if (Math.abs(pct - 9) < 0.6) return 'CGST/SGST';
+  if (Math.abs(pct - 18) < 0.6) return 'IGST';
+  return 'GST';
+}
+
+function taxLabel(tax, index, siblingCount) {
+  const kind = String(tax?.kind || '').toUpperCase();
+  const pct = taxRatePercent(tax?.rate);
+  const pctLabel = pct != null ? `${Number.isInteger(pct) ? pct : pct.toFixed(1)}%` : '';
+
+  if (kind === 'CGST' || kind === 'SGST' || kind === 'IGST' || kind === 'UTGST') {
+    return pctLabel ? `${kind} (${pctLabel})` : kind;
+  }
+
+  const inferred = taxKindFromRate(tax?.rate);
+  if (inferred === 'CGST/SGST') {
+    const name = siblingCount >= 2 ? (index === 0 ? 'CGST' : 'SGST') : 'CGST/SGST';
+    return `${name} (${pctLabel || '9%'})`;
+  }
+  if (inferred === 'IGST') return `IGST (${pctLabel || '18%'})`;
+  return pctLabel ? `GST (${pctLabel})` : 'GST';
+}
+
+function synthesizeTaxItems(invoice) {
+  const taxAmountValue = Number(invoice?.tax_amount);
+  const base = Number(invoice?.base_amount);
+  if (!Number.isFinite(taxAmountValue) || taxAmountValue <= 0) return [];
+
+  const supplierState = String(invoice?.suppliers?.state || '').toLowerCase();
+  const isIntraState =
+    supplierState.includes('karnataka') ||
+    supplierState.includes('bangalore') ||
+    supplierState.includes('bengaluru') ||
+    !supplierState;
+
+  if (isIntraState) {
+    const half = Math.round((taxAmountValue / 2) * 100) / 100;
+    return [
+      { kind: 'CGST', rate: 9, base, amount: half },
+      { kind: 'SGST', rate: 9, base, amount: Math.round((taxAmountValue - half) * 100) / 100 },
+    ];
+  }
+
+  return [{ kind: 'IGST', rate: 18, base, amount: taxAmountValue }];
 }
 
 export default function InvoiceDetails() {
@@ -142,17 +212,13 @@ export default function InvoiceDetails() {
         setInvoice(data);
         setLineItems(data.line_items ?? []);
 
-        const supplierState = data.suppliers?.state ?? 'Karnataka';
-        const isIntraState =
-          supplierState === 'Karnataka'
-          || supplierState.toLowerCase().includes('bangalore')
-          || supplierState.toLowerCase().includes('bengaluru');
-
-        setTaxLines(
-          (data.tax_items ?? []).filter((t) =>
-            isIntraState ? t.rate === 0.09 : t.rate === 0.18
-          )
-        );
+        const storedTaxes = Array.isArray(data.tax_items) ? data.tax_items : [];
+        const usableTaxes = storedTaxes.filter((t) => {
+          const amount = taxLineAmount(t, data.base_amount);
+          const pct = taxRatePercent(t?.rate);
+          return amount > 0 || (pct != null && pct > 0);
+        });
+        setTaxLines(usableTaxes.length ? usableTaxes : synthesizeTaxItems(data));
       } catch (err) {
         console.error("Failed to load invoice details", err);
         if (!mounted) return;
@@ -202,10 +268,13 @@ export default function InvoiceDetails() {
   const status = STATUS_STYLES[statusKey] ?? STATUS_STYLES.due;
   const supplier = invoice.suppliers ?? {};
   const canPay = statusKey === 'due' || statusKey === 'overdue';
-  const totalGst = taxLines.reduce((sum, tax) => sum + taxAmount(tax, invoice.base_amount), 0);
-  const gstRate = taxLines.length
-    ? Math.round(taxLines.reduce((sum, t) => sum + t.rate, 0) * 100)
-    : (invoice.gst_rate ?? 18);
+  const totalGst = taxLines.reduce((sum, tax) => sum + taxLineAmount(tax, invoice.base_amount), 0);
+  const combinedGstRate = (() => {
+    const percents = taxLines.map((t) => taxRatePercent(t.rate)).filter((n) => n != null);
+    if (!percents.length) return invoice.gst_rate ?? 18;
+    const looksSplit = percents.length >= 2 && percents.every((p) => Math.abs(p - 9) < 0.6);
+    return looksSplit ? Math.round(percents.reduce((a, b) => a + b, 0)) : Math.round(percents[0]);
+  })();
 
   const printPdf = (url) => {
     const iframe = document.createElement('iframe');
@@ -493,15 +562,15 @@ export default function InvoiceDetails() {
                   {taxLines.map((tax, i) => (
                     <div key={i} style={styles.summaryLine}>
                       <span style={styles.summaryLabel}>
-                        {tax.rate === 0.09 ? (i === 0 ? 'CGST' : 'SGST') : 'IGST'} ({(tax.rate * 100).toFixed(0)}%)
+                        {taxLabel(tax, i, taxLines.length)}
                       </span>
-                      <span style={styles.summaryValue}>₹{fmtMoney(taxAmount(tax, invoice.base_amount))}</span>
+                      <span style={styles.summaryValue}>₹{fmtMoney(taxLineAmount(tax, invoice.base_amount))}</span>
                     </div>
                   ))}
                 </div>
                 <div style={styles.dottedDivider} />
                 <div style={styles.summaryLine}>
-                  <span style={styles.totalGstLabel}>Total GST ({gstRate}%)</span>
+                  <span style={styles.totalGstLabel}>Total GST ({combinedGstRate}%)</span>
                   <span style={styles.totalGstValue}>₹{fmtMoney(totalGst || invoice.tax_amount)}</span>
                 </div>
               </section>

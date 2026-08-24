@@ -137,12 +137,11 @@ export default function FactoryDashboardPage() {
   return (
     <main className="mes-shell mes-shell-wide">
       <PageHeader
-        eyebrow="Factory"
+        eyebrow=""
         title="Home"
         subtitle={
-          data?.date
-            ? `Bird's-eye view · ${formatDisplayDate(data.date)}`
-            : "Bird's-eye view of today's factory"
+          data?.date?
+          `${formatDisplayDate(data.date)}` : ''
         }
         actions={
           <>

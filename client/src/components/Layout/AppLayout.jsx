@@ -4,6 +4,7 @@ import { useAuth } from '../../auth/authContext';
 import Sidebar from './Sidebar';
 import GlobalSearch from './GlobalSearch';
 import NotificationBell from './NotificationBell';
+import InvoiceUploadQueueStatus from '../../invoices/InvoiceUploadQueueStatus';
 
 export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -60,6 +61,8 @@ export default function AppLayout() {
         )}
         <Outlet />
       </div>
+
+      <InvoiceUploadQueueStatus />
     </div>
   );
 }

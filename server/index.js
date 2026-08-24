@@ -6,6 +6,7 @@ require('dotenv').config();
 const http = require('http');
 const express    = require('express');
 const cron       = require('node-cron');
+const axios      = require('axios');
 const { markAbsentees } = require('./services/attendanceEngine');
 const { syncBiometricData } = require('./services/biometricSync');
 const { evaluateAttendanceAlerts } = require('./services/attendanceAlertEngine');
@@ -178,4 +179,15 @@ attachConnectionHandlers(io);
 
 server.listen(PORT, () => {
   console.log(`DasCNC API running on port ${PORT}`);
+  // Warm custom invoice OCR (Render) so first upload is not stuck on cold start
+  const ocrHealth =
+    process.env.INVOICE_OCR_HEALTH_URL ||
+    (process.env.INVOICE_OCR_URL || 'https://invoiceocr-c7ah.onrender.com/parse').replace(
+      /\/parse\/?$/,
+      '/health'
+    );
+  axios
+    .get(ocrHealth, { timeout: 60000 })
+    .then(() => console.log('Invoice OCR warm-up OK:', ocrHealth))
+    .catch((err) => console.warn('Invoice OCR warm-up skipped:', err.message));
 });

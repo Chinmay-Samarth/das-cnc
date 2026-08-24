@@ -1,83 +1,71 @@
-import { useRef, useState } from 'react';
-import api from '../api/client';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { appAlert } from '../components/dialog';
+import { useInvoiceUploadQueue } from '../invoices/InvoiceUploadQueueContext';
 
-const STAGES = {
-  idle: { pct: 0, label: 'Ready' },
-  uploading: { pct: 20, label: 'Uploading invoice...' },
-  extracting: { pct: 70, label: 'Extracting invoice data...' },
-  done: { pct: 100, label: 'Extraction complete' },
-  error: { pct: 100, label: 'Extraction failed' },
-};
-
-export default function GIRNInvoiceUpload({ onExtracted, disabled = false }) {
+export default function GIRNInvoiceUpload({ disabled = false, reviewReturnPath = '' }) {
+  const navigate = useNavigate();
   const inputRef = useRef(null);
-  const [status, setStatus] = useState('idle');
+  const { jobs, enqueueUpload, dismissJob } = useInvoiceUploadQueue();
+  const [pendingJobId, setPendingJobId] = useState(null);
   const [fileName, setFileName] = useState('');
 
-  const current = STAGES[status] || STAGES.idle;
-  const isIdle = status === 'idle';
+  useEffect(() => {
+    if (!pendingJobId) return;
+    const job = jobs.find((j) => j.id === pendingJobId);
+    if (!job) {
+      setPendingJobId(null);
+      return;
+    }
 
-  async function handleChange(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    if (job.editPath) {
+      setPendingJobId(null);
+      navigate(job.editPath);
+      return;
+    }
 
-    const form = new FormData();
-    form.append('invoice', file);
-
-    try {
-      setFileName(file.name);
-      setStatus('uploading');
-      setTimeout(() => setStatus('extracting'), 250);
-
-      const { data } = await api.post('/girn/extract-invoice', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-
-      setStatus('done');
-      await onExtracted?.(data);
-    } catch (err) {
-      console.error('GIRN invoice extraction failed:', err);
-      setStatus('error');
-      await appAlert({
+    if (job.status === 'error') {
+      setPendingJobId(null);
+      appAlert({
         title: 'Extraction failed',
-        message: err.response?.data?.error || err.message || 'Unable to extract invoice',
+        message: job.error || 'Unable to extract invoice',
         tone: 'danger',
       });
-    } finally {
-      event.target.value = '';
+      dismissJob(job.id);
     }
+  }, [jobs, pendingJobId, navigate, dismissJob]);
+
+  function handleChange(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setFileName(file.name);
+    const job = enqueueUpload({
+      file,
+      source: 'girn',
+      returnPath: reviewReturnPath || '/girn/create',
+    });
+    if (job?.id) setPendingJobId(job.id);
   }
+
+  const pendingJob = pendingJobId ? jobs.find((j) => j.id === pendingJobId) : null;
+  const busy = Boolean(pendingJob && ['queued', 'uploading'].includes(pendingJob.status));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {isIdle ? (
-        <button
-          type="button"
-          className="neutral-button"
-          disabled={disabled}
-          onClick={() => inputRef.current?.click()}
-        >
-          Upload scanned invoice
-        </button>
-      ) : (
-        <div style={styles.progressWrap}>
-          <div style={styles.progressLabel}>
-            <span>{current.label}</span>
-            <span>{current.pct}%</span>
-          </div>
-          <div style={styles.track}>
-            <div
-              style={{
-                ...styles.fill,
-                width: `${current.pct}%`,
-                background: status === 'error' ? '#dc2626' : '#1d4ed8',
-              }}
-            />
-          </div>
-          {fileName ? <p className="muted" style={{ marginTop: 6 }}>{fileName}</p> : null}
-        </div>
-      )}
+      <button
+        type="button"
+        className="neutral-button"
+        disabled={disabled || busy}
+        onClick={() => inputRef.current?.click()}
+      >
+        {busy ? 'Starting upload…' : 'Upload scanned invoice'}
+      </button>
+      {fileName && busy ? <p className="muted">{fileName}</p> : null}
+      <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+        Upload runs in the background. You can leave this page — a status bar will keep you updated.
+      </p>
 
       <input
         ref={inputRef}
@@ -85,31 +73,8 @@ export default function GIRNInvoiceUpload({ onExtracted, disabled = false }) {
         accept="image/*,application/pdf"
         style={{ display: 'none' }}
         onChange={handleChange}
-        disabled={disabled}
+        disabled={disabled || busy}
       />
     </div>
   );
 }
-
-const styles = {
-  progressWrap: { width: 'min(100%, 360px)' },
-  progressLabel: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    fontSize: 12,
-    color: '#6b7280',
-    marginBottom: 4,
-  },
-  track: {
-    width: '100%',
-    height: 6,
-    borderRadius: 99,
-    background: '#e5e7eb',
-    overflow: 'hidden',
-  },
-  fill: {
-    height: '100%',
-    borderRadius: 99,
-    transition: 'width 0.4s ease',
-  },
-};

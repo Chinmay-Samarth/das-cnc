@@ -11,6 +11,7 @@ import PurchaseOrdersTab from '../procurement/PurchaseOrdersTab';
 
 const STATUS_OPTIONS = [
   { id: 'all', label: 'All statuses' },
+  { id: 'needs_review', label: 'Needs review' },
   { id: 'due', label: 'Due' },
   { id: 'paid', label: 'Paid' },
   { id: 'overdue', label: 'Overdue' },
@@ -25,6 +26,7 @@ function todayYmdIst() {
 
 function invoiceDisplayStatus(invoice) {
   const raw = invoice?.status || 'pending';
+  if (raw === 'needs_review' || invoice?.review_status === 'needs_review') return 'needs_review';
   if (raw === 'paid') return 'paid';
   if (raw === 'extracting' || raw === 'saving' || raw === 'error') return raw;
   const due = invoice?.due_date ? String(invoice.due_date).slice(0, 10) : '';
@@ -33,6 +35,7 @@ function invoiceDisplayStatus(invoice) {
 }
 
 function statusLabel(status) {
+  if (status === 'needs_review') return 'NEEDS REVIEW';
   if (status === 'due') return 'DUE';
   if (status === 'paid') return 'PAID';
   if (status === 'overdue') return 'OVERDUE';
@@ -53,6 +56,7 @@ function currentMonthRange() {
 }
 
 function statusTone(status) {
+  if (status === 'needs_review') return 'running';
   if (status === 'paid') return 'completed';
   if (status === 'overdue' || status === 'error') return 'overdue';
   if (status === 'extracting' || status === 'saving') return 'running';
@@ -170,6 +174,15 @@ export default function InvoicesPage() {
 
   const sortMark = (key) =>
     sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : '';
+
+  function openInvoice(item) {
+    const displayStatus = invoiceDisplayStatus(item);
+    if (displayStatus === 'needs_review') {
+      navigate(`/invoices/${item.id}/review`);
+      return;
+    }
+    navigate(`/invoices/${item.id}`);
+  }
 
   function toggleExportPanel() {
     if (exportOpen) {
@@ -405,11 +418,11 @@ export default function InvoicesPage() {
                     key={item.id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => navigate(`/invoices/${item.id}`)}
+                    onClick={() => openInvoice(item)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault();
-                        navigate(`/invoices/${item.id}`);
+                        openInvoice(item);
                       }
                     }}
                     style={{ cursor: 'pointer' }}

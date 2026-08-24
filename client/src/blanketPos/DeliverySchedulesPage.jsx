@@ -336,9 +336,7 @@ export default function DeliverySchedulesPage() {
   return (
     <main className="mes-shell mes-shell-wide">
       <PageHeader
-        eyebrow="Logistics"
         title="Delivery Schedules"
-        subtitle="Upcoming customer deliveries. Switch between list and calendar to plan releases."
         actions={
           <>
             <div className="mes-view-toggle" role="group" aria-label="View mode">
@@ -376,21 +374,21 @@ export default function DeliverySchedulesPage() {
           <>
             <label>
               From
-              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="date-bar" />
             </label>
             <label>
               To
-              <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+              <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="date-bar" />
             </label>
           </>
         ) : null}
         <label>
           Status
           <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">All</option>
-            <option value="planned">Planned</option>
-            <option value="released">Released</option>
-            <option value="cancelled">Cancelled</option>
+            <option value="" className='global-search-resutl'>All</option>
+            <option value="planned" className='global-search-resutl'>Planned</option>
+            <option value="released" className='global-search-resutl'>Released</option>
+            <option value="cancelled" className='global-search-resutl'>Cancelled</option>
           </select>
         </label>
         <label style={{ flex: 1, minWidth: 180 }}>
@@ -400,6 +398,7 @@ export default function DeliverySchedulesPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Customer, schedule #…"
+            className='global-search-input'
           />
         </label>
       </div>

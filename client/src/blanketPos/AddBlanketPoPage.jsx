@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Check, CalendarRange } from 'lucide-react';
 import api from '../api/client';
 import ComponentSelect from './ComponentSelect';
+import CustomerSelect from './CustomerSelect';
 import { WEEKDAYS, weekdayName } from './scheduleLabels';
 import { formatDisplayDate, parseDateListToISO } from '../utils/dateFormat';
 import { EmptyState, PageHeader, AlertBanner } from '../components/mes';
@@ -54,8 +55,8 @@ function defaultHorizonEnd(mode, start) {
 export default function AddBlanketPoPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
-  const [customers, setCustomers] = useState([]);
   const [customerId, setCustomerId] = useState('');
+  const [customerLabel, setCustomerLabel] = useState('');
   const [paymentTerms, setPaymentTerms] = useState('');
   const [notes, setNotes] = useState('');
   const [compId, setCompId] = useState('');
@@ -75,18 +76,6 @@ export default function AddBlanketPoPage() {
   const [horizonEnd, setHorizonEnd] = useState(() => plusWeeks(todayStr(), 8));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
-
-  useEffect(() => {
-    api
-      .get('/customers')
-      .then(({ data }) => setCustomers(data.customers || []))
-      .catch(() => setCustomers([]));
-  }, []);
-
-  const customerName = useMemo(
-    () => customers.find((c) => String(c.id) === String(customerId))?.name || '',
-    [customers, customerId]
-  );
 
   const enabledDays = useMemo(
     () => WEEKDAYS.filter((d) => week[d.value]?.enabled && Number(week[d.value].qty) > 0),
@@ -256,9 +245,9 @@ export default function AddBlanketPoPage() {
   return (
     <main className="mes-shell bpo-setup-page">
       <PageHeader
-        eyebrow="Sourcing"
+        
         title="New customer contract"
-        subtitle="Pick the customer, lock the part price, choose a delivery cadence, and generate dated schedules."
+        
         actions={
           <button type="button" className="neutral-button" onClick={() => navigate('/blanket-pos')}>
             <ArrowLeft size={16} />
@@ -300,19 +289,15 @@ export default function AddBlanketPoPage() {
 
             <label>
               Customer <span className="req">*</span>
-              <select
+              <CustomerSelect
                 value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-                required
+                label={customerLabel}
                 disabled={submitting}
-              >
-                <option value="">Select customer…</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+                onChange={({ id, label }) => {
+                  setCustomerId(id);
+                  setCustomerLabel(label);
+                }}
+              />
             </label>
 
             <div className="bpo-grid-2">
@@ -606,7 +591,7 @@ export default function AddBlanketPoPage() {
               <ul>
                 <li>
                   <span>Customer</span>
-                  <strong>{customerName || '—'}</strong>
+                  <strong>{customerLabel || '—'}</strong>
                 </li>
                 <li>
                   <span>Component</span>

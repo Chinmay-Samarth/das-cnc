@@ -6,6 +6,8 @@ const {
   getCategoryConfig,
 } = require('../config/girnCategoryConfig');
 
+const { lookupSupplierItemAlias } = require('./invoiceAliasEngine');
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
@@ -63,8 +65,15 @@ async function searchMasterLookup(searchTerms) {
   return results;
 }
 
-async function classifyLineItem(lineItem = {}) {
+async function classifyLineItem(lineItem = {}, options = {}) {
+  const supplierId = options.supplierId || null;
   const description = lineItem.description || lineItem.rm_code || lineItem.item_description || '';
+
+  if (supplierId) {
+    const aliasHit = await lookupSupplierItemAlias(supplierId, description);
+    if (aliasHit) return aliasHit;
+  }
+
   const itemCode = lineItem.item_code || inferItemCode(description);
   const searchTerms = [itemCode, description].filter(Boolean);
 
@@ -107,10 +116,10 @@ async function classifyLineItem(lineItem = {}) {
   };
 }
 
-async function classifyLineItems(lineItems = []) {
+async function classifyLineItems(lineItems = [], options = {}) {
   const classified = [];
   for (const item of lineItems) {
-    classified.push(await classifyLineItem(item));
+    classified.push(await classifyLineItem(item, options));
   }
   return classified;
 }

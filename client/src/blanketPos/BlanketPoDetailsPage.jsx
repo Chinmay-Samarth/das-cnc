@@ -6,6 +6,8 @@ import {
   CalendarRange,
   Truck,
   Plus,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import api from '../api/client';
 import { appAlert, appConfirm, appPrompt } from '../components/dialog';
@@ -44,6 +46,35 @@ const TABS = [
   { id: 'rules', label: 'Schedule rules', icon: CalendarRange },
   { id: 'schedules', label: 'Schedules', icon: Truck },
 ];
+
+function CollapsibleSection({ id, title, summary, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <section className="cr-collapse" style={{ marginTop: 16, marginBottom: 16 }}>
+      <button
+        type="button"
+        className="cr-collapse-toggle"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="cr-collapse-toggle-main">
+          {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          <span className="mes-section-title" style={{ fontSize: 14, margin: 0 }}>
+            {title}
+          </span>
+        </span>
+        {summary ? <span className="cr-collapse-summary muted">{summary}</span> : null}
+      </button>
+      {open ? (
+        <div id={id} className="cr-collapse-body">
+          {children}
+        </div>
+      ) : null}
+    </section>
+  );
+}
 
 export default function BlanketPoDetailsPage() {
   const { id } = useParams();
@@ -389,13 +420,9 @@ export default function BlanketPoDetailsPage() {
   return (
     <main className="mes-shell">
       <PageHeader
-        eyebrow="Sourcing"
+        eyebrow=""
         title={blanket?.blanket_number || 'Blanket PO'}
-        subtitle={
-          blanket
-            ? `${blanket.customer_name || 'Customer'} · locked part pricing and delivery plan`
-            : 'Loading contract…'
-        }
+
         actions={
           <>
             <button
@@ -429,7 +456,7 @@ export default function BlanketPoDetailsPage() {
             {blanket?.status === 'active' || blanket?.status === 'on_hold' ? (
               <button
                 type="button"
-                className="mes-btn mes-btn-secondary"
+                className="cancel-button"
                 disabled={busy}
                 onClick={() => handleStatus('close')}
               >
@@ -600,61 +627,61 @@ export default function BlanketPoDetailsPage() {
               )}
 
               {blanket.status !== 'closed' && blanket.status !== 'cancelled' ? (
-                <form
-                  onSubmit={handleAddLine}
-                  className="mes-card"
-                  style={{ background: 'var(--bg-raised)', boxShadow: 'none' }}
+                <CollapsibleSection
+                  id="blanket-add-line"
+                  title="Add line"
+                  summary="Component & locked price"
                 >
-                  <h3 style={{ margin: '0 0 12px', fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Plus size={16} /> Add line
-                  </h3>
-                  <div className="bpo-grid-2">
-                    <label>
-                      Component
-                      <ComponentSelect
-                        value={compId}
-                        label={compLabel}
-                        disabled={busy}
-                        onChange={({ id: cid, label }) => {
-                          setCompId(cid);
-                          setCompLabel(label);
-                        }}
-                      />
-                    </label>
-                    <label>
-                      Unit price
-                      <input
-                        type="number"
-                        min="0"
-                        step="any"
-                        value={unitPrice}
-                        onChange={(e) => setUnitPrice(e.target.value)}
-                        required
-                        disabled={busy}
-                      />
-                    </label>
-                    <label>
-                      UOM
-                      <input value={uom} onChange={(e) => setUom(e.target.value)} disabled={busy} />
-                    </label>
-                    <label>
-                      Notes
-                      <input
-                        value={lineNotes}
-                        onChange={(e) => setLineNotes(e.target.value)}
-                        disabled={busy}
-                      />
-                    </label>
-                  </div>
-                  <button
-                    type="submit"
-                    className="mes-btn mes-btn-primary"
-                    style={{ marginTop: 12 }}
-                    disabled={busy || !compId || unitPrice === ''}
-                  >
-                    Add line
-                  </button>
-                </form>
+                  <form onSubmit={handleAddLine}>
+                    <div className="bpo-grid-2">
+                      <label>
+                        Component
+                        <ComponentSelect
+                          value={compId}
+                          label={compLabel}
+                          disabled={busy}
+                          onChange={({ id: cid, label }) => {
+                            setCompId(cid);
+                            setCompLabel(label);
+                          }}
+                        />
+                      </label>
+                      <label>
+                        Unit price
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={unitPrice}
+                          onChange={(e) => setUnitPrice(e.target.value)}
+                          required
+                          disabled={busy}
+                        />
+                      </label>
+                      <label>
+                        UOM
+                        <input value={uom} onChange={(e) => setUom(e.target.value)} disabled={busy} />
+                      </label>
+                      <label>
+                        Notes
+                        <input
+                          value={lineNotes}
+                          onChange={(e) => setLineNotes(e.target.value)}
+                          disabled={busy}
+                        />
+                      </label>
+                    </div>
+                    <button
+                      type="submit"
+                      className="mes-btn mes-btn-primary"
+                      style={{ marginTop: 12 }}
+                      disabled={busy || !compId || unitPrice === ''}
+                    >
+                      <Plus size={16} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                      Add line
+                    </button>
+                  </form>
+                </CollapsibleSection>
               ) : null}
             </section>
           ) : null}
@@ -734,7 +761,7 @@ export default function BlanketPoDetailsPage() {
                               {r.is_active ? (
                                 <button
                                   type="button"
-                                  className="mes-btn mes-btn-secondary"
+                                  className="cancel-button"
                                   disabled={busy}
                                   onClick={() => handleDeactivateRule(r.id)}
                                 >
@@ -761,140 +788,147 @@ export default function BlanketPoDetailsPage() {
               )}
 
               {blanket.status === 'active' && lines.length ? (
-                <form
-                  onSubmit={handleAddRule}
-                  className="mes-card"
-                  style={{ background: 'var(--bg-raised)', boxShadow: 'none' }}
+                <CollapsibleSection
+                  id="blanket-add-rule"
+                  title="Add draft rule"
+                  summary="Weekly, monthly, or custom cadence"
+                  
                 >
-                  <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Add draft rule</h3>
-                  <div className="bpo-grid-2">
-                    <label>
-                      Line
-                      <select
-                        value={ruleForm.blanket_po_line_id}
-                        onChange={(e) =>
-                          setRuleForm((f) => ({ ...f, blanket_po_line_id: e.target.value }))
-                        }
-                        required
-                        disabled={busy}
-                      >
-                        <option value="">Select line</option>
-                        {lines.map((l) => (
-                          <option key={l.id} value={l.id}>
-                            #{l.line_no} {l.component_label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Cadence
-                      <select
-                        value={ruleForm.cadence}
-                        onChange={(e) => setRuleForm((f) => ({ ...f, cadence: e.target.value }))}
-                        disabled={busy}
-                      >
-                        <option value="weekly">Weekly / every N weeks</option>
-                        <option value="monthly">Monthly</option>
-                        <option value="custom">Custom dates</option>
-                      </select>
-                    </label>
-                    {ruleForm.cadence === 'weekly' ? (
-                      <>
-                        <label>
-                          Weekday
-                          <select
-                            value={ruleForm.weekday}
-                            onChange={(e) =>
-                              setRuleForm((f) => ({ ...f, weekday: e.target.value }))
-                            }
-                            disabled={busy}
-                          >
-                            {WEEKDAYS.map((w) => (
-                              <option key={w.value} value={w.value}>
-                                {w.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          Interval (weeks)
-                          <input
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={ruleForm.interval_weeks}
-                            onChange={(e) =>
-                              setRuleForm((f) => ({ ...f, interval_weeks: e.target.value }))
-                            }
-                            disabled={busy}
-                          />
-                        </label>
-                        {Number(ruleForm.interval_weeks) > 1 ? (
+                  <form onSubmit={handleAddRule}>
+                    <div className="bpo-grid-3">
+                      <label>
+                        Line
+                        <select
+                          value={ruleForm.blanket_po_line_id}
+                          onChange={(e) =>
+                            setRuleForm((f) => ({ ...f, blanket_po_line_id: e.target.value }))
+                          }
+                          required
+                          disabled={busy}
+                        >
+                          <option value="">Select line</option>
+                          {lines.map((l) => (
+                            <option key={l.id} value={l.id}>
+                              #{l.line_no} {l.component_label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Cadence
+                        <select
+                          value={ruleForm.cadence}
+                          onChange={(e) => setRuleForm((f) => ({ ...f, cadence: e.target.value }))}
+                          disabled={busy}
+                        >
+                          <option value="weekly">Weekly / every N weeks</option>
+                          <option value="monthly">Monthly</option>
+                          <option value="custom">Custom dates</option>
+                        </select>
+                      </label>
+                      {ruleForm.cadence === 'weekly' ? (
+                        <>
                           <label>
-                            Anchor / first date (optional)
-                            <input
-                              type="date"
-                              value={ruleForm.anchor_date}
+                            Weekday
+                            <select
+                              value={ruleForm.weekday}
                               onChange={(e) =>
-                                setRuleForm((f) => ({ ...f, anchor_date: e.target.value }))
+                                setRuleForm((f) => ({ ...f, weekday: e.target.value }))
+                              }
+                              disabled={busy}
+                            >
+                              {WEEKDAYS.map((w) => (
+                                <option key={w.value} value={w.value}>
+                                  {w.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Interval (weeks)
+                            <input
+                              type="number"
+                              min="1"
+                              step="1"
+                              value={ruleForm.interval_weeks}
+                              onChange={(e) =>
+                                setRuleForm((f) => ({ ...f, interval_weeks: e.target.value }))
                               }
                               disabled={busy}
                             />
                           </label>
-                        ) : null}
-                      </>
-                    ) : null}
-                    {ruleForm.cadence === 'monthly' ? (
+                          {Number(ruleForm.interval_weeks) > 1 ? (
+                            <label>
+                              Anchor / first date (optional)
+                              <input
+                                type="date"
+                                value={ruleForm.anchor_date}
+                                onChange={(e) =>
+                                  setRuleForm((f) => ({ ...f, anchor_date: e.target.value }))
+                                }
+                                disabled={busy}
+                              />
+                            </label>
+                          ) : null}
+                        </>
+                      ) : null}
+                      {ruleForm.cadence === 'monthly' ? (
+                        <label>
+                          Day of month (1–31)
+                          <input
+                            type="number"
+                            min="1"
+                            max="31"
+                            value={ruleForm.month_day}
+                            onChange={(e) =>
+                              setRuleForm((f) => ({ ...f, month_day: e.target.value }))
+                            }
+                            disabled={busy}
+                            required
+                          />
+                        </label>
+                      ) : null}
+                      {ruleForm.cadence === 'custom' ? (
+                        <label style={{ gridColumn: '1 / -1' }}>
+                          Preferred dates (DD-MM-YYYY)
+                          <textarea
+                            rows={4}
+                            value={ruleForm.custom_dates_text}
+                            onChange={(e) =>
+                              setRuleForm((f) => ({ ...f, custom_dates_text: e.target.value }))
+                            }
+                            placeholder={'20-07-2026\n03-08-2026'}
+                            disabled={busy}
+                            required
+                            style={{ width: '100%', fontFamily: 'inherit' }}
+                          />
+                        </label>
+                      ) : null}
                       <label>
-                        Day of month (1–31)
+                        Default quantity
                         <input
                           type="number"
-                          min="1"
-                          max="31"
-                          value={ruleForm.month_day}
+                          min="0.0001"
+                          step="any"
+                          value={ruleForm.default_quantity}
                           onChange={(e) =>
-                            setRuleForm((f) => ({ ...f, month_day: e.target.value }))
+                            setRuleForm((f) => ({ ...f, default_quantity: e.target.value }))
                           }
-                          disabled={busy}
                           required
+                          disabled={busy}
                         />
                       </label>
-                    ) : null}
-                    {ruleForm.cadence === 'custom' ? (
-                      <label style={{ gridColumn: '1 / -1' }}>
-                        Preferred dates (DD-MM-YYYY)
-                        <textarea
-                          rows={4}
-                          value={ruleForm.custom_dates_text}
-                          onChange={(e) =>
-                            setRuleForm((f) => ({ ...f, custom_dates_text: e.target.value }))
-                          }
-                          placeholder={'20-07-2026\n03-08-2026'}
-                          disabled={busy}
-                          required
-                          style={{ width: '100%', fontFamily: 'inherit' }}
-                        />
-                      </label>
-                    ) : null}
-                    <label>
-                      Default quantity
-                      <input
-                        type="number"
-                        min="0.0001"
-                        step="any"
-                        value={ruleForm.default_quantity}
-                        onChange={(e) =>
-                          setRuleForm((f) => ({ ...f, default_quantity: e.target.value }))
-                        }
-                        required
-                        disabled={busy}
-                      />
-                    </label>
-                  </div>
-                  <button type="submit" className="mes-btn mes-btn-primary" style={{ marginTop: 12 }} disabled={busy}>
-                    Add draft rule
-                  </button>
-                </form>
+                    </div>
+                    <button
+                      type="submit"
+                      className="mes-btn mes-btn-primary"
+                      style={{ marginTop: 12 }}
+                      disabled={busy}
+                    >
+                      Add draft rule
+                    </button>
+                  </form>
+                </CollapsibleSection>
               ) : (
                 <p className="muted" style={{ marginTop: 12 }}>
                   Activate the blanket and add lines to create schedule rules.
@@ -911,127 +945,139 @@ export default function BlanketPoDetailsPage() {
               </p>
 
               {blanket.status === 'active' && activeRules.length ? (
-                <form
-                  onSubmit={handleGenerate}
-                  className="mes-card"
-                  style={{ background: 'var(--bg-raised)', boxShadow: 'none', marginBottom: 16 }}
+                <CollapsibleSection
+                  id="blanket-generate-rule"
+                  title="Generate from rule"
+                  summary="Horizon & active rule"
                 >
-                  <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Generate from rule</h3>
-                  <div className="bpo-grid-3">
-                    <label>
-                      Rule
-                      <select
-                        value={genForm.rule_id}
-                        onChange={(e) => setGenForm((f) => ({ ...f, rule_id: e.target.value }))}
-                        required
-                        disabled={busy}
-                      >
-                        <option value="">Select rule</option>
-                        {activeRules.map((r) => {
-                          const line = lines.find((l) => l.id === r.blanket_po_line_id);
-                          return (
-                            <option key={r.id} value={r.id}>
-                              {formatRuleLabel({
-                                ...r,
-                                component_label: line?.component_label,
-                              })}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </label>
-                    <label>
-                      Horizon start
-                      <input
-                        type="date"
-                        value={genForm.horizon_start}
-                        onChange={(e) =>
-                          setGenForm((f) => ({ ...f, horizon_start: e.target.value }))
-                        }
-                        required
-                        disabled={busy}
-                      />
-                    </label>
-                    <label>
-                      Horizon end
-                      <input
-                        type="date"
-                        value={genForm.horizon_end}
-                        onChange={(e) => setGenForm((f) => ({ ...f, horizon_end: e.target.value }))}
-                        required
-                        disabled={busy}
-                      />
-                    </label>
-                  </div>
-                  <button
-                    type="button"
-                    className="mes-btn mes-btn-secondary"
-                    style={{ marginTop: 12, marginRight: 8 }}
-                    disabled={busy || !genForm.rule_id || !genForm.horizon_start || !genForm.horizon_end}
-                    onClick={handlePreviewGenerate}
-                  >
-                    Preview
-                  </button>
-                  <button type="submit" className="mes-btn mes-btn-primary" style={{ marginTop: 12 }} disabled={busy}>
-                    Generate occurrences
-                    {previewCount != null ? ` (${previewCount})` : ''}
-                  </button>
-                </form>
+                  <form onSubmit={handleGenerate}>
+                    <div className="bpo-grid-3">
+                      <label>
+                        Rule
+                        <select
+                          value={genForm.rule_id}
+                          onChange={(e) => setGenForm((f) => ({ ...f, rule_id: e.target.value }))}
+                          required
+                          disabled={busy}
+                        >
+                          <option value="">Select rule</option>
+                          {activeRules.map((r) => {
+                            const line = lines.find((l) => l.id === r.blanket_po_line_id);
+                            return (
+                              <option key={r.id} value={r.id}>
+                                {formatRuleLabel({
+                                  ...r,
+                                  component_label: line?.component_label,
+                                })}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </label>
+                      <label>
+                        Horizon start
+                        <input
+                          type="date"
+                          value={genForm.horizon_start}
+                          onChange={(e) =>
+                            setGenForm((f) => ({ ...f, horizon_start: e.target.value }))
+                          }
+                          required
+                          disabled={busy}
+                        />
+                      </label>
+                      <label>
+                        Horizon end
+                        <input
+                          type="date"
+                          value={genForm.horizon_end}
+                          onChange={(e) => setGenForm((f) => ({ ...f, horizon_end: e.target.value }))}
+                          required
+                          disabled={busy}
+                        />
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      className="mes-btn mes-btn-secondary"
+                      style={{ marginTop: 12, marginRight: 8 }}
+                      disabled={busy || !genForm.rule_id || !genForm.horizon_start || !genForm.horizon_end}
+                      onClick={handlePreviewGenerate}
+                    >
+                      Preview
+                    </button>
+                    <button
+                      type="submit"
+                      className="mes-btn mes-btn-primary"
+                      style={{ marginTop: 12 }}
+                      disabled={busy}
+                    >
+                      Generate occurrences
+                      {previewCount != null ? ` (${previewCount})` : ''}
+                    </button>
+                  </form>
+                </CollapsibleSection>
               ) : null}
 
               {blanket.status === 'active' && lines.length ? (
-                <form
-                  onSubmit={handleOneOff}
-                  className="mes-card"
-                  style={{ background: 'var(--bg-raised)', boxShadow: 'none', marginBottom: 16 }}
+                <CollapsibleSection
+                  id="blanket-one-off-schedule"
+                  title="Add one-off schedule"
+                  summary="Single due date & quantity"
                 >
-                  <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Add one-off schedule</h3>
-                  <div className="bpo-grid-3">
-                    <label>
-                      Line
-                      <select
-                        value={oneOff.blanket_po_line_id}
-                        onChange={(e) =>
-                          setOneOff((f) => ({ ...f, blanket_po_line_id: e.target.value }))
-                        }
-                        required
-                        disabled={busy}
-                      >
-                        <option value="">Select line</option>
-                        {lines.map((l) => (
-                          <option key={l.id} value={l.id}>
-                            #{l.line_no} {l.component_label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Due date
-                      <input
-                        type="date"
-                        value={oneOff.due_date}
-                        onChange={(e) => setOneOff((f) => ({ ...f, due_date: e.target.value }))}
-                        required
-                        disabled={busy}
-                      />
-                    </label>
-                    <label>
-                      Quantity
-                      <input
-                        type="number"
-                        min="0.0001"
-                        step="any"
-                        value={oneOff.quantity}
-                        onChange={(e) => setOneOff((f) => ({ ...f, quantity: e.target.value }))}
-                        required
-                        disabled={busy}
-                      />
-                    </label>
-                  </div>
-                  <button type="submit" className="mes-btn mes-btn-primary" style={{ marginTop: 12 }} disabled={busy}>
-                    Add schedule
-                  </button>
-                </form>
+                  <form onSubmit={handleOneOff}>
+                    <div className="bpo-grid-3">
+                      <label>
+                        Line
+                        <select
+                          value={oneOff.blanket_po_line_id}
+                          onChange={(e) =>
+                            setOneOff((f) => ({ ...f, blanket_po_line_id: e.target.value }))
+                          }
+                          required
+                          disabled={busy}
+                        >
+                          <option value="">Select line</option>
+                          {lines.map((l) => (
+                            <option key={l.id} value={l.id}>
+                              #{l.line_no} {l.component_label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Due date
+                        <input
+                          type="date"
+                          value={oneOff.due_date}
+                          onChange={(e) => setOneOff((f) => ({ ...f, due_date: e.target.value }))}
+                          required
+                          disabled={busy}
+                        />
+                      </label>
+                      <label>
+                        Quantity
+                        <input
+                          type="number"
+                          min="0.0001"
+                          step="any"
+                          value={oneOff.quantity}
+                          onChange={(e) => setOneOff((f) => ({ ...f, quantity: e.target.value }))}
+                          required
+                          disabled={busy}
+                        />
+                      </label>
+                    </div>
+                    <button
+                      type="submit"
+                      className="mes-btn mes-btn-primary"
+                      style={{ marginTop: 12 }}
+                      disabled={busy}
+                    >
+                      Add schedule
+                    </button>
+                  </form>
+                </CollapsibleSection>
               ) : null}
 
               {!sortedSchedules.length ? (

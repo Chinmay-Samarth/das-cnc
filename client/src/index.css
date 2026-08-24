@@ -95,7 +95,7 @@ button {
 }
 
 button:hover:not(:disabled) {
-  background: #f3f3fe !important;
+  background: #f3f3fe ;
 }
 
 button:disabled {
@@ -164,6 +164,100 @@ svg.lucide {
 
 .cancel-button:hover:not(:disabled) {
   background: #be123c;
+}
+
+/* MES date input — use class="date-bar" on input[type="date"] */
+input[type='date'].date-bar {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-width: 9.5rem;
+  margin: 0;
+  padding: 9px 12px;
+  padding-right: 2.25rem;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border-default, #d6dfef);
+  background: var(--bg-surface, #ffffff);
+  color: var(--text-primary, #0f172a);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  color-scheme: light;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease;
+}
+
+input[type='date'].date-bar:hover:not(:disabled) {
+  border-color: #b8c9e6;
+  background: var(--bg-overlay, #f8fafd);
+}
+
+input[type='date'].date-bar:focus-visible {
+  outline: none;
+  border-color: var(--brand-400, #1d4ed8);
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
+}
+
+input[type='date'].date-bar:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+  background: var(--bg-raised, #eef3fb);
+}
+
+input[type='date'].date-bar::-webkit-datetime-edit {
+  padding: 0;
+}
+
+input[type='date'].date-bar::-webkit-datetime-edit-fields-wrapper {
+  padding: 0;
+}
+
+input[type='date'].date-bar::-webkit-datetime-edit-text,
+input[type='date'].date-bar::-webkit-datetime-edit-month-field,
+input[type='date'].date-bar::-webkit-datetime-edit-day-field,
+input[type='date'].date-bar::-webkit-datetime-edit-year-field {
+  padding: 0 2px;
+  color: inherit;
+}
+
+input[type='date'].date-bar::-webkit-calendar-picker-indicator {
+  opacity: 0.5;
+  cursor: pointer;
+  margin-left: 4px;
+  padding: 3px;
+  border-radius: 4px;
+  filter: grayscale(0.15);
+  transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+
+input[type='date'].date-bar:hover:not(:disabled)::-webkit-calendar-picker-indicator {
+  opacity: 0.78;
+}
+
+input[type='date'].date-bar:focus-visible::-webkit-calendar-picker-indicator {
+  opacity: 1;
+  background: rgba(29, 78, 216, 0.08);
+}
+
+.mes-filters input[type='date'].date-bar {
+  min-width: 10.5rem;
+}
+
+.mes-filters label:has(input[type='date'].date-bar) {
+  min-width: 148px;
+}
+
+.bpo-panel input[type='date'].date-bar,
+.bpo-grid-2 input[type='date'].date-bar,
+.bpo-grid-3 input[type='date'].date-bar,
+.mes-card input[type='date'].date-bar,
+.card input[type='date'].date-bar {
+  width: 100%;
 }
 
 .date-pickers{
@@ -5326,6 +5420,10 @@ textarea {
   max-width: 1080px;
 }
 
+.girn-setup-page {
+  max-width: 1100px;
+}
+
 .po-setup-page .app-table-wrap {
   margin: 4px 0 8px;
   border: 1px solid #e2e8f0;
@@ -5348,7 +5446,8 @@ textarea {
   margin: 0;
 }
 
-.po-setup-page .bpo-actions-row {
+.po-setup-page .bpo-actions-row,
+.girn-setup-page .bpo-actions-row {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -5466,6 +5565,11 @@ textarea {
 
 .bpo-panel .req {
   color: #b91c1c;
+  display: inline;
+}
+
+.req{
+  display: inline !important;
 }
 
 .bpo-summary-chip {
@@ -5537,6 +5641,10 @@ textarea {
   background: #fff;
   overflow: hidden;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.bpo-day-card:hover{
+  background: #f3f3fe !important;
 }
 
 .bpo-day-card.is-on {
@@ -6881,7 +6989,6 @@ textarea {
 
 .mes-list-item.is-selected {
   border-color: var(--brand-400);
-  box-shadow: 0 0 0 1px var(--brand-400);
   background: #eff6ff;
 }
 
@@ -9746,6 +9853,7 @@ textarea {
   font: inherit;
   color: inherit;
   text-align: left;
+  background: #eff6ff;
 }
 
 .cr-collapse-toggle:hover {
@@ -9940,6 +10048,313 @@ textarea {
   }
 }
 
+/* Invoice OCR recheck */
+.invoice-recheck-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mes-space-3);
+}
+
+.invoice-recheck-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--mes-space-3);
+  flex-wrap: wrap;
+}
+
+.invoice-recheck-warnings {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.invoice-recheck-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 1.15fr);
+  gap: var(--mes-space-4);
+  align-items: start;
+}
+
+.invoice-recheck-pdf {
+  padding: 0;
+  overflow: hidden;
+  min-height: 640px;
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 16px;
+}
+
+.invoice-recheck-section-title {
+  margin: 0;
+  padding: 14px 16px 0;
+  font-size: 1rem;
+}
+
+.invoice-recheck-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mes-space-3);
+}
+
+.invoice-recheck-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--mes-space-3);
+}
+
+.invoice-recheck-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.8125rem;
+}
+
+.invoice-recheck-subtitle {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.invoice-recheck-lines {
+  overflow-x: auto;
+  margin: 0 -4px;
+  padding: 0 4px;
+}
+
+.invoice-recheck-lines .app-table {
+  width: 100%;
+  min-width: 720px;
+  font-size: 0.875rem;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.invoice-recheck-lines .app-table th,
+.invoice-recheck-lines .app-table td {
+  padding: 12px 10px;
+  vertical-align: middle;
+}
+
+.invoice-recheck-lines .app-table th {
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: #64748b;
+}
+
+.invoice-recheck-lines .app-table th:nth-child(1),
+.invoice-recheck-lines .app-table td:nth-child(1) {
+  min-width: 160px;
+  max-width: 220px;
+}
+
+.invoice-recheck-lines .app-table th:nth-child(2),
+.invoice-recheck-lines .app-table td:nth-child(2) {
+  min-width: 140px;
+  width: 150px;
+}
+
+.invoice-recheck-lines .app-table th:nth-child(3),
+.invoice-recheck-lines .app-table td:nth-child(3) {
+  min-width: 200px;
+}
+
+.invoice-recheck-lines .app-table th:nth-child(4),
+.invoice-recheck-lines .app-table td:nth-child(4),
+.invoice-recheck-lines .app-table th:nth-child(5),
+.invoice-recheck-lines .app-table td:nth-child(5) {
+  min-width: 110px;
+  width: 120px;
+}
+
+.invoice-recheck-lines .app-table th:nth-child(6),
+.invoice-recheck-lines .app-table td:nth-child(6) {
+  min-width: 100px;
+  width: 110px;
+  text-align: right;
+}
+
+.invoice-recheck-line-name {
+  font-weight: 550;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.invoice-recheck-match {
+  display: block;
+  font-size: 0.75rem;
+  margin-top: 4px;
+}
+
+.invoice-recheck-select,
+.invoice-recheck-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 10px;
+  font-size: 0.875rem;
+  line-height: 1.3;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.invoice-recheck-select:focus,
+.invoice-recheck-input:focus {
+  outline: none;
+  border-color: #64748b;
+  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.15);
+}
+
+.invoice-recheck-input-num {
+  max-width: none;
+  width: 100%;
+  min-width: 96px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.invoice-recheck-amount {
+  white-space: nowrap;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.invoice-recheck-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--mes-space-2);
+  flex-wrap: wrap;
+  padding-top: var(--mes-space-2);
+  border-top: 1px solid var(--mes-border, #e5e7eb);
+}
+
+/* Background invoice upload queue */
+.invoice-upload-queue-float {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.invoice-upload-status {
+  background: #fff;
+  border: 1px solid #d7dee8;
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.invoice-upload-status--floating {
+  pointer-events: auto;
+}
+
+.invoice-upload-status--inline {
+  margin-bottom: var(--mes-space-3);
+  box-shadow: none;
+}
+
+.invoice-upload-status.is-ready,
+.invoice-upload-status.is-clickable {
+  cursor: pointer;
+}
+
+.invoice-upload-status.is-ready {
+  border-color: #93c5fd;
+  background: #f8fbff;
+}
+
+.invoice-upload-status.is-error {
+  border-color: #fca5a5;
+  background: #fff7f7;
+}
+
+.invoice-upload-status-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.invoice-upload-status-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.invoice-upload-status-title strong,
+.invoice-upload-status-title span {
+  display: block;
+}
+
+.invoice-upload-status-title strong {
+  font-size: 0.875rem;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+
+.invoice-upload-status-title span {
+  font-size: 0.75rem;
+  margin-top: 2px;
+}
+
+.invoice-upload-status-dismiss {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 6px;
+  line-height: 0;
+}
+
+.invoice-upload-status-dismiss:hover {
+  background: #eef2f7;
+  color: #0f172a;
+}
+
+.invoice-upload-status-error {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #b91c1c;
+}
+
+.invoice-upload-status-hint {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 960px) {
+  .invoice-recheck-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .invoice-recheck-pdf {
+    position: static;
+    min-height: 520px;
+  }
+
+  .invoice-upload-queue-float {
+    right: 12px;
+    bottom: 12px;
+  }
+}
+
 /* Admin factory dashboard */
 .mes-dashboard-kpis {
   display: grid;
@@ -10074,8 +10489,8 @@ textarea {
 .mes-dashboard-kpis .mes-metric-hint {
   font-size: 12px;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  --webkit-line-clamp: 2;
+  --webkit-box-orient: vertical;
   overflow: hidden;
   min-height: 2.4em;
 }
@@ -10551,18 +10966,22 @@ textarea {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 8px 0;
+  padding: 8px 2px;
   border: none;
-  border-bottom: 1px solid var(--border-default);
-  background: none;
+  border: 1px solid var(--border-default);
+  border-radius: 7px;
+  background: #f3f3fe;
   cursor: pointer;
   color: inherit;
   font: inherit;
+
 }
 
-.mes-dash-alert:last-of-type {
-  border-bottom: none;
+.mes-dash-alert:hover{
+  border-color: var(--brand-400);
+  background: #f3f3fe !important;
 }
+
 
 .mes-dash-alert-top {
   display: flex;

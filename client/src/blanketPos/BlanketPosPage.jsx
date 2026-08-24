@@ -92,9 +92,9 @@ export default function BlanketPosPage() {
   return (
     <main className="mes-shell">
       <PageHeader
-        eyebrow="Sourcing"
+        eyebrow=""
         title="Blanket POs"
-        subtitle="Active customer contracts with draw-down progress and locked part pricing."
+        subtitle=""
         actions={
           <button
             type="button"

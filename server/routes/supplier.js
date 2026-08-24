@@ -99,6 +99,36 @@ router.get('/',verifyEmployeeAuth, async(req,res)=>{
     }
 })
 
+router.get('/lookup', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const search = (req.query.search || '').trim();
+    let query = supabase
+      .from('suppliers')
+      .select('id, name, GSTIN')
+      .order('name', { ascending: true })
+      .limit(50);
+
+    if (search) {
+      query = query.or(`name.ilike.%${search}%,GSTIN.ilike.%${search}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return res.json({
+      results: (data || []).map((row) => ({
+        id: row.id,
+        label: row.GSTIN ? `${row.name} · ${row.GSTIN}` : row.name,
+        name: row.name,
+        GSTIN: row.GSTIN,
+      })),
+    });
+  } catch (err) {
+    console.error('Supplier lookup error:', err);
+    return res.status(500).json({ error: 'Unable to search suppliers' });
+  }
+});
+
 router.post('/', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>{
     try {
         const {

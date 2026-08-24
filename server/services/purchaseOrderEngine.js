@@ -163,7 +163,7 @@ async function getPurchaseOrderById(id, { includeMatch = true } = {}) {
   const lines = await loadPoLines(id);
   const { data: girns } = await supabase
     .from('girns')
-    .select('id, girn_number, status, received_date, grand_total, invoice_id')
+    .select('id, girn_number, status, received_date, grand_total, invoice_id, received_by, created_at')
     .eq('purchase_order_id', id)
     .order('created_at', { ascending: false });
 
@@ -177,22 +177,31 @@ async function getPurchaseOrderById(id, { includeMatch = true } = {}) {
     match_exceptions = ex || [];
   }
 
+  const girnReceiverIds = (girns || []).map((g) => g.received_by).filter(Boolean);
   const employeeIds = [
     po.created_by,
     po.edited_by,
     po.sent_by,
+    po.printed_by,
     po.payment_recorded_by,
+    ...girnReceiverIds,
   ].filter(Boolean);
   const nameById = await loadEmployeeNames(employeeIds);
+
+  const enrichedGirns = (girns || []).map((g) => ({
+    ...g,
+    received_by_name: nameById.get(g.received_by) || null,
+  }));
 
   const header = await enrichPoHeader({
     ...po,
     lines,
-    girns: girns || [],
+    girns: enrichedGirns,
     match_exceptions,
     created_by_name: nameById.get(po.created_by) || null,
     edited_by_name: nameById.get(po.edited_by) || null,
     sent_by_name: nameById.get(po.sent_by) || null,
+    printed_by_name: nameById.get(po.printed_by) || null,
     payment_recorded_by_name: nameById.get(po.payment_recorded_by) || null,
   });
   if (header?.supplier_id) {
@@ -1089,7 +1098,7 @@ async function rollupReceivedQtyFromGirn(girnId) {
   }
 }
 
-async function storePurchaseOrderPdf(poId, file) {
+async function storePurchaseOrderPdf(poId, file, actorId) {
   if (!poId) throw httpError('Invalid purchase order id');
   if (!file?.buffer?.length) throw httpError('PDF file is required', 400);
 
@@ -1116,10 +1125,18 @@ async function storePurchaseOrderPdf(poId, file) {
   const publicUrl = publicUrlData?.publicUrl || null;
   if (!publicUrl) throw httpError('Unable to resolve stored PO URL', 500);
 
-  const { error } = await supabase
-    .from('purchase_orders')
-    .update({ pdf_url: publicUrl, updated_at: new Date().toISOString() })
-    .eq('id', poId);
+  const now = new Date().toISOString();
+  const updates = { pdf_url: publicUrl, updated_at: now };
+  if (actorId && !po.printed_at) {
+    updates.printed_at = now;
+    updates.printed_by = actorId;
+  }
+
+  let { error } = await supabase.from('purchase_orders').update(updates).eq('id', poId);
+  if (error && updates.printed_at) {
+    const { printed_at: _p, printed_by: _b, ...pdfOnly } = updates;
+    ({ error } = await supabase.from('purchase_orders').update(pdfOnly).eq('id', poId));
+  }
   if (error) throw error;
 
   return getPurchaseOrderById(poId);

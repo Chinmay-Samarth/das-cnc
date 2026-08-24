@@ -1,35 +1,73 @@
-const Mindee = require('mindee');
+const axios = require('axios');
+const FormData = require('form-data');
 const { createClient } = require('@supabase/supabase-js');
 const { ensureSupplier, supplierPayloadFromOcrDoc } = require('./girnSupplierEngine');
+const { finalizeOcrReview } = require('./invoiceReviewEngine');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
 
-const mindeeClient = new Mindee.Client({ apiKey: process.env.MINDEE_API_KEY });
+const INVOICE_OCR_URL =
+  process.env.INVOICE_OCR_URL || 'http://127.0.0.1:8000/parse';
+const INVOICE_OCR_HEALTH_URL =
+  process.env.INVOICE_OCR_HEALTH_URL ||
+  INVOICE_OCR_URL.replace(/\/parse\/?$/, '/health');
+const INVOICE_OCR_TIMEOUT_MS = Number(process.env.INVOICE_OCR_TIMEOUT_MS) || 300000;
 
-const MODEL_PARAMS = {
-  modelId: '31f0fcc3-093f-401a-abae-ade4a5158e69',
-  rag: true,
-  rawText: false,
-  polygon: false,
-  confidence: false,
+const MONTHS = {
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  may: 5,
+  jun: 6,
+  jul: 7,
+  aug: 8,
+  sep: 9,
+  oct: 10,
+  nov: 11,
+  dec: 12,
 };
 
-function getValue(field) {
-  return field?.value ?? null;
+function emptyToNull(value) {
+  if (value == null) return null;
+  if (typeof value === 'string' && !value.trim()) return null;
+  return value;
 }
 
-function getItems(field) {
-  return Array.isArray(field?.items) ? field.items : [];
+function toNumberOrNull(value) {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
-function extractIrn(doc) {
-  for (const item of getItems(doc.reference_numbers)) {
-    if (typeof item.value === 'string' && item.value.length === 64) {
-      return item.value;
-    }
+/** Normalize OCR date strings (DD-MM-YYYY, DD.MM.YYYY, DD-Mon-YY, ISO) to YYYY-MM-DD. */
+function toIsoDate(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+
+  let match = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (match) {
+    const day = match[1].padStart(2, '0');
+    const month = match[2].padStart(2, '0');
+    return `${match[3]}-${month}-${day}`;
+  }
+
+  match = raw.match(/^(\d{1,2})[./\s-]+([A-Za-z]{3,})[./\s-]+(\d{2,4})$/);
+  if (match) {
+    const month = MONTHS[match[2].slice(0, 3).toLowerCase()];
+    if (!month) return null;
+    let year = Number(match[3]);
+    if (year < 100) year += year >= 70 ? 1900 : 2000;
+    return `${year}-${String(month).padStart(2, '0')}-${match[1].padStart(2, '0')}`;
+  }
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
   }
   return null;
 }
@@ -87,22 +125,51 @@ async function nextRegisterSerial(createdAt) {
   return `A${String(n).padStart(2, '0')}`;
 }
 
-function normalizeLineItems(doc) {
-  return getItems(doc.line_items).map((item) => ({
-    description: item.fields?.description?.value || '',
-    quantity: item.fields?.quantity?.value ?? null,
-    unit: item.fields?.unit?.value || item.fields?.quantity_unit?.value || '',
-    unit_price: item.fields?.unit_price?.value ?? null,
-    total: item.fields?.total_price?.value ?? null,
-  }));
+function normalizeLineItems(ocrResult) {
+  const lines = Array.isArray(ocrResult?.line_items) ? ocrResult.line_items : [];
+  return lines.map((item) => {
+    const description = String(item?.description || '').trim();
+    return {
+      description,
+      scanned_description: description,
+      quantity: toNumberOrNull(item?.quantity),
+      unit: '',
+      unit_price: toNumberOrNull(item?.unit_price),
+      total: toNumberOrNull(item?.total),
+    };
+  });
 }
 
-function normalizeTaxItems(doc) {
-  return getItems(doc.taxes).map((item) => ({
-    rate: item.fields?.rate?.value ?? null,
-    base: item.fields?.base?.value ?? null,
-    amount: item.fields?.amount?.value ?? item.fields?.base?.value ?? null,
-  }));
+function normalizeTaxItems(ocrResult) {
+  const lines = Array.isArray(ocrResult?.tax_lines) ? ocrResult.tax_lines : [];
+  const mapped = lines
+    .map((item) => ({
+      kind: String(item?.kind || '').toUpperCase() || null,
+      rate: toNumberOrNull(item?.rate),
+      base: toNumberOrNull(item?.base),
+      amount: toNumberOrNull(item?.amount),
+    }))
+    .filter((item) => item.amount || item.rate);
+
+  if (mapped.length) return mapped;
+
+  const taxAmount = toNumberOrNull(ocrResult?.totals?.tax_amount);
+  const baseAmount = toNumberOrNull(ocrResult?.totals?.base_amount);
+  if (!taxAmount) return [];
+
+  const gstin = String(ocrResult?.supplier?.gstin || '');
+  const stateCode = gstin.slice(0, 2);
+  const isIntraState = stateCode === '29' || !stateCode;
+
+  if (isIntraState) {
+    const half = Math.round((taxAmount / 2) * 100) / 100;
+    return [
+      { kind: 'CGST', rate: 9, base: baseAmount, amount: half },
+      { kind: 'SGST', rate: 9, base: baseAmount, amount: Math.round((taxAmount - half) * 100) / 100 },
+    ];
+  }
+
+  return [{ kind: 'IGST', rate: 18, base: baseAmount, amount: taxAmount }];
 }
 
 async function updateInvoiceStatus(invoiceId, status) {
@@ -134,8 +201,8 @@ async function getInvoice(invoiceId) {
   return data;
 }
 
-async function resolveSupplier(doc) {
-  const payload = supplierPayloadFromOcrDoc(doc);
+async function resolveSupplier(ocrResult) {
+  const payload = supplierPayloadFromOcrDoc(ocrResult);
   const name = String(payload.name || '').trim();
   const gstin = String(payload.GSTIN || '').trim();
 
@@ -151,12 +218,75 @@ async function resolveSupplier(doc) {
   }
 }
 
-async function uploadInvoiceFile(file) {
-  const fileName = `invoices/${Date.now()}_${file.originalname}`;
-  const inputSource = new Mindee.BufferInput({
-    buffer: file.buffer,
-    filename: fileName,
+/** Soft warm-up so Render cold starts happen before the multipart upload. */
+async function warmInvoiceOcr() {
+  try {
+    await axios.get(INVOICE_OCR_HEALTH_URL, { timeout: 60000 });
+  } catch (err) {
+    console.warn('Invoice OCR health warm-up failed (continuing):', err.message);
+  }
+}
+
+function buildOcrForm(file) {
+  const form = new FormData();
+  const filename = file.originalname || 'invoice.pdf';
+  const mime = file.mimetype || 'application/pdf';
+  form.append('document', file.buffer, {
+    filename,
+    contentType: mime,
   });
+  return form;
+}
+
+function wrapOcrError(err) {
+  const status = err.response?.status;
+  let detail =
+    err.response?.data?.detail ||
+    err.response?.data?.error ||
+    err.message ||
+    'Invoice OCR request failed';
+
+  if (!err.response && (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND')) {
+    detail =
+      `Cannot reach Invoice OCR at ${INVOICE_OCR_URL}. ` +
+      'Start it with: uvicorn app.main:app --host 0.0.0.0 --port 8000';
+  } else if (!err.response && err.code === 'ECONNABORTED') {
+    detail = `OCR request timed out after ${INVOICE_OCR_TIMEOUT_MS}ms`;
+  }
+
+  const wrapped = new Error(
+    typeof detail === 'string' ? detail : JSON.stringify(detail)
+  );
+  wrapped.status = status || 502;
+  return wrapped;
+}
+
+async function parseInvoiceWithCustomOcr(file) {
+  if (!file?.buffer?.length) {
+    throw new Error('Empty invoice file');
+  }
+
+  await warmInvoiceOcr();
+
+  try {
+    const form = buildOcrForm(file);
+    const { data } = await axios.post(INVOICE_OCR_URL, form, {
+      timeout: INVOICE_OCR_TIMEOUT_MS,
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      headers: {
+        ...form.getHeaders(),
+        Accept: 'application/json',
+      },
+    });
+    return data;
+  } catch (err) {
+    throw wrapOcrError(err);
+  }
+}
+
+async function uploadInvoiceFile(file) {
+  const fileName = `invoices/${Date.now()}_${file.originalname || 'invoice.pdf'}`;
 
   const { error: storageError } = await supabase.storage
     .from('invoices')
@@ -178,60 +308,52 @@ async function uploadInvoiceFile(file) {
 
   if (dbError) throw dbError;
 
-  return { invoice, inputSource, publicUrl };
+  return { invoice, file, publicUrl };
 }
 
-async function processInvoiceOCR(invoiceId, inputSource, publicUrl) {
-  const apiResponse = await mindeeClient.enqueueAndGetResult(
-    Mindee.product.Extraction,
-    inputSource,
-    MODEL_PARAMS
-  );
-
-  const doc = apiResponse.rawHttp.inference.result.fields;
+async function processInvoiceOCR(invoiceId, file, publicUrl) {
+  const ocrResult = await parseInvoiceWithCustomOcr(file);
 
   await updateInvoiceStatus(invoiceId, 'saving');
 
-  const supplierId = await resolveSupplier(doc);
-  const lineItems = normalizeLineItems(doc);
-  const taxItems = normalizeTaxItems(doc);
-  const invoiceDate = getValue(doc.date);
-  const dueDate = getValue(doc.due_date);
+  const supplierId = await resolveSupplier(ocrResult);
+  const lineItems = normalizeLineItems(ocrResult);
+  const taxItems = normalizeTaxItems(ocrResult);
+  const invoiceDate = toIsoDate(ocrResult?.invoice?.date);
+  const dueDate = toIsoDate(ocrResult?.invoice?.due_date);
   const existing = await getInvoice(invoiceId);
   const registerSerial =
     existing?.register_serial || (await nextRegisterSerial(existing?.created_at || new Date()));
 
-  const invoiceData = {
-    status: 'pending',
+  const invoiceDraft = {
     file_url: publicUrl,
-    invoice_number: getValue(doc.invoice_number),
+    invoice_number: emptyToNull(ocrResult?.invoice?.number),
     invoice_date: invoiceDate,
     due_date: dueDate,
     credit_period_days: daysBetweenYmd(invoiceDate, dueDate),
     register_serial: registerSerial,
-    base_amount: getValue(doc.total_net),
-    total_amount: getValue(doc.total_amount),
-    tax_amount: getValue(doc.total_tax),
+    base_amount: toNumberOrNull(ocrResult?.totals?.base_amount),
+    total_amount: toNumberOrNull(ocrResult?.totals?.total_amount),
+    tax_amount: toNumberOrNull(ocrResult?.totals?.tax_amount),
     line_items: lineItems,
     tax_items: taxItems,
-    raw_ocr_response: doc,
-    customer_GSTIN: getItems(doc.customer_company_registration)[0]?.fields?.number?.value || null,
-    IRN: extractIrn(doc),
+    raw_ocr_response: ocrResult,
+    customer_GSTIN: null,
+    IRN: emptyToNull(ocrResult?.invoice?.irn),
     supplier_id: supplierId,
   };
 
-  const { error: dbError } = await supabase
-    .from('invoices')
-    .update(invoiceData)
-    .eq('id', invoiceId);
-
-  if (dbError) throw dbError;
+  const reviewResult = await finalizeOcrReview(invoiceId, ocrResult, invoiceDraft);
 
   return {
-    invoice: await getInvoice(invoiceId),
-    fields: doc,
-    lineItems,
+    invoice: reviewResult.invoice,
+    fields: ocrResult,
+    lineItems: reviewResult.invoice?.line_items || lineItems,
     taxItems,
+    needs_review: reviewResult.needs_review,
+    ocr_confidence_level: reviewResult.ocr_confidence_level,
+    warning_count: reviewResult.warning_count,
+    ocr_warnings: reviewResult.ocr_warnings,
   };
 }
 
@@ -239,7 +361,7 @@ async function startInvoiceOCR(file) {
   const uploaded = await uploadInvoiceFile(file);
   const processing = processInvoiceOCR(
     uploaded.invoice.id,
-    uploaded.inputSource,
+    uploaded.file,
     uploaded.publicUrl
   ).catch(async (err) => {
     console.error('Invoice processing error', err);
@@ -258,7 +380,7 @@ async function startInvoiceOCR(file) {
 
 async function extractInvoiceNow(file) {
   const uploaded = await uploadInvoiceFile(file);
-  return processInvoiceOCR(uploaded.invoice.id, uploaded.inputSource, uploaded.publicUrl);
+  return processInvoiceOCR(uploaded.invoice.id, uploaded.file, uploaded.publicUrl);
 }
 
 module.exports = {
@@ -267,4 +389,6 @@ module.exports = {
   processInvoiceOCR,
   startInvoiceOCR,
   updateInvoiceStatus,
+  toIsoDate,
+  parseInvoiceWithCustomOcr,
 };

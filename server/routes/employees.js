@@ -29,11 +29,11 @@ function verifyEmployeeAuth(req, res, next) {
   }
 }
 
-async function uploadFile(employeeId, file) {
+async function uploadEmployeeDocument(employeeId, file, docType = 'photo') {
   if (!file) return null;
 
   const extension = path.extname(file.originalname).toLowerCase() || '.jpg';
-  const filePath = `${employeeId}${extension}`;
+  const filePath = `${employeeId}/${docType}${extension}`;
 
   const { error: uploadError } = await supabase.storage
     .from(STORAGE_BUCKET)
@@ -373,7 +373,8 @@ router.post('/', verifyEmployeeAuth, upload.fields([
       basic_salary: basic_salary || null,
       PA: PA || null,
       allowance: allowance || null,
-      ESI_no
+      PT: PT || null,
+      ESI_no: ESI_no || null,
     };
 
     const { data: newEmployee, error: insertError } = await supabase
@@ -387,36 +388,40 @@ router.post('/', verifyEmployeeAuth, upload.fields([
 
     const createdEmployee = newEmployee[0];
 
-    if(req.file){
-      const photo = req.files?.photo?.[0]
-      const aadhar = req.files?.aadhar?.[0]
-      const marksCard = req.files?.marksCard?.[0]
-      const workExperience  = req.files?.workExperience?.[0]
-      const thumbImpression = req.files?.thumbImpression?.[0]
+    const photo = req.files?.photo?.[0];
+    const aadhar = req.files?.aadhar?.[0];
+    const marksCard = req.files?.marks_card?.[0];
+    const workExperience = req.files?.work_experience?.[0];
+    const thumbImpression = req.files?.thumb_impression?.[0];
 
-      const photoUrl = await uploadFile(createdEmployee.id, photo)
-      const aadharUrl = await uploadFile(createdEmployee.id, aadhar)
-      const markCardUrl = await uploadFile(createdEmployee.id, marksCard)
-      const workExperienceUrl = await uploadFile(createdEmployee.id, workExperience)
-      const thumbExperienceUrl = await uploadFile(createdEmployee.id, thumbImpression)
+    const fileUpdates = {};
+    if (photo) fileUpdates.img_url = await uploadEmployeeDocument(createdEmployee.id, photo, 'photo');
+    if (aadhar) fileUpdates.aadhar_url = await uploadEmployeeDocument(createdEmployee.id, aadhar, 'aadhar');
+    if (marksCard) fileUpdates.marks_card_url = await uploadEmployeeDocument(createdEmployee.id, marksCard, 'marks_card');
+    if (workExperience) {
+      fileUpdates.work_experience_url = await uploadEmployeeDocument(
+        createdEmployee.id,
+        workExperience,
+        'work_experience'
+      );
+    }
+    if (thumbImpression) {
+      fileUpdates.thumb_impression_url = await uploadEmployeeDocument(
+        createdEmployee.id,
+        thumbImpression,
+        'thumb_impression'
+      );
+    }
 
-      const {error: filesUploadError} = await supabase
-      .from('employees')
-      .update({ img_url: photoUrl,
-        aadhar_url: aadharUrl,
-        marks_card_url: markCardUrl,
-        work_experience_url: workExperienceUrl,
-        thumb_impression_url: thumbExperienceUrl
-      })
-      .eq('id', createdEmployee.id)
+    if (Object.keys(fileUpdates).length > 0) {
+      const { error: filesUploadError } = await supabase
+        .from('employees')
+        .update(fileUpdates)
+        .eq('id', createdEmployee.id);
 
-      if (filesUploadError) throw filesUploadError
+      if (filesUploadError) throw filesUploadError;
 
-      createdEmployee.img_url = photoUrl
-      createdEmployee.aadhar_url = aadharUrl
-      createdEmployee.marks_card_url = markCardUrl
-      createdEmployee.work_experience_url = workExperienceUrl
-      createdEmployee.thumb_impression_url = thumbExperienceUrl
+      Object.assign(createdEmployee, fileUpdates);
     }
 
     return res.status(201).json({
@@ -503,39 +508,21 @@ router.put('/:id', verifyEmployeeAuth, upload.fields([
     const workExperience = req.files?.work_experience?.[0];
     const thumbImpression = req.files?.thumb_impression?.[0];
 
-    if (photo) {
-      updatePayload.img_url = await uploadEmployeeDocument(
-        employeeId,
-        photo,
-      );
-    }
-
-    if (aadhar) {
-      updatePayload.aadhar_url = await uploadEmployeeDocument(
-        employeeId,
-        aadhar,
-      );
-    }
-
-    if (marksCard) {
-      updatePayload.marks_card_url = await uploadEmployeeDocument(
-        employeeId,
-        marksCard,
-      );
-    }
-
+    if (photo) updatePayload.img_url = await uploadEmployeeDocument(employeeId, photo, 'photo');
+    if (aadhar) updatePayload.aadhar_url = await uploadEmployeeDocument(employeeId, aadhar, 'aadhar');
+    if (marksCard) updatePayload.marks_card_url = await uploadEmployeeDocument(employeeId, marksCard, 'marks_card');
     if (workExperience) {
       updatePayload.work_experience_url = await uploadEmployeeDocument(
         employeeId,
         workExperience,
-
+        'work_experience'
       );
     }
-
     if (thumbImpression) {
       updatePayload.thumb_impression_url = await uploadEmployeeDocument(
         employeeId,
         thumbImpression,
+        'thumb_impression'
       );
     }
 

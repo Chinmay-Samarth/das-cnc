@@ -1,14 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams, Link, useLocation } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
 import { appAlert } from '../components/dialog';
 import { AlertBanner, PageHeader } from '../components/mes';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Check } from 'lucide-react';
 import EmployeeSelect from './EmployeeSelect';
 import GIRNInvoiceUpload from './GIRNInvoiceUpload';
 import MasterItemSelect from './MasterItemSelect';
 import { CATEGORY_OPTIONS, getCategoryConfig } from './girnCategoryConfig';
+
+const STEPS = [
+  { id: 1, title: 'Scan invoice', hint: 'Confirm receiver and upload' },
+  { id: 2, title: 'Review & register', hint: 'Correct fields, link items, save' },
+];
 
 const EMPTY_ITEM = {
   item_category: 'raw_material',
@@ -65,6 +70,161 @@ function fmt(value) {
 function normalizeDraftItems(items = []) {
   if (!items.length) return [{ ...EMPTY_ITEM }];
   return items.map((item) => calcItem({ ...EMPTY_ITEM, ...item }));
+}
+
+function GirnRegisterPanel({
+  invoice,
+  header,
+  items,
+  employees,
+  user,
+  onChange,
+  onReceivedByChange,
+}) {
+  const [overrideEmployee, setOverrideEmployee] = useState(false);
+  const selectedEmployee = employees.find((e) => String(e.id) === String(header.received_by));
+  const employeeLabel = selectedEmployee
+    ? `${selectedEmployee.full_name}${selectedEmployee.employee_code ? ` (${selectedEmployee.employee_code})` : ''}`
+    : user?.name
+      ? `${user.name}${user.code ? ` (${user.code})` : ''}`
+      : 'Select employee';
+  const grandTotal = items.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
+
+  return (
+    <>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="section-header" style={{ marginBottom: 16 }}>
+          <div>
+            <h2>Register GIRN</h2>
+            <p className="muted">Invoice OCR review is complete. Confirm receipt details and register.</p>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16, marginBottom: 16 }}>
+          <div>
+            <p className="component-detail-label">Supplier</p>
+            <strong>{header.supplier_name || invoice?.suppliers?.name || '—'}</strong>
+          </div>
+          <div>
+            <p className="component-detail-label">Invoice</p>
+            <strong>{invoice?.invoice_number || invoice?.id || '—'}</strong>
+          </div>
+          <div>
+            <p className="component-detail-label">GSTIN</p>
+            <strong>{header.supplier_gstin || '—'}</strong>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 }}>
+          <label>
+            Linked purchase order
+            {header.purchase_order_id ? (
+              <div>
+                <Link to={`/purchase-orders/${header.purchase_order_id}`} className="neutral-button" style={{ display: 'inline-flex', width: 'fit-content' }}>
+                  {header.po_reference || 'Open PO'}
+                </Link>
+              </div>
+            ) : (
+              <input
+                type="text"
+                name="po_reference"
+                value={header.po_reference}
+                onChange={onChange}
+                placeholder="Optional text reference"
+              />
+            )}
+          </label>
+
+          <label>
+            Received Date <span style={{ color: '#b91c1c' }}>*</span>
+            <input
+              type="date"
+              name="received_date"
+              value={header.received_date}
+              onChange={onChange}
+              required
+            />
+          </label>
+
+          <label>
+            CSR
+            <input
+              type="text"
+              name="csr"
+              value={header.csr}
+              onChange={onChange}
+            />
+          </label>
+        </div>
+
+        <div style={{ marginTop: 16 }}>
+          <p className="component-detail-label">Received By</p>
+          {!overrideEmployee ? (
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <strong>{employeeLabel}</strong>
+              <button
+                type="button"
+                className="neutral-button"
+                onClick={() => setOverrideEmployee(true)}
+              >
+                Change employee
+              </button>
+            </div>
+          ) : (
+            <EmployeeSelect value={header.received_by} onChange={onReceivedByChange} />
+          )}
+        </div>
+
+        <label style={{ marginTop: 16 }}>
+          Notes
+          <textarea
+            name="notes"
+            value={header.notes}
+            onChange={onChange}
+            rows={3}
+          />
+        </label>
+      </div>
+
+      <div className="card">
+        <div className="section-header" style={{ marginBottom: 16 }}>
+          <div>
+            <h2>Confirmed line items</h2>
+            <p className="muted">Linked during invoice OCR review. Edit on the invoice if corrections are needed.</p>
+          </div>
+        </div>
+
+        <div className="app-table-wrap">
+          <table className="app-table">
+            <thead>
+              <tr>
+                <th>Description</th>
+                <th>Category</th>
+                <th>Master</th>
+                <th>Qty</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, idx) => (
+                <tr key={idx}>
+                  <td>{item.item_description || item.master_record_label || item.rm_code || '—'}</td>
+                  <td>{getCategoryConfig(item.item_category || 'raw_material').label}</td>
+                  <td>{item.master_record_label || item.raw_material_label || '—'}</td>
+                  <td>{item.quantity || '—'}</td>
+                  <td>₹{fmt(item.total_amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+          <strong>Grand Total: ₹{fmt(grandTotal)}</strong>
+        </div>
+      </div>
+    </>
+  );
 }
 
 function HeaderReview({
@@ -397,18 +557,22 @@ function ItemsReview({ items, onItemChange, onMasterSelect, onCategoryChange, on
 
 export default function CreateGIRNPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const outsourceShipmentId = searchParams.get('outsource_shipment_id') || '';
   const querySupplierId = searchParams.get('supplier_id') || '';
   const queryPoReference = searchParams.get('po_reference') || '';
   const purchaseOrderId = searchParams.get('purchase_order_id') || '';
+  const invoiceIdFromQuery = searchParams.get('invoice_id') || '';
+  const reviewedFlag = searchParams.get('reviewed') || '';
   const isOutsourceReturn = Boolean(outsourceShipmentId);
 
   const [suppliers, setSuppliers] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [invoice, setInvoice] = useState(null);
-  const [step, setStep] = useState('scan');
+  const [invoiceReviewConfirmed, setInvoiceReviewConfirmed] = useState(false);
+  const [step, setStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [outsourceShipment, setOutsourceShipment] = useState(null);
@@ -427,6 +591,82 @@ export default function CreateGIRNPage() {
     purchase_order_id: purchaseOrderId || '',
   });
   const [items, setItems] = useState([{ ...EMPTY_ITEM }]);
+  const reviewLoadedRef = useRef(false);
+
+  const reviewReturnPath = useMemo(() => {
+    const params = new URLSearchParams(searchParams);
+    params.delete('invoice_id');
+    params.delete('reviewed');
+    const qs = params.toString();
+    return qs ? `/girn/create?${qs}` : '/girn/create';
+  }, [searchParams]);
+
+  function applyReviewConfirmed(invoiceData, draftGirn = {}) {
+    setInvoice(invoiceData);
+    setInvoiceReviewConfirmed(true);
+    setSupplierLocked(Boolean(draftGirn.supplier_id || invoiceData?.supplier_id));
+    setHeader((prev) => ({
+      ...prev,
+      invoice_id: draftGirn.invoice_id || invoiceData?.id || prev.invoice_id,
+      supplier_id: draftGirn.supplier_id || invoiceData?.supplier_id || prev.supplier_id,
+      supplier_name: draftGirn.supplier_name || invoiceData?.suppliers?.name || prev.supplier_name,
+      supplier_gstin: draftGirn.supplier_gstin || prev.supplier_gstin,
+      po_reference: prev.po_reference || draftGirn.po_reference || '',
+      received_date: draftGirn.received_date || prev.received_date,
+      received_by: user?.id || draftGirn.received_by || prev.received_by,
+      csr: draftGirn.csr || prev.csr,
+      notes: draftGirn.notes || prev.notes,
+      outsource_shipment_id: prev.outsource_shipment_id || outsourceShipmentId || '',
+      purchase_order_id: prev.purchase_order_id || purchaseOrderId || '',
+    }));
+    if (draftGirn.items?.length) {
+      setItems(normalizeDraftItems(draftGirn.items));
+    } else if (invoiceData?.line_items?.length) {
+      setItems(normalizeDraftItems(invoiceData.line_items.map((line) => ({
+        item_category: line.item_category || 'raw_material',
+        master_record_id: line.master_record_id,
+        master_record_label: line.master_record_label,
+        item_description: line.scanned_description || line.description,
+        quantity: line.quantity,
+        unit_rate: line.unit_price,
+        total_amount: line.total,
+      }))));
+    }
+    setStep(2);
+  }
+
+  useEffect(() => {
+    if (reviewLoadedRef.current) return;
+
+    const state = location.state;
+    if (state?.invoice && (state.invoice.review_status === 'confirmed' || reviewedFlag === '1')) {
+      reviewLoadedRef.current = true;
+      applyReviewConfirmed(state.invoice, state.draft_girn || {});
+      return;
+    }
+
+    if (!invoiceIdFromQuery || reviewedFlag !== '1' || state?.invoice) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/invoices/${invoiceIdFromQuery}`);
+        if (cancelled || !data.invoice) return;
+        if (data.invoice.review_status !== 'confirmed' && data.invoice.status === 'needs_review') {
+          navigate(`/invoices/${invoiceIdFromQuery}/review?context=girn&return=${encodeURIComponent(reviewReturnPath)}`);
+          return;
+        }
+        reviewLoadedRef.current = true;
+        applyReviewConfirmed(data.invoice, {});
+      } catch (err) {
+        if (!cancelled) {
+          setError(err.response?.data?.error || 'Unable to load confirmed invoice.');
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [location.state, invoiceIdFromQuery, reviewedFlag, navigate, reviewReturnPath]);
 
   useEffect(() => {
     api.get('/suppliers').then(({ data }) => setSuppliers(data.suppliers || []));
@@ -454,7 +694,7 @@ export default function CreateGIRNPage() {
         if (draft.items?.length) {
           setItems(normalizeDraftItems(draft.items));
         }
-        setStep('review');
+        setStep(2);
       } catch (err) {
         if (!cancelled) {
           setError(err.response?.data?.error || 'Unable to load PO for GIRN.');
@@ -515,49 +755,6 @@ export default function CreateGIRNPage() {
     () => employees.find((employee) => String(employee.id) === String(header.received_by)),
     [employees, header.received_by]
   );
-
-  function handleExtracted(data) {
-    const draft = data.draft_girn || {};
-    setInvoice(data.invoice || null);
-    api.get('/suppliers').then(({ data: supplierData }) => setSuppliers(supplierData.suppliers || []));
-    setHeader((prev) => ({
-      ...prev,
-      invoice_id: draft.invoice_id || data.invoice?.id || '',
-      supplier_id: supplierLocked
-        ? prev.supplier_id
-        : draft.supplier_id || data.invoice?.supplier_id || prev.supplier_id || '',
-      supplier_name: supplierLocked
-        ? prev.supplier_name
-        : draft.supplier_name || prev.supplier_name || '',
-      supplier_gstin: supplierLocked
-        ? prev.supplier_gstin
-        : draft.supplier_gstin || prev.supplier_gstin || '',
-      po_reference: prev.po_reference || draft.po_reference || '',
-      received_date: draft.received_date || new Date().toISOString().slice(0, 10),
-      received_by: user?.id || draft.received_by || prev.received_by,
-      csr: draft.csr || '',
-      notes: draft.notes || '',
-      outsource_shipment_id: prev.outsource_shipment_id || outsourceShipmentId || '',
-    }));
-    const draftItems = normalizeDraftItems(draft.items);
-    // Keep prefilled component line when OCR returns nothing useful for outsource return
-    if (isOutsourceReturn && draftItems.length === 1 && !draftItems[0].master_record_id && items[0]?.master_record_id) {
-      setItems([
-        calcItem({
-          ...draftItems[0],
-          item_category: 'component',
-          quantity_type: 'number',
-          master_record_id: items[0].master_record_id,
-          master_record_label: items[0].master_record_label,
-          item_description: items[0].item_description || draftItems[0].item_description,
-          quantity: draftItems[0].quantity || items[0].quantity,
-        }),
-      ]);
-    } else {
-      setItems(draftItems);
-    }
-    setStep('review');
-  }
 
   function handleHeaderChange(event) {
     const { name, value } = event.target;
@@ -713,7 +910,7 @@ export default function CreateGIRNPage() {
   }
 
   return (
-    <main className="mes-shell form-page-wide">
+    <main className="mes-shell bpo-setup-page girn-setup-page">
       <PageHeader
         eyebrow={isOutsourceReturn ? 'Outsourcing return' : 'Procurement'}
         title={isOutsourceReturn ? 'GIRN — outsource inward' : 'New GIRN'}
@@ -725,42 +922,34 @@ export default function CreateGIRNPage() {
         actions={
           <button type="button" className="neutral-button" onClick={() => navigate(isOutsourceReturn ? '/production/outsource' : '/girn')}>
             <ArrowLeft size={16} />
-            Back
+            {isOutsourceReturn ? 'Outsource' : 'All GIRNs'}
           </button>
         }
       />
 
-      <section className="mes-card form-page-card">
-        <div style={{ display: 'flex', gap: 8, marginBottom: 28, flexWrap: 'wrap', alignItems: 'center' }}>
-          {['Scan Invoice', 'Review Details', 'Register GIRN'].map((label, idx) => {
-            const currentIdx = step === 'scan' ? 0 : 1;
-            const isActive = idx === currentIdx || (idx === 2 && submitting);
-            const isDone = idx < currentIdx;
-            return (
-              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: isActive || isDone ? 1 : 0.45 }}>
-                <span
-                  style={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: '50%',
-                    background: isActive ? '#1d4ed8' : isDone ? '#16a34a' : '#d1d5db',
-                    color: '#fff',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 13,
-                    fontWeight: 700,
-                  }}
-                >
-                  {isDone ? '✓' : idx + 1}
-                </span>
-                <span style={{ fontSize: 14, fontWeight: isActive ? 700 : 400 }}>{label}</span>
-                {idx < 2 ? <span style={{ color: '#d1d5db' }}>›</span> : null}
-              </div>
-            );
-          })}
-        </div>
+      <nav className="bpo-steps" aria-label="GIRN setup steps">
+        {STEPS.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            className={`bpo-step${step === s.id ? ' is-active' : ''}${step > s.id ? ' is-done' : ''}`}
+            onClick={() => {
+              if (s.id < step) setStep(s.id);
+            }}
+            disabled={s.id > step || submitting}
+          >
+            <span className="bpo-step-num">
+              {step > s.id ? <Check size={14} strokeWidth={3} /> : s.id}
+            </span>
+            <span className="bpo-step-text">
+              <strong>{s.title}</strong>
+              <small>{s.hint}</small>
+            </span>
+          </button>
+        ))}
+      </nav>
 
+      <section className="card bpo-setup-card">
         {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
         {header.purchase_order_id ? (
           <AlertBanner tone="amber">
@@ -772,110 +961,129 @@ export default function CreateGIRNPage() {
           </AlertBanner>
         ) : null}
 
-        {step === 'scan' ? (
-          <div style={{ display: 'flex', flexDirection: 'row', gap: 20 }}>
-            <div className="card">
-              <h2>1. Confirm receiver</h2>
-              <p className="muted">The receiver is taken from the logged-in user. Change it only if needed.</p>
-              <div style={{ marginTop: 12 }}>
-                <p className="employee-detail-label">Received By</p>
-                <strong className='employee-detail-value'>
+        {step === 1 ? (
+          <div className="bpo-panel">
+            <h2>Scan supplier invoice</h2>
+            <p className="muted bpo-lead">
+              Confirm who is receiving the goods, then upload the invoice for OCR extraction.
+            </p>
+
+            <div className="bpo-grid-2">
+              <div>
+                <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>Confirm receiver</h3>
+                <p className="muted" style={{ margin: '0 0 12px' }}>
+                  Taken from the logged-in user. Change only if needed.
+                </p>
+                <p className="component-detail-label">Received by</p>
+                <strong>
                   {selectedEmployee
                     ? `${selectedEmployee.full_name}${selectedEmployee.employee_code ? ` (${selectedEmployee.employee_code})` : ''}`
                     : user?.name
                       ? `${user.name}${user.code ? ` (${user.code})` : ''}`
                       : 'Not selected'}
                 </strong>
-                {/* <div style={{ maxWidth: 360, marginTop: 12 }}>
-                  <EmployeeSelect
-                    value={header.received_by}
-                    onChange={(employeeId) => setHeader((prev) => ({ ...prev, received_by: employeeId }))}
-                    
-                  />
-                </div> */}
               </div>
-            </div>
 
-            <div className="card">
-              <h2>2. Upload scanned invoice</h2>
-              <p className="muted">Mindee will extract supplier, invoice, and line item details for review.</p>
-              <div style={{ marginTop: 16 }}>
+              <div>
+                <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>Upload scanned invoice</h3>
+                <p className="muted" style={{ margin: '0 0 12px' }}>
+                  OCR extracts supplier, invoice, and line item details for review.
+                </p>
                 <GIRNInvoiceUpload
                   disabled={!header.received_by}
-                  onExtracted={handleExtracted}
+                  reviewReturnPath={reviewReturnPath}
                 />
               </div>
             </div>
           </div>
         ) : (
           <>
-            {invoice ? (
-              <div className="card" style={{ marginBottom: 16 }}>
-                <h2>Invoice Added</h2>
-                <p className="muted">
+            {invoice && !invoiceReviewConfirmed ? (
+              <div className="bpo-panel" style={{ marginBottom: 16 }}>
+                <h2>Invoice added</h2>
+                <p className="muted bpo-lead">
                   Invoice {invoice.invoice_number || invoice.id} has been added to the Invoices tab.
                 </p>
                 {invoice.file_url ? (
-                  <a href={invoice.file_url} target="_blank" rel="noreferrer" className="neutral-button" style={{ display: 'inline-flex', marginTop: 8 }}>
+                  <a href={invoice.file_url} target="_blank" rel="noreferrer" className="neutral-button" style={{ display: 'inline-flex' }}>
                     View scanned invoice
                   </a>
                 ) : null}
               </div>
             ) : null}
 
-            <HeaderReview
-              header={header}
-              suppliers={suppliers}
-              employees={employees}
-              user={user}
-              onChange={handleHeaderChange}
-              onSupplierSelect={handleSupplierSelect}
-              supplierLocked={supplierLocked}
-              onReceivedByChange={(employeeId) => setHeader((prev) => ({ ...prev, received_by: employeeId }))}
-            />
+            {invoiceReviewConfirmed ? (
+              <GirnRegisterPanel
+                invoice={invoice}
+                header={header}
+                items={items}
+                employees={employees}
+                user={user}
+                onChange={handleHeaderChange}
+                onReceivedByChange={(employeeId) => setHeader((prev) => ({ ...prev, received_by: employeeId }))}
+              />
+            ) : (
+              <>
+                <HeaderReview
+                  header={header}
+                  suppliers={suppliers}
+                  employees={employees}
+                  user={user}
+                  onChange={handleHeaderChange}
+                  onSupplierSelect={handleSupplierSelect}
+                  supplierLocked={supplierLocked}
+                  onReceivedByChange={(employeeId) => setHeader((prev) => ({ ...prev, received_by: employeeId }))}
+                />
 
-            <ItemsReview
-              items={items}
-              onItemChange={handleItemChange}
-              onMasterSelect={handleMasterSelect}
-              onCategoryChange={handleCategoryChange}
-              onAddItem={addItem}
-              onRemoveItem={removeItem}
-            />
+                <ItemsReview
+                  items={items}
+                  onItemChange={handleItemChange}
+                  onMasterSelect={handleMasterSelect}
+                  onCategoryChange={handleCategoryChange}
+                  onAddItem={addItem}
+                  onRemoveItem={removeItem}
+                />
+              </>
+            )}
 
-            <div style={{ display: 'flex', gap: 8, marginTop: 24, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <div className="bpo-footer">
               <button
                 type="button"
                 className="neutral-button"
-                onClick={() => setStep('scan')}
-                disabled={submitting}
+                onClick={() => setStep(1)}
+                disabled={submitting || invoiceReviewConfirmed}
               >
-                Upload different invoice
+                Back
               </button>
-              <button
-                type="button"
-                className="cancel-button"
-                disabled={submitting}
-                onClick={() => navigate(isOutsourceReturn ? '/production/outsource' : '/girn')}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="primary-button"
-                disabled={!canRegister || submitting}
-                onClick={() => registerGirn(false)}
-              >
-                {submitting ? 'Registering...' : 'Register GIRN'}
-              </button>
-              <button
-                type="button"
-                className="primary-button"
-                disabled={!canRegister || submitting}
-                onClick={() => registerGirn(true)}
-              >
-                {submitting ? 'Submitting...' : 'Register & Submit for Inspection'}
-              </button>
+
+              <div className="bpo-actions-row">
+                <button
+                  type="button"
+                  className="cancel-button"
+                  disabled={submitting}
+                  onClick={() => navigate(isOutsourceReturn ? '/production/outsource' : '/girn')}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={!canRegister || submitting}
+                  onClick={() => registerGirn(false)}
+                >
+                  {submitting ? 'Registering…' : 'Register GIRN'}
+                </button>
+                {!isOutsourceReturn ? (
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={!canRegister || submitting}
+                    onClick={() => registerGirn(true)}
+                  >
+                    {submitting ? 'Submitting…' : 'Register & submit for inspection'}
+                  </button>
+                ) : null}
+              </div>
             </div>
           </>
         )}

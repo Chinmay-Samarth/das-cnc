@@ -41,6 +41,11 @@ async function findSupplierByName(name) {
 async function ensureSupplier(supplierData = {}) {
   const name = clean(supplierData.name || supplierData.supplier_name);
   const gstin = clean(supplierData.GSTIN || supplierData.gstin || supplierData.supplier_gstin);
+  const looksLikeAddress =
+    name &&
+    /district|kanchee|layout|cross|peenya|industrial|fac\.|sipcot/i.test(name) &&
+    !/pvt|ltd|limited|llp|company|works|enterprises/i.test(name);
+  const safeName = looksLikeAddress ? null : name;
 
   if (supplierData.supplier_id || supplierData.id) {
     return supplierData.supplier_id || supplierData.id;
@@ -51,30 +56,49 @@ async function ensureSupplier(supplierData = {}) {
     if (existingByGstin) return existingByGstin;
   }
 
-  if (name) {
-    const existingByName = await findSupplierByName(name);
+  if (safeName) {
+    const existingByName = await findSupplierByName(safeName);
     if (existingByName) return existingByName;
   }
 
-  if (!name && !gstin) {
+  if (!safeName && !gstin) {
     throw new Error('Supplier name or GSTIN is required to create a supplier');
   }
 
   const created = await createSupplierFromInvoice({
-    name: name || `Supplier ${gstin}`,
+    name: safeName || `Supplier ${gstin}`,
     GSTIN: gstin,
     state: clean(supplierData.state || supplierData.supplier_state),
     IFSC: clean(supplierData.IFSC || supplierData.ifsc),
-    account_number: clean(supplierData.account_number) || 'NA',
+    account_number: clean(supplierData.account_number),
     email: clean(supplierData.email),
     billing_address: clean(supplierData.billing_address || supplierData.supplier_billing_address),
-    contact_phone: clean(supplierData.contact_phone),
+    contact_number: clean(supplierData.contact_phone),
   });
 
   return created?.[0]?.id ?? null;
 }
 
 function supplierPayloadFromOcrDoc(doc) {
+  if (!doc || typeof doc !== 'object') return {};
+
+  // Custom Invoice OCR (Paddle) response shape
+  if (doc.supplier && typeof doc.supplier === 'object') {
+    return {
+      name: clean(doc.supplier.name),
+      GSTIN: clean(doc.supplier.gstin),
+      state: clean(doc.supplier.billing_state),
+      IFSC: clean(doc.bank?.ifsc),
+      account_number: clean(doc.bank?.account_number),
+      email: clean(doc.supplier.email),
+      billing_address: clean(
+        doc.supplier.billing_address || doc.supplier.current_address
+      ),
+      contact_phone: clean(doc.supplier.phone),
+    };
+  }
+
+  // Legacy Mindee field shape (older stored raw_ocr_response)
   const payment = Array.isArray(doc?.supplier_payment_details?.items)
     ? doc.supplier_payment_details.items[0]?.fields || {}
     : {};

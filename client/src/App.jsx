@@ -12,11 +12,13 @@ import AddSupplierPage from './suppliers/AddSupplierPage';
 import SupplierDetailsPage from './suppliers/SupplierDetailsPage';
 import HomePage from './home/HomePage';
 import { MastersNavProvider } from './context/MastersNavContext';
+import { InvoiceUploadQueueProvider } from './invoices/InvoiceUploadQueueContext';
 import AppLayout from './components/Layout/AppLayout';
 import ComponentsPage from './pages/ComponentsPage';
 import ComponentDetailPage from './pages/ComponentDetailPage';
 import InvoicesPage from './pages/InvoicesPage';
 import InvoiceDetails from './components/Invoices/InvoiceDetails';
+import InvoiceOcrReviewPage from './invoices/InvoiceOcrReviewPage';
 import CustomersPage from './customers/CustomersPage';
 import CustomerDetailsPage from './customers/CustomerDetailsPage';
 import AddCustomerPage from './customers/AddCustomerPage';
@@ -151,7 +153,9 @@ export default function App() {
           <Route
             element={
               <MastersNavProvider>
-                <AppLayout />
+                <InvoiceUploadQueueProvider>
+                  <AppLayout />
+                </InvoiceUploadQueueProvider>
               </MastersNavProvider>
             }
           >
@@ -176,6 +180,7 @@ export default function App() {
               <Route path="/components" element={<ComponentsPage />} />
               <Route path="/components/:id" element={<ComponentDetailPage />} />
               <Route path="/invoices" element={<InvoicesPage />} />
+              <Route path="/invoices/:id/review" element={<InvoiceOcrReviewPage />} />
               <Route path="/invoices/:id" element={<InvoiceDetails />} />
               <Route path="/sales-invoices" element={<SalesInvoicesPage />} />
               <Route path="/sales-invoices/new" element={<AddSalesInvoiceWizard />} />

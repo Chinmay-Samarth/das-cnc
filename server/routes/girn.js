@@ -5,7 +5,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { resolveGirnItems, validateGirnItem } = require('../services/girnItemResolver');
 const { extractInvoiceNow } = require('../services/invoiceOcrEngine');
 const { ensureSupplier, supplierPayloadFromInvoice } = require('../services/girnSupplierEngine');
-const { classifyLineItems } = require('../services/girnItemClassifier');
+const { buildDraftGirnFromInvoice } = require('../services/girnDraftEngine');
 const { getCategoryConfig, girnNeedsInspection, girnCanAutoApprove } = require('../config/girnCategoryConfig');
 const { applyStockForGirn, rollbackStock } = require('../services/girnStockEngine');
 const { validateGirnInspection } = require('../services/girnInspectionEngine');
@@ -181,47 +181,6 @@ async function postGirnApprovedHooks(girnId) {
     console.error('Tool instance seed failed:', e.message)
   );
   triggerPredictiveReorderEvaluation();
-}
-
-async function buildDraftGirnFromInvoice(invoice, employeeId) {
-  const supplierFields = supplierPayloadFromInvoice(invoice);
-  const baseItems = normalizeOcrGirnItems(invoice.line_items || [], invoice.tax_items || []);
-  const classifications = await classifyLineItems(baseItems);
-
-  const items = baseItems.map((item, idx) => {
-    const cls = classifications[idx] || {};
-    const category = cls.item_category || 'other';
-    const cfg = getCategoryConfig(category);
-
-    return {
-      ...item,
-      item_category: category,
-      master_record_id: cls.master_record_id || null,
-      master_record_label: cls.master_record_label || '',
-      item_code: cls.item_code || item.rm_id || '',
-      item_description: cls.item_description || item.rm_code || '',
-      quantity_type: cls.quantity_type || cfg.quantityType,
-      match_confidence: cls.match_confidence || 'none',
-    };
-  });
-
-  const grandTotal = items.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
-
-  return {
-    invoice_id: invoice.id,
-    supplier_id: supplierFields.supplier_id || '',
-    supplier_name: supplierFields.name || '',
-    supplier_gstin: supplierFields.GSTIN || '',
-    supplier_state: supplierFields.state || '',
-    supplier_billing_address: supplierFields.billing_address || '',
-    received_by: employeeId || '',
-    po_reference: invoice.invoice_number || '',
-    received_date: invoice.invoice_date || new Date().toISOString().slice(0, 10),
-    csr: '',
-    notes: invoice.invoice_number ? `Generated from invoice ${invoice.invoice_number}` : 'Generated from scanned invoice',
-    grand_total: grandTotal || toNumber(invoice.total_amount),
-    items,
-  };
 }
 
 async function resolveGirnSupplier(body) {
@@ -569,12 +528,17 @@ router.post('/extract-invoice', verifyEmployeeAuth, upload.single('invoice'), as
       return res.status(400).json({ error: 'No invoice file uploaded' });
     }
 
-    const { invoice } = await extractInvoiceNow(file);
+    const result = await extractInvoiceNow(file);
+    const invoice = result.invoice;
     const draftGirn = await buildDraftGirnFromInvoice(invoice, req.user?.sub);
 
     return res.json({
       invoice,
       draft_girn: draftGirn,
+      needs_review: result.needs_review,
+      ocr_confidence_level: result.ocr_confidence_level,
+      warning_count: result.warning_count,
+      ocr_warnings: result.ocr_warnings,
     });
   } catch (err) {
     console.dir(err, {depth: null})

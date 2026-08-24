@@ -146,7 +146,7 @@ router.post(
   upload.single('pdf'),
   wrap(async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'PDF file is required' });
-    const purchase_order = await storePurchaseOrderPdf(req.params.id, req.file);
+    const purchase_order = await storePurchaseOrderPdf(req.params.id, req.file, req.user?.sub);
     return res.json({ purchase_order });
   })
 );

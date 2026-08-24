@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { pdf } from '@react-pdf/renderer';
 import api from '../api/client';
-import { formatDisplayDate } from '../utils/dateFormat';
+import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 import { PageHeader, StatusBadge, AlertBanner, ProgressRing } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import InvoicePdfViewer from '../components/Invoices/InvoicePdfViewer';
@@ -203,16 +203,16 @@ export default function PurchaseOrderDetailPage() {
               <>
                 <button
                   type="button"
-                  className="primary-button"
+                  className="mes-btn primary-btn"
                   disabled={busy}
                   onClick={() => navigate(`/purchase-orders/create?id=${id}`)}
                 >
                   <Pencil size={16} />
-                  Edit in wizard
+                  Edit 
                 </button>
                 <button
                   type="button"
-                  className="neutral-button"
+                  className="mes-btn secondary-btn"
                   disabled={busy}
                   onClick={() =>
                     runAction('Split', async () => {
@@ -288,8 +288,8 @@ export default function PurchaseOrderDetailPage() {
       ) : null}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-        <button type="button" className="neutral-button" disabled={busy} onClick={handlePrint}>
-          <Printer size={16} />
+        <button type="button" className="primary-button" disabled={busy} onClick={handlePrint}>
+          <Printer size={16} style={{marginRight: 4}} />
           Print PO
         </button>
         <button type="button" className="neutral-button" disabled={busy} onClick={handleDownload}>
@@ -332,12 +332,81 @@ export default function PurchaseOrderDetailPage() {
         </div>
       </div>
 
-      <p className="muted" style={{ marginBottom: 16 }}>
-        Created by {po.created_by_name || '—'}
-        {po.edited_by_name ? ` · Edited by ${po.edited_by_name}` : ''}
-        {po.sent_by_name ? ` · Ordered by ${po.sent_by_name}` : ''}
-        {po.payment_recorded_by_name ? ` · Payment recorded by ${po.payment_recorded_by_name}` : ''}
-      </p>
+      <section className="mes-card" style={{ padding: 20, marginBottom: 16 }}>
+        <h2 style={{ marginTop: 0, fontSize: '1rem' }}>Audit</h2>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+            gap: 12,
+          }}
+        >
+          <div>
+            <p className="mes-eyebrow">Draft created</p>
+            <p style={{ margin: 0 }}>
+              {po.created_at ? formatDisplayDateTime(po.created_at) : '—'}
+            </p>
+            <p className="muted" style={{ margin: 0 }}>
+              by {po.created_by_name || '—'}
+            </p>
+          </div>
+          <div>
+            <p className="mes-eyebrow">Last edited</p>
+            <p style={{ margin: 0 }}>
+              {po.edited_at ? formatDisplayDateTime(po.edited_at) : 'Not edited'}
+            </p>
+            <p className="muted" style={{ margin: 0 }}>
+              by {po.edited_by_name || '—'}
+            </p>
+          </div>
+          <div>
+            <p className="mes-eyebrow">Printed</p>
+            <p style={{ margin: 0 }}>
+              {po.printed_at ? formatDisplayDateTime(po.printed_at) : 'Not yet'}
+            </p>
+            <p className="muted" style={{ margin: 0 }}>
+              by {po.printed_by_name || '—'}
+            </p>
+          </div>
+          <div>
+            <p className="mes-eyebrow">Order placed</p>
+            <p style={{ margin: 0 }}>
+              {po.sent_at ? formatDisplayDateTime(po.sent_at) : 'Not yet'}
+            </p>
+            <p className="muted" style={{ margin: 0 }}>
+              by {po.sent_by_name || '—'}
+            </p>
+          </div>
+        </div>
+
+        {(po.girns || []).length ? (
+          <div style={{ marginTop: 16 }}>
+            <h3 style={{ fontSize: '0.95rem' }}>GIRN recorded</h3>
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {po.girns.map((g) => (
+                <li key={g.id}>
+                  <Link to={`/girn/${g.id}`}>{g.girn_number}</Link>
+                  {' · '}
+                  {g.status}
+                  {' · '}
+                  {g.received_by_name || '—'}
+                  {' · '}
+                  {g.created_at
+                    ? formatDisplayDateTime(g.created_at)
+                    : g.received_date
+                      ? formatDisplayDate(g.received_date)
+                      : '—'}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <div style={{ marginTop: 16 }}>
+            <h3 style={{ fontSize: '0.95rem' }}>GIRN recorded</h3>
+            <p className="muted" style={{ margin: 0 }}>No GIRN receipts linked yet.</p>
+          </div>
+        )}
+      </section>
 
       <div className="card" style={{ marginBottom: 16 }}>
         <h3 style={{ marginTop: 0 }}>Lines</h3>
@@ -451,6 +520,7 @@ export default function PurchaseOrderDetailPage() {
           </button>
         ) : null}
       </div>
+
       </div>
 
       <section className="mes-card sales-invoice-pdf-card">

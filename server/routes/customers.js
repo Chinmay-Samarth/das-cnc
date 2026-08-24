@@ -123,6 +123,34 @@ router.get('/', verifyEmployeeAuth, async (req, res) => {
   }
 });
 
+router.get('/lookup', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const search = (req.query.search || '').trim();
+    let query = supabase
+      .from('customers')
+      .select('id, name, gstin')
+      .order('name', { ascending: true })
+      .limit(50);
+
+    if (search) {
+      query = query.or(`name.ilike.%${search}%,gstin.ilike.%${search}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const results = (data || []).map((row) => ({
+      id: row.id,
+      label: row.gstin ? `${row.name} · ${row.gstin}` : row.name,
+    }));
+
+    return res.json({ results });
+  } catch (err) {
+    console.error('Customer lookup error:', err);
+    return res.status(500).json({ error: 'Unable to search customers' });
+  }
+});
+
 router.get('/:id', verifyEmployeeAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
