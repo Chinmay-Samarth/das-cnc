@@ -4,7 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../auth/authContext';
 import { appAlert } from '../components/dialog';
 import { AlertBanner, PageHeader } from '../components/mes';
-import { ArrowLeft, Check } from 'lucide-react';
+import { Check } from 'lucide-react';
 import EmployeeSelect from './EmployeeSelect';
 import GIRNInvoiceUpload from './GIRNInvoiceUpload';
 import MasterItemSelect from './MasterItemSelect';
@@ -918,12 +918,6 @@ export default function CreateGIRNPage() {
           isOutsourceReturn
             ? `Upload the supplier invoice for shipment ${outsourceShipment?.shipment_number || header.po_reference || 'OS'}. Registering this GIRN receives the lots and resumes routing.`
             : 'Scan the invoice, review details, then register.'
-        }
-        actions={
-          <button type="button" className="neutral-button" onClick={() => navigate(isOutsourceReturn ? '/production/outsource' : '/girn')}>
-            <ArrowLeft size={16} />
-            {isOutsourceReturn ? 'Outsource' : 'All GIRNs'}
-          </button>
         }
       />
 

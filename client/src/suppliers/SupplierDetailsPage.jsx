@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import ImageLightbox from '../components/shared/ImageLightBox';
-import { Pencil, ArrowLeft } from 'lucide-react';
+import { Pencil } from 'lucide-react';
 import { formatDisplayDate } from '../utils/dateFormat';
 import { AlertBanner, FilePicker, FormActions } from '../components/mes';
 
@@ -185,9 +185,8 @@ export default function SupplierDetailsPage() {
   };
 
   return (
-    <main className="app-shell employee-shell">
+    <main className="mes-shell employee-shell">
       <header className="app-header employee-card">
-        <p onClick={()=> navigate('/suppliers')} style={{cursor: 'pointer'}}><ArrowLeft size={16} style={{marginRight: 4, display: 'inline'}}/>Back to suppliers</p>
         <div className="employee-title-block">
           <div className="">
             <h1>{supplier?.name}</h1>

@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save } from 'lucide-react';
+import { Save } from 'lucide-react';
 import api from '../api/client';
 import { AlertBanner, PageHeader } from '../components/mes';
 import { appConfirm } from '../components/dialog';
@@ -258,16 +258,10 @@ export default function MasterBuilderPage() {
         title={isEdit ? 'Edit master' : 'New master'}
         subtitle="Build the schema as boards (sections) and cards (fields)."
         actions={
-          <>
-            <button type="button" className="neutral-button" onClick={() => navigate(-1)}>
-              <ArrowLeft size={15} />
-              Back
-            </button>
-            <button type="button" className="primary-button" onClick={handleSave} disabled={saving}>
-              <Save size={15} />
-              {saving ? 'Saving…' : isEdit ? 'Update master' : 'Create master'}
-            </button>
-          </>
+          <button type="button" className="primary-button" onClick={handleSave} disabled={saving}>
+            <Save size={15} />
+            {saving ? 'Saving…' : isEdit ? 'Update master' : 'Create master'}
+          </button>
         }
       />
 

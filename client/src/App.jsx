@@ -14,8 +14,6 @@ import HomePage from './home/HomePage';
 import { MastersNavProvider } from './context/MastersNavContext';
 import { InvoiceUploadQueueProvider } from './invoices/InvoiceUploadQueueContext';
 import AppLayout from './components/Layout/AppLayout';
-import ComponentsPage from './pages/ComponentsPage';
-import ComponentDetailPage from './pages/ComponentDetailPage';
 import InvoicesPage from './pages/InvoicesPage';
 import InvoiceDetails from './components/Invoices/InvoiceDetails';
 import InvoiceOcrReviewPage from './invoices/InvoiceOcrReviewPage';
@@ -67,11 +65,15 @@ function PurchaseOrdersListPage() {
   );
 }
 
+function MesLoading() {
+  return <main className="mes-shell mes-loading-shell">Loading…</main>;
+}
+
 function RequireAuth() {
   const { user, loading } = useAuth();
 
   if (loading) {
-    return <main className="app-shell">Loading...</main>;
+    return <MesLoading />;
   }
 
   if (!user) {
@@ -85,7 +87,7 @@ function RequireAdmin() {
   const { loading, hasAccess, defaultHomePath } = useAuth();
 
   if (loading) {
-    return <main className="app-shell">Loading...</main>;
+    return <MesLoading />;
   }
 
   if (!hasAccess('ADMIN')) {
@@ -100,7 +102,7 @@ function RequireFullApp() {
   const { loading, isFloorOnly } = useAuth();
 
   if (loading) {
-    return <main className="app-shell">Loading...</main>;
+    return <MesLoading />;
   }
 
   if (isFloorOnly()) {
@@ -114,7 +116,7 @@ function PublicOnly() {
   const { user, loading, defaultHomePath } = useAuth();
 
   if (loading) {
-    return <main className="app-shell">Loading...</main>;
+    return <MesLoading />;
   }
 
   if (user) {
@@ -137,6 +139,15 @@ function WCCommandRedirect() {
 function CommitmentToCardRedirect() {
   const { id } = useParams();
   return <Navigate to={`/production/cards/${id}`} replace />;
+}
+
+function ComponentRedirect() {
+  return <Navigate to="/masters/component" replace />;
+}
+
+function ComponentDetailRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/masters/component/records/${id}`} replace />;
 }
 
 export default function App() {
@@ -177,8 +188,8 @@ export default function App() {
               <Route path="/suppliers/:id" element={<SupplierDetailsPage />} />
               <Route path="/suppliers/:id/invoices" element={<SupplierDetailsPage />} />
               <Route path="/suppliers/:id/edit" element={<SupplierDetailsPage />} />
-              <Route path="/components" element={<ComponentsPage />} />
-              <Route path="/components/:id" element={<ComponentDetailPage />} />
+              <Route path="/components" element={<ComponentRedirect />} />
+              <Route path="/components/:id" element={<ComponentDetailRedirect />} />
               <Route path="/invoices" element={<InvoicesPage />} />
               <Route path="/invoices/:id/review" element={<InvoiceOcrReviewPage />} />
               <Route path="/invoices/:id" element={<InvoiceDetails />} />

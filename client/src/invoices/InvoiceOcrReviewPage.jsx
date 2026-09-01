@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Check } from 'lucide-react';
+import { Check } from 'lucide-react';
 import api from '../api/client';
 import InvoicePdfViewer from '../components/Invoices/InvoicePdfViewer';
 import { AlertBanner, PageHeader, StatusBadge } from '../components/mes';
@@ -261,12 +261,6 @@ export default function InvoiceOcrReviewPage() {
           eyebrow="Accounts payable"
           title="Processing scanned invoice"
           subtitle="OCR is running in the background. You can leave this page and come back from the status bar."
-          actions={
-            <button type="button" className="mes-btn mes-btn-secondary" onClick={handleCancel}>
-              <ArrowLeft size={16} />
-              Back
-            </button>
-          }
         />
 
         <InvoiceUploadInlineStatus invoiceId={id} />
@@ -301,12 +295,6 @@ export default function InvoiceOcrReviewPage() {
         eyebrow="Accounts payable"
         title="Recheck scanned invoice"
         subtitle="Verify OCR against the PDF, link supplier and master records, then confirm."
-        actions={
-          <button type="button" className="mes-btn mes-btn-secondary" onClick={handleCancel}>
-            <ArrowLeft size={16} />
-            Back
-          </button>
-        }
       />
 
       {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}

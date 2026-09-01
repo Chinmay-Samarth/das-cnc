@@ -4,9 +4,9 @@ import api from '../api/client';
 import { toDisplayTime, toISODateString } from '../attendance/useDailyAttendance';
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 import ImageLightbox from '../components/shared/ImageLightBox';
-import AttendanceGauge from '../components/shared/Attendancegauge';
+import AttendanceGauge from '../components/shared/AttendanceGauge';
 import StatTile from '../components/shared/StatTile';
-import { ArrowLeft, ChevronLeft, ChevronRight, Factory, Pencil, TrendingUp } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Factory, Pencil, TrendingUp } from 'lucide-react';
 import { EmptyState, MetricCard, StatusBadge, TruncatedText, AlertBanner, FilePicker, FormActions } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import FormSearchSelect from '../components/shared/FormSearchSelect';
@@ -507,9 +507,8 @@ export default function EmployeeDetailsPage() {
   // ── render ────────────────────────────────────────────────────────────────
 
   return (
-    <main className="app-shell employee-shell">
+    <main className="mes-shell employee-shell">
       <header className="app-header employee-card">
-        <p onClick={()=> navigate('/employees')} style={{cursor: 'pointer'}}><ArrowLeft size={16} style={{marginRight: 4, display: 'inline'}}/>Back to Employees</p>
         <div className="employee-title-block">
           <div style={{ gridColumn: 'span 2' }}>
             <img

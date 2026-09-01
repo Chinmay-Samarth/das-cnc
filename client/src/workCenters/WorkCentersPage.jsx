@@ -1,15 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
-
-const sortBy = (rows, key, asc) => {
-  return [...rows].sort((a, b) => {
-    const left = String(a[key] ?? '').toLowerCase();
-    const right = String(b[key] ?? '').toLowerCase();
-    if (left === right) return 0;
-    return asc ? (left < right ? -1 : 1) : left > right ? -1 : 1;
-  });
-};
+import { ListPage, EmptyState, StatusBadge } from '../components/mes';
+import { sortBy } from '../utils/listHelpers';
 
 export default function WorkCentersPage() {
   const navigate = useNavigate();
@@ -76,46 +69,36 @@ export default function WorkCentersPage() {
     sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : '';
 
   return (
-    <main className="app-shell employees-page">
-      <header className="app-header">
-        <div className="header-title-block">
-          <p className="eyebrow">Production resources</p>
-          <h1>Work Centers</h1>
-          <p className="muted">
-            Group machines by process (cutting, drilling, etc.) with capacity and cost rates for scheduling.
-          </p>
+    <ListPage
+      eyebrow="Production resources"
+      title="Work Centers"
+      subtitle="Group machines by process with capacity and cost rates for scheduling."
+      error={error}
+      filters={
+        <div className="employees-actions">
+          <input
+            type="search"
+            placeholder="Search work centers..."
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            className="search-input"
+            aria-label="Search work centers"
+          />
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => navigate('/work-centers/add')}
+          >
+            Add Work Center
+          </button>
         </div>
-      </header>
-
-      <section className="card">
-        <div className="section-header employees-header">
-          <div>
-            <h2>Work center list</h2>
-            <p className="muted">Search by code, name, department, or status.</p>
-          </div>
-
-          <div className="employees-actions">
-            <input
-              type="search"
-              placeholder="Search work centers..."
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              className="search-input"
-              aria-label="Search work centers"
-            />
-            <button
-              type="button"
-              className="primary-button"
-              onClick={() => navigate('/work-centers/add')}
-            >
-              Add Work Center
-            </button>
-          </div>
-        </div>
-
+      }
+    >
+      {loading ? <p className="muted">Loading work centers...</p> : null}
+      {!loading && filtered.length === 0 ? (
+        <EmptyState title="No work centers found" description="Try adjusting your search." />
+      ) : (
         <div className="employees-table-wrap">
-          {error ? <p className="error-message">{error}</p> : null}
-          {loading ? <p className="muted">Loading work centers...</p> : null}
           <table className="app-table">
             <thead>
               <tr>
@@ -165,23 +148,16 @@ export default function WorkCentersPage() {
                   <td className="hide-mobile">{wc.speed}</td>
                   <td className="hide-mobile">{wc.efficiency}%</td>
                   <td>
-                    <span className={wc.is_active ? 'status-pill status-active' : 'status-pill status-inactive'}>
+                    <StatusBadge status={wc.is_active ? 'active' : 'inactive'}>
                       {wc.is_active ? 'Active' : 'Inactive'}
-                    </span>
+                    </StatusBadge>
                   </td>
                 </tr>
               ))}
-              {!loading && filtered.length === 0 ? (
-                <tr>
-                  <td colSpan="7" className="muted">
-                    No matching work centers found.
-                  </td>
-                </tr>
-              ) : null}
             </tbody>
           </table>
         </div>
-      </section>
-    </main>
+      )}
+    </ListPage>
   );
 }

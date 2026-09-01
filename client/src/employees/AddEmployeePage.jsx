@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Check } from 'lucide-react';
+import { Check } from 'lucide-react';
 import api from '../api/client';
 import FormSearchSelect from '../components/shared/FormSearchSelect';
 import { AlertBanner, FilePicker, PageHeader } from '../components/mes';
@@ -201,12 +201,6 @@ export default function AddEmployeePage() {
         eyebrow="Workforce"
         title="Add employee"
         subtitle="Set up profile, upload documents, add address and bank details in a few guided steps."
-        actions={
-          <button type="button" className="neutral-button" onClick={() => navigate('/employees')}>
-            <ArrowLeft size={16} />
-            All employees
-          </button>
-        }
       />
 
       <nav className="bpo-steps" aria-label="Setup steps">

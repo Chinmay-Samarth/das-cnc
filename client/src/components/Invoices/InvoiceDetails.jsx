@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft,
   Calendar,
   MapPin,
   Download,
@@ -427,11 +426,6 @@ export default function InvoiceDetails() {
 
   return (
     <div style={styles.pageWrapper}>
-      <button type="button" style={styles.backBtn} onClick={() => navigate('/invoices')}>
-        <ArrowLeft size={14} />
-        Back to invoices
-      </button>
-
       {/* Header */}
       <header style={styles.header}>
         <div style={styles.headerLeft}>

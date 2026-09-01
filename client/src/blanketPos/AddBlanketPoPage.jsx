@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Check, CalendarRange } from 'lucide-react';
+import { Check, CalendarRange } from 'lucide-react';
 import api from '../api/client';
 import ComponentSelect from './ComponentSelect';
 import CustomerSelect from './CustomerSelect';
@@ -248,12 +248,6 @@ export default function AddBlanketPoPage() {
         
         title="New customer contract"
         
-        actions={
-          <button type="button" className="neutral-button" onClick={() => navigate('/blanket-pos')}>
-            <ArrowLeft size={16} />
-            All contracts
-          </button>
-        }
       />
 
       <nav className="bpo-steps" aria-label="Setup steps">

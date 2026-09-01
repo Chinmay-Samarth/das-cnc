@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Check, Printer, Truck } from 'lucide-react';
+import { Check, Printer, Truck } from 'lucide-react';
 import api from '../api/client';
 import { PageHeader, AlertBanner } from '../components/mes';
 import { appAlert } from '../components/dialog';
@@ -271,16 +271,6 @@ export default function AddSalesInvoiceWizard() {
         eyebrow="Sales invoice"
         title="Invoice for dispatch"
         subtitle={preview?.lot?.lot_number ? `Lot ${preview.lot.lot_number}` : ''}
-        actions={
-          <button
-            type="button"
-            className="neutral-button"
-            onClick={() => navigate('/production/dispatch')}
-          >
-            <ArrowLeft size={15} />
-            Dispatch queue
-          </button>
-        }
       />
 
       <nav className="bpo-steps" aria-label="Invoice steps">

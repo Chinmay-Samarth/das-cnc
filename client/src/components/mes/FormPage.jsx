@@ -1,4 +1,3 @@
-import { ArrowLeft } from 'lucide-react';
 import PageHeader from './PageHeader';
 import AlertBanner from './AlertBanner';
 
@@ -6,8 +5,6 @@ export default function FormPage({
   eyebrow,
   title,
   subtitle,
-  onBack,
-  backLabel = 'Back',
   error,
   children,
   wide = false,
@@ -18,14 +15,6 @@ export default function FormPage({
         eyebrow={eyebrow}
         title={title}
         subtitle={subtitle}
-        actions={
-          onBack ? (
-            <button type="button" className="neutral-button" onClick={onBack}>
-              <ArrowLeft size={16} />
-              {backLabel}
-            </button>
-          ) : null
-        }
       />
       {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
       <section className="mes-card form-page-card">{children}</section>

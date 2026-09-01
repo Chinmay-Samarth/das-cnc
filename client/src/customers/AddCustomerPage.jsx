@@ -54,8 +54,6 @@ export default function AddCustomerPage() {
       eyebrow="Customers"
       title="Add customer"
       subtitle="Create a new customer record."
-      onBack={() => navigate('/customers')}
-      backLabel="All customers"
       error={error}
     >
       <form onSubmit={handleSubmit}>

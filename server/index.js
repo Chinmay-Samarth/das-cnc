@@ -35,7 +35,6 @@ app.use((req, res, next) => {
 app.use('/api/auth', require('./login'));
 app.use('/api/attendance', require('./routes/attendance'));
 app.use('/api/employees', require('./routes/employees'));
-app.use('/api/components', require('./routes/components'));
 app.use('/api/masters', require('./routes/masters/boms'));
 app.use('/api/masters', require('./routes/masters/inspectionPlans'));
 app.use('/api/masters', require('./routes/masters/activityFlows'));

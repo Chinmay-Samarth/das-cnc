@@ -4,6 +4,8 @@ import { Plus } from 'lucide-react';
 import api from '../api/client';
 import { useSocket } from '../socket/socketContext';
 import { formatDisplayDate } from '../utils/dateFormat';
+import { ListPage, EmptyState, StatusBadge } from '../components/mes';
+import { sortBy } from '../utils/listHelpers';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val)) ? '—' : Number(val).toLocaleString('en-IN');
@@ -15,38 +17,12 @@ const STATUS_LABELS = {
   rejected: 'Rejected',
 };
 
-const STATUS_STYLES = {
-  draft: { background: '#f3f4f6', color: '#374151' },
-  pending_inspection: { background: '#fef9c3', color: '#854d0e' },
-  approved: { background: '#dcfce7', color: '#166534' },
-  rejected: { background: '#fee2e2', color: '#991b1b' },
-};
-
-function StatusBadge({ status }) {
-  const style = STATUS_STYLES[status] || STATUS_STYLES.draft;
-  return (
-    <span
-      style={{
-        ...style,
-        padding: '2px 10px',
-        borderRadius: 99,
-        fontSize: 12,
-        fontWeight: 600,
-        whiteSpace: 'nowrap',
-      }}
-    >
-      {STATUS_LABELS[status] || status}
-    </span>
-  );
+function girnStatusTone(status) {
+  if (status === 'approved') return 'completed';
+  if (status === 'rejected') return 'overdue';
+  if (status === 'pending_inspection') return 'running';
+  return 'draft';
 }
-
-const sortBy = (rows, key, asc) =>
-  [...rows].sort((a, b) => {
-    const l = String(a[key] ?? '').toLowerCase();
-    const r = String(b[key] ?? '').toLowerCase();
-    if (l === r) return 0;
-    return asc ? (l < r ? -1 : 1) : l > r ? -1 : 1;
-  });
 
 export default function GIRNListPage() {
   const navigate = useNavigate();
@@ -106,138 +82,122 @@ export default function GIRNListPage() {
     sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : '';
 
   return (
-    <main className="app-shell employees-page">
-      <header className="app-header">
-        <div className="header-title-block">
-          <p className="eyebrow">Procurement</p>
-          <h1>Goods Inwards Receipt Notes</h1>
-          <p className="muted">Track and manage all incoming raw material receipts.</p>
+    <ListPage
+      eyebrow="Procurement"
+      title="Goods Inwards Receipt Notes"
+      subtitle="Track and manage all incoming raw material receipts."
+      error={error}
+      filters={
+        <div className="employees-actions">
+          <input
+            type="search"
+            placeholder="Search GIRNs..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="search-input"
+            aria-label="Search GIRNs"
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="search-input"
+            style={{ width: 'auto' }}
+          >
+            <option value="all">All statuses</option>
+            <option value="draft">Draft</option>
+            <option value="pending_inspection">Pending Inspection</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => navigate('/girn/create')}
+          >
+            <Plus size={16} />
+            New GIRN
+          </button>
         </div>
-      </header>
-
-      <section className="card">
-        <div className="section-header employees-header">
-          <div>
-            <h2>GIRN list</h2>
-            <p className="muted">Click a row to view full details.</p>
-          </div>
-
-          <div className="employees-actions">
-            <input
-              type="search"
-              placeholder="Search GIRNs..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="search-input"
-              aria-label="Search GIRNs"
-            />
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="search-input"
-              style={{ width: 'auto' }}
-            >
-              <option value="all">All statuses</option>
-              <option value="draft">Draft</option>
-              <option value="pending_inspection">Pending Inspection</option>
-              <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
-            </select>
-            <button
-              type="button"
-              className="primary-button"
-              onClick={() => navigate('/girn/create')}
-            >
-              <Plus size={16} />
-              New GIRN
-            </button>
-          </div>
-        </div>
-
-        {error ? <p className="error-message">{error}</p> : null}
-        {loading ? <p className="muted">Loading GIRNs...</p> : null}
-
-        {!loading && (
-          <div className="employees-table-wrap">
-            <table className="app-table">
-              <thead>
-                <tr>
-                  <th onClick={() => handleSort('girn_number')}>
-                    GIRN Number<span className="sort-indicator">{sortArrow('girn_number')}</span>
-                  </th>
-                  <th onClick={() => handleSort('supplier_name')}>
-                    Supplier<span className="sort-indicator">{sortArrow('supplier_name')}</span>
-                  </th>
-                  <th onClick={() => handleSort('purchase_order_number')}>
-                    Purchase order<span className="sort-indicator">{sortArrow('purchase_order_number')}</span>
-                  </th>
-                  <th className="hide-mobile" onClick={() => handleSort('received_date')}>
-                    Received Date<span className="sort-indicator">{sortArrow('received_date')}</span>
-                  </th>
-                  <th className="hide-mobile" onClick={() => handleSort('received_by_name')}>
-                    Received By<span className="sort-indicator">{sortArrow('received_by_name')}</span>
-                  </th>
-                  <th onClick={() => handleSort('grand_total')}>
-                    Grand Total<span className="sort-indicator">{sortArrow('grand_total')}</span>
-                  </th>
-                  <th onClick={() => handleSort('status')}>
-                    Status<span className="sort-indicator">{sortArrow('status')}</span>
-                  </th>
+      }
+    >
+      {loading ? <p className="muted">Loading GIRNs...</p> : null}
+      {!loading && filtered.length === 0 ? (
+        <EmptyState title="No GIRNs found" description="Create a new GIRN or adjust your filters." />
+      ) : (
+        <div className="employees-table-wrap">
+          <table className="app-table">
+            <thead>
+              <tr>
+                <th onClick={() => handleSort('girn_number')}>
+                  GIRN Number<span className="sort-indicator">{sortArrow('girn_number')}</span>
+                </th>
+                <th onClick={() => handleSort('supplier_name')}>
+                  Supplier<span className="sort-indicator">{sortArrow('supplier_name')}</span>
+                </th>
+                <th onClick={() => handleSort('purchase_order_number')}>
+                  Purchase order<span className="sort-indicator">{sortArrow('purchase_order_number')}</span>
+                </th>
+                <th className="hide-mobile" onClick={() => handleSort('received_date')}>
+                  Received Date<span className="sort-indicator">{sortArrow('received_date')}</span>
+                </th>
+                <th className="hide-mobile" onClick={() => handleSort('received_by_name')}>
+                  Received By<span className="sort-indicator">{sortArrow('received_by_name')}</span>
+                </th>
+                <th onClick={() => handleSort('grand_total')}>
+                  Grand Total<span className="sort-indicator">{sortArrow('grand_total')}</span>
+                </th>
+                <th onClick={() => handleSort('status')}>
+                  Status<span className="sort-indicator">{sortArrow('status')}</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((g) => (
+                <tr
+                  key={g.id}
+                  role="button"
+                  tabIndex={0}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => navigate(`/girn/${g.id}`)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') navigate(`/girn/${g.id}`);
+                  }}
+                >
+                  <td>
+                    <strong>{g.girn_number}</strong>
+                  </td>
+                  <td>{g.supplier_name || '—'}</td>
+                  <td>
+                    {g.purchase_order_id ? (
+                      <Link
+                        to={`/purchase-orders/${g.purchase_order_id}`}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {g.purchase_order_number || g.po_reference || 'Open PO'}
+                      </Link>
+                    ) : (
+                      g.po_reference || '—'
+                    )}
+                  </td>
+                  <td className="hide-mobile">{formatDisplayDate(g.received_date)}</td>
+                  <td className="hide-mobile">
+                    {g.received_by_name || '—'}
+                    {g.received_by_code ? (
+                      <div className="table-subtext">{g.received_by_code}</div>
+                    ) : null}
+                  </td>
+                  <td>₹{fmt(g.grand_total)}</td>
+                  <td>
+                    <StatusBadge status={girnStatusTone(g.status)}>
+                      {STATUS_LABELS[g.status] || g.status}
+                    </StatusBadge>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {filtered.map((g) => (
-                  <tr
-                    key={g.id}
-                    role="button"
-                    tabIndex={0}
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => navigate(`/girn/${g.id}`)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') navigate(`/girn/${g.id}`);
-                    }}
-                  >
-                    <td>
-                      <strong>{g.girn_number}</strong>
-                    </td>
-                    <td>{g.supplier_name || '—'}</td>
-                    <td>
-                      {g.purchase_order_id ? (
-                        <Link
-                          to={`/purchase-orders/${g.purchase_order_id}`}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {g.purchase_order_number || g.po_reference || 'Open PO'}
-                        </Link>
-                      ) : (
-                        g.po_reference || '—'
-                      )}
-                    </td>
-                    <td className="hide-mobile">{formatDisplayDate(g.received_date)}</td>
-                    <td className="hide-mobile">
-                      {g.received_by_name || '—'}
-                      {g.received_by_code ? (
-                        <div className="table-subtext">{g.received_by_code}</div>
-                      ) : null}
-                    </td>
-                    <td>₹{fmt(g.grand_total)}</td>
-                    <td>
-                      <StatusBadge status={g.status} />
-                    </td>
-                  </tr>
-                ))}
-                {filtered.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="muted">
-                      No GIRNs found.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </main>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </ListPage>
   );
 }

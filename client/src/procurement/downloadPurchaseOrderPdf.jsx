@@ -1,6 +1,7 @@
 import { pdf } from '@react-pdf/renderer';
 import api from '../api/client';
 import PurchaseOrderPdfDocument from './PurchaseOrderPdfDocument';
+import { downloadBlob, openPrintDialog } from '../utils/downloadPdf';
 
 function pdfFileName(po) {
   return (po?.po_number || `draft-${po?.id || 'po'}`).replace(/[/\\]/g, '-');
@@ -36,44 +37,6 @@ async function generatePoPdf(po) {
   return { blob, stored };
 }
 
-function openPrintDialog(blob) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(blob);
-    const iframe = document.createElement('iframe');
-    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:none;';
-    iframe.src = url;
-    document.body.appendChild(iframe);
-
-    let cleaned = false;
-    const cleanup = () => {
-      if (cleaned) return;
-      cleaned = true;
-      if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
-      URL.revokeObjectURL(url);
-    };
-
-    iframe.onload = () => {
-      setTimeout(() => {
-        try {
-          iframe.contentWindow?.focus();
-          iframe.contentWindow?.addEventListener?.('afterprint', cleanup, { once: true });
-          iframe.contentWindow?.print();
-          setTimeout(cleanup, 120000);
-          resolve();
-        } catch (err) {
-          cleanup();
-          reject(err);
-        }
-      }, 250);
-    };
-
-    iframe.onerror = () => {
-      cleanup();
-      reject(new Error('Unable to open print dialog'));
-    };
-  });
-}
-
 export async function regeneratePurchaseOrderPdf(po) {
   const company = po?.company || (await loadCompany());
   const blob = await pdf(<PurchaseOrderPdfDocument po={po} company={company} />).toBlob();
@@ -88,14 +51,7 @@ export async function printPurchaseOrderPdf(po) {
 
 export async function downloadPurchaseOrderPdf(po) {
   const { blob, stored } = await generatePoPdf(po);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${pdfFileName(po)}.pdf`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  downloadBlob(blob, `${pdfFileName(po)}.pdf`);
   return stored;
 }
 

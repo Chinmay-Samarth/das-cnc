@@ -1080,8 +1080,6 @@ function ManagerMyToday({ floorOnly, navigate }) {
           icon={UserCheck}
           title="Work center managers only"
           description="You are not assigned as manager on any work center. Ask an admin to set you as WC Manager on the Operators tab."
-          actionLabel="Back to home"
-          onAction={() => navigate('/production/today')}
         />
       </main>
     );

@@ -69,8 +69,6 @@ export default function CompanySettingsPage() {
       eyebrow="Sales invoices"
       title="Company settings"
       subtitle="Seller details and invoice prefix used for new invoices."
-      onBack={() => navigate('/sales-invoices')}
-      backLabel="All invoices"
       error={error}
     >
       {loading ? (

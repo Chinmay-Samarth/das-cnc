@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Gauge, Hash, Package, RefreshCw, Target } from 'lucide-react';
+import { Gauge, Hash, Package, RefreshCw, Target } from 'lucide-react';
 import api from '../api/client';
 import { formatDueLabel } from '../blanketPos/scheduleLabels';
 import { useSocket } from '../socket/socketContext';
@@ -201,8 +201,6 @@ export default function ProductionCardTrackingPage() {
         <EmptyState
           title="Card not found"
           description={error}
-          actionLabel="Back to production"
-          onAction={() => navigate('/production')}
         />
       </main>
     );
@@ -239,14 +237,6 @@ export default function ProductionCardTrackingPage() {
         actions={
           <>
             <StatusBadge status={card?.status} />
-            <button
-              type="button"
-              className="mes-btn mes-btn-secondary"
-              onClick={() => navigate(-1)}
-            >
-              <ArrowLeft size={16} />
-              Back
-            </button>
             <button
               type="button"
               className="mes-btn mes-btn-secondary"

@@ -64,25 +64,7 @@ function statusTone(status) {
   return status || 'pending';
 }
 
-function sortBy(rows, key, asc) {
-  return [...rows].sort((a, b) => {
-    if (key === 'total_amount') {
-      const left = Number(a.total_amount) || 0;
-      const right = Number(b.total_amount) || 0;
-      return asc ? left - right : right - left;
-    }
-
-    const getValue = (row) =>
-      key === 'supplier_name'
-        ? row.suppliers?.name ?? row.supplier_name ?? ''
-        : row[key] ?? '';
-
-    const left = String(getValue(a)).toLowerCase();
-    const right = String(getValue(b)).toLowerCase();
-    if (left === right) return 0;
-    return asc ? (left < right ? -1 : 1) : left > right ? -1 : 1;
-  });
-}
+import { sortBy } from '../utils/listHelpers';
 
 async function readExportError(err) {
   const data = err.response?.data;
@@ -160,7 +142,11 @@ export default function InvoicesPage() {
         .includes(query);
     });
 
-    return sortBy(matches, sortKey, sortAsc);
+    return sortBy(matches, sortKey, sortAsc, (row) => {
+      if (sortKey === 'total_amount') return Number(row.total_amount) || 0;
+      if (sortKey === 'supplier_name') return row.suppliers?.name ?? row.supplier_name ?? '';
+      return row[sortKey] ?? '';
+    });
   }, [invoices, search, statusFilter, sortKey, sortAsc]);
 
   const handleSort = (key) => {
@@ -243,25 +229,6 @@ export default function InvoicesPage() {
 
   return (
     <main className="mes-shell">
-      {isAdmin() ? (
-        <div className="mrd-tabs" style={{ marginBottom: 16 }}>
-          <button
-            type="button"
-            className={`mrd-tab${pageTab === 'invoices' ? ' is-active' : ''}`}
-            onClick={() => setPageTab('invoices')}
-          >
-            Vendor Invoices
-          </button>
-          <button
-            type="button"
-            className={`mrd-tab${pageTab === 'purchase-orders' ? ' is-active' : ''}`}
-            onClick={() => setPageTab('purchase-orders')}
-          >
-            Purchase Orders
-          </button>
-        </div>
-      ) : null}
-
       {pageTab === 'purchase-orders' && isAdmin() ? (
         <PurchaseOrdersTab />
       ) : (

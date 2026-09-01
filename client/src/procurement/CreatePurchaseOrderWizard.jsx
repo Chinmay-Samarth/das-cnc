@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Check, Printer, Send, Download, Trash2, FileText } from 'lucide-react';
+import { Check, Printer, Send, Download, Trash2, FileText } from 'lucide-react';
 import api from '../api/client';
 import { PageHeader, AlertBanner, EmptyState, StatusBadge } from '../components/mes';
 import { appAlert } from '../components/dialog';
@@ -396,12 +396,6 @@ export default function CreatePurchaseOrderWizard() {
         eyebrow="Procurement"
         title={po?.po_number ? `Draft ${po.po_number}` : 'New purchase order'}
         subtitle="Select demand, lock the supplier, print the PO, then send it."
-        actions={
-          <button type="button" className="neutral-button" onClick={() => navigate('/purchase-orders')}>
-            <ArrowLeft size={16} />
-            All POs
-          </button>
-        }
       />
 
       <nav className="bpo-steps" aria-label="Purchase order steps">

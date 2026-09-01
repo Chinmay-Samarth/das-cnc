@@ -3,6 +3,7 @@ import { Link, Outlet } from 'react-router-dom';
 import { useAuth } from '../../auth/authContext';
 import Sidebar from './Sidebar';
 import GlobalSearch from './GlobalSearch';
+import GlobalBackButton from './GlobalBackButton';
 import NotificationBell from './NotificationBell';
 import InvoiceUploadQueueStatus from '../../invoices/InvoiceUploadQueueStatus';
 
@@ -53,12 +54,15 @@ export default function AppLayout() {
       </aside>
 
       <div className="app-main">
-        {floorOnly ? null : (
-          <div className="app-top-chrome">
-            <GlobalSearch />
-            <NotificationBell />
-          </div>
-        )}
+        <div className="app-top-chrome">
+          <GlobalBackButton />
+          {floorOnly ? null : (
+            <>
+              <GlobalSearch />
+              <NotificationBell />
+            </>
+          )}
+        </div>
         <Outlet />
       </div>
 

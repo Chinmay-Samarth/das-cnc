@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
-  ArrowLeft,
   Pencil,
   Trash2,
   Users,
@@ -363,12 +362,8 @@ export default function WorkCenterDetailsPage() {
   };
 
   return (
-    <main className="app-shell employee-shell">
+    <main className="mes-shell employee-shell">
       <header className="app-header employee-card">
-        <p onClick={() => navigate('/work-centers')} style={{ cursor: 'pointer' }}>
-          <ArrowLeft size={16} style={{ marginRight: 4, display: 'inline' }} />
-          Back to work centers
-        </p>
         <div className="employee-title-block">
           <div>
             <h1>{workCenter?.name || 'Work Center'}</h1>

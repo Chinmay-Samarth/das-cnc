@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import { GIRN_CATEGORIES } from '../girn/girnCategoryConfig';
 import StatTile from '../components/shared/StatTile';
+import { ListPage, EmptyState } from '../components/mes';
 import { useSocket } from '../socket/socketContext';
 import { formatDisplayDateTime } from '../utils/dateFormat';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
@@ -123,16 +124,13 @@ export default function StockListPage() {
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
 
   return (
-    <main className="app-shell employees-page">
-      <header className="app-header">
-        <div className="header-title-block">
-          <p className="eyebrow">Inventory</p>
-          <h1>Stock</h1>
-          <p className="muted">Current balances by item and lot. Click a row for movement history.</p>
-        </div>
-      </header>
-
-      <section className="card summary-single-card" style={{ marginBottom: 16 }}>
+    <ListPage
+      eyebrow="Inventory"
+      title="Stock"
+      subtitle="Current balances by item and lot. Click a row for movement history."
+      error={error}
+    >
+      <section className="summary-single-card" style={{ marginBottom: 16, padding: 0, border: 'none', background: 'transparent' }}>
         <h2 style={{ marginTop: 0 }}>By category</h2>
         <div className="inventory-metrics-grid">
           {CATEGORY_OPTIONS.map(({ value, label }) => {
@@ -167,40 +165,37 @@ export default function StockListPage() {
         </div>
       </section>
 
-      <section className="card">
-        <div className="section-header employees-header">
-          <div>
-            <h2>Stock list</h2>
-            <p className="muted">{total} row{total === 1 ? '' : 's'}</p>
-          </div>
-          <div className="employees-actions">
-            <input
-              type="search"
-              placeholder="Search items..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="search-input"
-              aria-label="Search stock"
-            />
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="search-input"
-              style={{ width: 'auto' }}
-            >
-              <option value="all">All categories</option>
-              {CATEGORY_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
+      <div className="list-page-filters">
+        <div className="employees-actions">
+          <input
+            type="search"
+            placeholder="Search items..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="search-input"
+            aria-label="Search stock"
+          />
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="search-input"
+            style={{ width: 'auto' }}
+          >
+            <option value="all">All categories</option>
+            {CATEGORY_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
         </div>
+      </div>
 
-        {error ? <p className="error-message">{error}</p> : null}
-        {loading ? <p className="muted">Loading stock...</p> : null}
+      {loading ? <p className="muted">Loading stock...</p> : null}
 
-        {!loading && (
-          <div className="employees-table-wrap">
+      {!loading && rows.length === 0 ? (
+        <EmptyState title="No stock rows found" description="Try adjusting your search or category filter." />
+      ) : !loading ? (
+        <>
+        <div className="employees-table-wrap">
             <table className="app-table">
               <thead>
                 <tr>
@@ -248,15 +243,9 @@ export default function StockListPage() {
                     <td className="hide-mobile">{formatDate(row.last_movement_at)}</td>
                   </tr>
                 ))}
-                {rows.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="muted">No stock rows found.</td>
-                  </tr>
-                ) : null}
               </tbody>
             </table>
           </div>
-        )}
 
         {!loading && totalPages > 1 ? (
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 16 }}>
@@ -281,7 +270,8 @@ export default function StockListPage() {
             </button>
           </div>
         ) : null}
-      </section>
-    </main>
+        </>
+      ) : null}
+    </ListPage>
   );
 }

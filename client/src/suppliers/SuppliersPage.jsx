@@ -1,15 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
-
-const sortBy = (rows, key, asc) => {
-  return [...rows].sort((a, b) => {
-    const left = String(a[key] || '').toLowerCase();
-    const right = String(b[key] || '').toLowerCase();
-    if (left === right) return 0;
-    return asc ? (left < right ? -1 : 1) : left > right ? -1 : 1;
-  });
-};
+import { ListPage, EmptyState } from '../components/mes';
+import { sortBy } from '../utils/listHelpers';
 
 export default function SuppliersPage() {
   const navigate = useNavigate();
@@ -76,42 +69,33 @@ export default function SuppliersPage() {
   };
 
   return (
-    <main className="app-shell employees-page">
-      <header className="app-header">
-        <div className="header-title-block">
-          <p className="eyebrow">Vendor management</p>
-          <h1>Suppliers</h1>
-          <p className="muted">Search, sort, and browse supplier records from one place.</p>
+    <ListPage
+      eyebrow="Vendor management"
+      title="Suppliers"
+      subtitle="Search, sort, and browse supplier records from one place."
+      error={error}
+      filters={
+        <div className="employees-actions">
+          <input
+            type="search"
+            placeholder="Search suppliers..."
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            className="search-input"
+            aria-label="Search suppliers"
+          />
+          <button type="button" className="primary-button" onClick={() => navigate('/suppliers/add')}>
+            Add Supplier
+          </button>
         </div>
-      </header>
-
-      <section className="card">
-        <div className="section-header employees-header">
-          <div>
-            <h2>Supplier list</h2>
-            <p className="muted">Use the search field to filter names, GSTIN, contacts, or bank details.</p>
-          </div>
-
-          <div className="employees-actions">
-            <input
-              type="search"
-              placeholder="Search suppliers..."
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              className="search-input"
-              aria-label="Search suppliers"
-            />
-            <button type="button" className="primary-button" onClick={() => navigate('/suppliers/add')}>
-              Add Supplier
-            </button>
-          </div>
-        </div>
-
-
+      }
+    >
+      {loading ? <p className="muted">Loading suppliers...</p> : null}
+      {!loading && filteredSuppliers.length === 0 ? (
+        <EmptyState title="No suppliers found" description="Try adjusting your search." />
+      ) : (
         <div className="employees-table-wrap">
           <table className="app-table">
-            {error ? <p className="error-message">{error}</p> : null}
-            {loading ? <p className="muted">Loading suppliers...</p> : null}
             <thead>
               <tr>
                 <th onClick={() => handleSort('name')}>
@@ -147,7 +131,6 @@ export default function SuppliersPage() {
                 >
                   <td>
                     <strong>{supplier.name}</strong>
-                    {/* <div className="table-subtext">{supplier.billing_address || supplier.official_address || 'No address saved'}</div> */}
                   </td>
                   <td>{supplier.GSTIN || '--'}</td>
                   <td className="hide-mobile">
@@ -161,17 +144,10 @@ export default function SuppliersPage() {
                   </td>
                 </tr>
               ))}
-              {!loading && filteredSuppliers.length === 0 ? (
-                <tr>
-                  <td colSpan="6" className="muted">
-                    No matching suppliers found.
-                  </td>
-                </tr>
-              ) : null}
             </tbody>
           </table>
         </div>
-      </section>
-    </main>
+      )}
+    </ListPage>
   );
 }

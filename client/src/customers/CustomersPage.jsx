@@ -1,15 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
-
-const sortBy = (rows, key, asc) => {
-  return [...rows].sort((a, b) => {
-    const left = String(a[key] || '').toLowerCase();
-    const right = String(b[key] || '').toLowerCase();
-    if (left === right) return 0;
-    return asc ? (left < right ? -1 : 1) : left > right ? -1 : 1;
-  });
-};
+import { ListPage, EmptyState } from '../components/mes';
+import { sortBy } from '../utils/listHelpers';
 
 export default function CustomersPage() {
   const navigate = useNavigate();
@@ -76,49 +69,34 @@ export default function CustomersPage() {
     }
   };
 
-  const sortIndicator = (key) => {
-    if (sortKey !== key) return '';
-    return sortAsc ? ' ASC' : ' DESC';
-  };
-
   return (
-    <main className="app-shell employees-page">
-      <header className="app-header">
-        <div className="header-title-block">
-          <p className="eyebrow">Customer management</p>
-          <h1>Customers</h1>
-          <p className="muted">Search, sort, and browse customer records from one place.</p>
+    <ListPage
+      eyebrow="Customer management"
+      title="Customers"
+      subtitle="Search, sort, and browse customer records from one place."
+      error={error}
+      filters={
+        <div className="employees-actions">
+          <input
+            type="search"
+            placeholder="Search customers..."
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            className="search-input"
+            aria-label="Search customers"
+          />
+          <button type="button" className="primary-button" onClick={() => navigate('/customers/add')}>
+            Add Customer
+          </button>
         </div>
-      </header>
-
-      <section className="card">
-        <div className="section-header employees-header">
-          <div>
-            <h2>Customer list</h2>
-            <p className="muted">Use the search field to filter names, GSTIN, contacts, or bank details.</p>
-          </div>
-
-          <div className="employees-actions">
-            <input
-              type="search"
-              placeholder="Search customers..."
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              className="search-input"
-              aria-label="Search customers"
-            />
-            <button type="button" className="primary-button" onClick={() => navigate('/customers/add')}>
-              Add Customer
-            </button>
-          </div>
-        </div>
-
-        
-
+      }
+    >
+      {loading ? <p className="muted">Loading customers...</p> : null}
+      {!loading && filteredCustomers.length === 0 ? (
+        <EmptyState title="No customers found" description="Try adjusting your search." />
+      ) : (
         <div className="employees-table-wrap">
           <table className="app-table">
-            {error ? <p className="error-message">{error}</p> : null}
-            {loading ? <p className="muted">Loading customers...</p> : null}
             <thead>
               <tr>
                 <th onClick={() => handleSort('name')}>
@@ -168,17 +146,10 @@ export default function CustomersPage() {
                   </td>
                 </tr>
               ))}
-              {!loading && filteredCustomers.length === 0 ? (
-                <tr>
-                  <td colSpan="5" className="muted">
-                    No matching customers found.
-                  </td>
-                </tr>
-              ) : null}
             </tbody>
           </table>
         </div>
-      </section>
-    </main>
+      )}
+    </ListPage>
   );
 }

@@ -16,7 +16,6 @@
     "@tailwindcss/vite": "^4.3.0",
     "@xyflow/react": "^12.11.2",
     "axios": "^1.17.0",
-    "clsx": "^2.1.0",
     "date-fns": "^3.3.1",
     "gantt-task-react": "^0.3.9",
     "lucide-react": "^1.22.0",

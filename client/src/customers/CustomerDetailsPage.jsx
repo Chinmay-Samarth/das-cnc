@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil } from 'lucide-react';
+import { Pencil } from 'lucide-react';
 import api from '../api/client';
 import { formatDisplayDateTime } from '../utils/dateFormat';
-import { AlertBanner, FormActions } from '../components/mes';
+import { AlertBanner, FormActions, PageHeader } from '../components/mes';
 
 const emptyFormData = {
   name: '',
@@ -123,44 +123,35 @@ export default function CustomerDetailsPage() {
   };
 
   return (
-    <main className="app-shell employee-shell">
-      <header className="app-header employee-card">
-        <p onClick={()=> navigate('/customers')} style={{cursor: 'pointer'}}><ArrowLeft size={16} style={{marginRight: 4, display: 'inline'}}/>Back to customers</p>
-        <div className="employee-title-block">
-          <div className="">
-            <h1>{customer?.name}</h1>
-            <p className="muted">{customer?.gstin}</p>
-          </div>
-          <div className="employee-top-bar">
-            <button
-            type="button"
-            className={'neutral-button'}
-            onClick={() => setTab('edit')}
-          >
-            < Pencil size={16} style={{marginRight: 4, display: "inline"}}/>Edit
+    <main className="mes-shell">
+      <PageHeader
+        title={customer?.name || 'Customer'}
+        subtitle={customer?.gstin || ''}
+        actions={
+          <button type="button" className="neutral-button" onClick={() => setTab('edit')}>
+            <Pencil size={16} />
+            Edit
           </button>
-          </div>
-        </div>
+        }
+      />
 
-        <div className="pill-tabs">
-          <button
-            type="button"
-            className={`pill-tab ${tab === 'details' ? 'pill-tab-active' : ''}`}
-            onClick={() => {setTab('details')}}
-            aria-selected = {tab === 'details'}
-            role = 'tab'
-          >
-            Details
-          </button>
-        </div>
-      </header>
+      <div className="pill-tabs" style={{ marginBottom: 16 }}>
+        <button
+          type="button"
+          className={`pill-tab ${tab === 'details' ? 'pill-tab-active' : ''}`}
+          onClick={() => { setTab('details'); }}
+          aria-selected={tab === 'details'}
+          role="tab"
+        >
+          Details
+        </button>
+      </div>
 
-      
-      <section className="card employee-main">
+      <section className="mes-card employee-main">
         {loading ? (
           <p className="muted">Loading customer details...</p>
         ) : error ? (
-          <p className="error-message">{error}</p>
+          <AlertBanner tone="danger">{error}</AlertBanner>
         ) : !customer ? (
           <p className="muted">Customer not found.</p>
         ) : tab === 'details' ? (

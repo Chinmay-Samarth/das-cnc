@@ -71,8 +71,6 @@ export default function AddWorkCenterPage() {
       eyebrow="Production"
       title="Add work center"
       subtitle="Create a work center, then assign machines on the detail page."
-      onBack={() => navigate('/work-centers')}
-      backLabel="All work centers"
       error={error}
     >
       <form onSubmit={handleSubmit}>

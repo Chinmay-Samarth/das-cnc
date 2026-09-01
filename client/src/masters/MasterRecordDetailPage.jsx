@@ -9,7 +9,7 @@ import { isInspectableMasterSlug } from './inspectableMasterSlugs'
 import { isStockableMasterSlug } from './stockableMasterSlugs'
 import { isBomsMasterSlug } from './bomsMasterSlugs'
 import { isRoutableMasterSlug } from './routableMasterSlugs'
-import { ArrowLeft, Pencil } from 'lucide-react'
+import { Pencil } from 'lucide-react'
 import { formatDisplayDate } from '../utils/dateFormat'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -392,7 +392,7 @@ export default function MasterRecordDetailPage() {
   // ── Skeleton ────────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="app-shell employee-shell">
+      <div className="mes-shell employee-shell">
         <div className="card" style={{ display: 'grid', gap: 16, padding: 32 }}>
           <div className="skeleton" style={{ height: 32, width: '40%', borderRadius: 8 }} />
           <div className="skeleton" style={{ height: 44, width: '60%', borderRadius: 10 }} />
@@ -404,7 +404,7 @@ export default function MasterRecordDetailPage() {
 
   if (error) {
     return (
-      <div className="app-shell employee-shell">
+      <div className="mes-shell employee-shell">
         <div className="card" style={{ color: '#dc2626', display: 'flex', gap: 10, alignItems: 'center' }}>
           <i className="ti ti-alert-circle" style={{ fontSize: 20 }} />
           {error}
@@ -425,11 +425,10 @@ export default function MasterRecordDetailPage() {
   const recordTitle          = getRecordTitle(schema, flatValues)
 
   return (
-    <div className="app-shell employee-shell">
+    <div className="mes-shell employee-shell">
 
       {/* ── Page header ── */}
       <header className="app-header employee-card">
-          <p onClick={()=> navigate(`/masters/${slug}`)} style={{cursor: 'pointer'}}><ArrowLeft size={16} style={{marginRight: 4, display: 'inline'}}/>Back to {slug}</p>
         <div className="employee-title-block">
           <div className="">
             <h1 className="">{recordTitle || master.name}</h1>

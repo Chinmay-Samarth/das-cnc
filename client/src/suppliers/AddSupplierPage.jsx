@@ -58,8 +58,6 @@ export default function AddSupplierPage() {
       eyebrow="Vendors"
       title="Add supplier"
       subtitle="Create a new supplier record."
-      onBack={() => navigate('/suppliers')}
-      backLabel="All suppliers"
       error={error}
     >
       <form onSubmit={handleSubmit}>

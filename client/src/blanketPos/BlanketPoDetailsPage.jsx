@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  ArrowLeft,
   Package,
   CalendarRange,
   Truck,
@@ -425,14 +424,6 @@ export default function BlanketPoDetailsPage() {
 
         actions={
           <>
-            <button
-              type="button"
-              className="mes-btn mes-btn-secondary"
-              onClick={() => navigate('/blanket-pos')}
-            >
-              <ArrowLeft size={16} />
-              All contracts
-            </button>
             {blanket?.status === 'draft' || blanket?.status === 'on_hold' ? (
               <button
                 type="button"

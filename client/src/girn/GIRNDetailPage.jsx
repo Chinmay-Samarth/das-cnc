@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, FileText } from 'lucide-react';
+import { FileText } from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
 import { useSocket } from '../socket/socketContext';
 import { getCategoryConfig, requiresInspection } from './girnCategoryConfig';
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
+import { PageHeader, StatusBadge, AlertBanner } from '../components/mes';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val))
@@ -19,28 +20,11 @@ const STATUS_LABELS = {
   rejected: 'Rejected',
 };
 
-const STATUS_STYLES = {
-  draft: { background: '#f3f4f6', color: '#374151' },
-  pending_inspection: { background: '#fef9c3', color: '#854d0e' },
-  approved: { background: '#dcfce7', color: '#166534' },
-  rejected: { background: '#fee2e2', color: '#991b1b' },
-};
-
-function StatusBadge({ status }) {
-  const style = STATUS_STYLES[status] || STATUS_STYLES.draft;
-  return (
-    <span
-      style={{
-        ...style,
-        padding: '3px 12px',
-        borderRadius: 99,
-        fontSize: 13,
-        fontWeight: 600,
-      }}
-    >
-      {STATUS_LABELS[status] || status}
-    </span>
-  );
+function girnStatusTone(status) {
+  if (status === 'approved') return 'completed';
+  if (status === 'rejected') return 'overdue';
+  if (status === 'pending_inspection') return 'running';
+  return 'draft';
 }
 
 function DetailItem({ label, value }) {
@@ -121,7 +105,9 @@ function OverviewTab({ girn, onAction, actionLoading, canReview }) {
         <DetailItem label="Grand Total" value={`₹${fmt(girn.grand_total)}`} />
         <div>
           <p className="component-detail-label">Status</p>
-          <StatusBadge status={girn.status} />
+          <StatusBadge status={girnStatusTone(girn.status)}>
+            {STATUS_LABELS[girn.status] || girn.status}
+          </StatusBadge>
         </div>
         {girn.notes ? <DetailItem label="Notes" value={girn.notes} /> : null}
         {girn.status === 'approved' && approverLabel ? (
@@ -702,48 +688,42 @@ export default function GIRNDetailPage() {
   const items = girn?.items || [];
 
   return (
-    <main className="app-shell employee-shell">
-      <header className="app-header employee-card">
-        <p onClick={()=> navigate('/girn')} style={{cursor: 'pointer'}}><ArrowLeft size={16} style={{marginRight: 4, display: 'inline'}}/>Back to GIRN</p>
-        <div className="header-title-block">
-          <p className="eyebrow">Procurement</p>
-          <h1>{girn ? girn.girn_number : 'GIRN Detail'}</h1>
-          {girn ? (
-            <p className="muted">{girn.supplier_name} · {formatDisplayDate(girn.received_date)}</p>
-          ) : null}
-        </div>
-        <div className="pill-tabs">
-          {['overview', 'items', 'inspection'].map((t) => (
-            <button
-              key={t}
-              type="button"
-              className={`pill-tab ${tab === t ? 'pill-tab-active' : ''}`}
-              onClick={() => setTab(t)}
-              aria-selected = {tab === t}
-              role = 'tab'
-            >
-              {t.charAt(0).toUpperCase() + t.slice(1)}
-              {t === 'items' && items.length > 0 ? (
-                <span className="count-chip" style={{ marginLeft: 6 }}>
-                  {items.length}
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-      </header>
+    <main className="mes-shell">
+      <PageHeader
+        eyebrow="Procurement"
+        title={girn ? girn.girn_number : 'GIRN Detail'}
+        subtitle={girn ? `${girn.supplier_name} · ${formatDisplayDate(girn.received_date)}` : ''}
+      />
 
-      <section className="card form-card">
-        {/* Tabs */}
+      <div className="pill-tabs" style={{ marginBottom: 16 }}>
+        {['overview', 'items', 'inspection'].map((t) => (
+          <button
+            key={t}
+            type="button"
+            className={`pill-tab ${tab === t ? 'pill-tab-active' : ''}`}
+            onClick={() => setTab(t)}
+            aria-selected={tab === t}
+            role="tab"
+          >
+            {t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === 'items' && items.length > 0 ? (
+              <span className="count-chip" style={{ marginLeft: 6 }}>
+                {items.length}
+              </span>
+            ) : null}
+          </button>
+        ))}
+      </div>
 
+      <section className="mes-card form-card">
         {actionError ? (
-          <p className="error-message" style={{ marginBottom: 16 }}>{actionError}</p>
+          <AlertBanner tone="danger">{actionError}</AlertBanner>
         ) : null}
 
         {loading ? (
           <p className="muted">Loading GIRN...</p>
         ) : error ? (
-          <p className="error-message">{error}</p>
+          <AlertBanner tone="danger">{error}</AlertBanner>
         ) : !girn ? (
           <p className="muted">GIRN not found.</p>
         ) : tab === 'overview' ? (

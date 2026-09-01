@@ -2,30 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UserPlus } from 'lucide-react';
 import api from '../api/client';
+import { ListPage, EmptyState } from '../components/mes';
+import { sortBy, getVisiblePages } from '../utils/listHelpers';
 
 const PLACEHOLDER_AVATAR = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect fill="%23E5E7EB" width="100%25" height="100%25"/><text x="50%25" y="54%25" dominant-baseline="middle" text-anchor="middle" font-size="48" fill="%23717A83" font-family="system-ui, sans-serif">?</text></svg>';
 const RECORDS_PAGE_SIZE = 10;
-
-const sortBy = (rows, key, asc) => {
-  return [...rows].sort((a, b) => {
-    const left = String(a[key] || '').toLowerCase();
-    const right = String(b[key] || '').toLowerCase();
-    if (left === right) return 0;
-    return asc ? (left < right ? -1 : 1) : left > right ? -1 : 1;
-  });
-};
-
-function getVisiblePages(currentPage, totalPages) {
-  if (totalPages <= 5) {
-    return Array.from({ length: totalPages }, (_, index) => index + 1);
-  }
-
-  const pages = new Set([1, totalPages, currentPage]);
-  if (currentPage > 1) pages.add(currentPage - 1);
-  if (currentPage < totalPages) pages.add(currentPage + 1);
-
-  return [...pages].sort((a, b) => a - b);
-}
 
 export default function EmployeesPage() {
   const navigate = useNavigate();
@@ -112,59 +93,51 @@ export default function EmployeesPage() {
   };
 
   return (
-    <main className="app-shell employees-page">
-      <header className="app-header">
-        <div className="header-title-block">
-          <p className="eyebrow">Workforce management</p>
-          <h1>Employees</h1>
-          <p className="muted">Search, sort, and browse employee details from one place.</p>
-        </div>
-      </header>
-
-      <section className="card">
-        <div className="section-header employees-header">
-          <div>
-            <h2>Employee list</h2>
-            <p className="muted">Use the search field to filter names, codes, roles, or departments.</p>
+    <ListPage
+      eyebrow="Workforce management"
+      title="Employees"
+      subtitle="Search, sort, and browse employee details from one place."
+      error={error}
+      filters={
+        <div className="employees-actions">
+          <div className="mes-view-toggle" role="group" aria-label="Employee status">
+            {[
+              { id: 'active', label: 'Active' },
+              { id: 'inactive', label: 'Inactive' },
+              { id: 'all', label: 'All' },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                className={`mes-view-toggle-btn${statusFilter === opt.id ? ' is-active' : ''}`}
+                onClick={() => setStatusFilter(opt.id)}
+              >
+                {opt.label}
+              </button>
+            ))}
           </div>
-
-          <div className="employees-actions">
-            <div className="mes-view-toggle" role="group" aria-label="Employee status">
-              {[
-                { id: 'active', label: 'Active' },
-                { id: 'inactive', label: 'Inactive' },
-                { id: 'all', label: 'All' },
-              ].map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  className={`mes-view-toggle-btn${statusFilter === opt.id ? ' is-active' : ''}`}
-                  onClick={() => setStatusFilter(opt.id)}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-            <input
-              type="search"
-              placeholder="Search employees..."
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              className="search-input"
-              aria-label="Search employees"
-            />
-            <button type="button" className="primary-button" onClick={() => navigate('/employees/add')}>
-              <UserPlus size={16} style={{display: 'inline', marginRight: 4}}/>Add Employee
-            </button>
-          </div>
+          <input
+            type="search"
+            placeholder="Search employees..."
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            className="search-input"
+            aria-label="Search employees"
+          />
+          <button type="button" className="primary-button" onClick={() => navigate('/employees/add')}>
+            <UserPlus size={16} style={{ display: 'inline', marginRight: 4 }} />
+            Add Employee
+          </button>
         </div>
-
-        
-
+      }
+    >
+      {loading ? <p className="muted">Loading employees...</p> : null}
+      {!loading && filteredEmployees.length === 0 ? (
+        <EmptyState title="No employees found" description="Try adjusting your search or status filter." />
+      ) : (
+        <>
         <div className="employees-table-wrap">
           <table className="app-table">
-            {error ? <p className="error-message">{error}</p> : null}
-            {loading ? <p className="muted" style={{padding: 10, marginTop: 10}}>Loading employees...</p> : null}
             <thead>
               <tr>
                 <th onClick={() => handleSort('full_name')}>
@@ -225,17 +198,10 @@ export default function EmployeesPage() {
                   </td>
                 </tr>
               ))}
-              {!loading && filteredEmployees.length === 0 ? (
-                <tr>
-                  <td colSpan="6" className="muted">
-                    No matching employees found.
-                  </td>
-                </tr>
-              ) : null}
             </tbody>
           </table>
         </div>
-        {!loading && !error && filteredEmployees.length > 0 ? (
+        {!loading && filteredEmployees.length > 0 ? (
           <div className="attendance-pagination" style={{ marginTop: '16px' }}>
             <span className="attendance-page-summary">
               Showing {(recordsPage - 1) * RECORDS_PAGE_SIZE + 1} to {Math.min(recordsPage * RECORDS_PAGE_SIZE, filteredEmployees.length)} of {filteredEmployees.length} employees
@@ -279,7 +245,8 @@ export default function EmployeesPage() {
             ) : null}
           </div>
         ) : null}
-      </section>
-    </main>
+        </>
+      )}
+    </ListPage>
   );
 }

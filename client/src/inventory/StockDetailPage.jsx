@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import api from '../api/client';
-import { ArrowLeft } from 'lucide-react';
 import { useSocket } from '../socket/socketContext';
 import { formatDisplayDateTime } from '../utils/dateFormat';
+import { PageHeader, AlertBanner } from '../components/mes';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val)) ? '—' : Number(val).toLocaleString('en-IN');
@@ -14,7 +14,6 @@ function formatDate(iso) {
 
 export default function StockDetailPage() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const { subscribe } = useSocket();
   const [stock, setStock] = useState(null);
   const [ledger, setLedger] = useState([]);
@@ -65,31 +64,21 @@ export default function StockDetailPage() {
     : null;
 
   return (
-    <main className="app-shell employee-shell">
-      <header className="app-header employee-card">
-        <div className="header-title-block">
-          <p
-            onClick={() => navigate('/stock')}
-            style={{ cursor: 'pointer' }}
-          >
-            <ArrowLeft size={16} style={{ marginRight: 4, display: 'inline' }} />
-            Back to Stock
-          </p>
-          <p className="eyebrow">Inventory</p>
-          <h1>{stock?.item_label || 'Stock detail'}</h1>
-          {stock ? (
-            <p className="muted">
-              {stock.category_label} · Lot {stock.lot_number || '—'} · {fmt(stock.current_stock)} {stock.unit}
-            </p>
-          ) : null}
-        </div>
-      </header>
+    <main className="mes-shell">
+      <PageHeader
+        eyebrow="Inventory"
+        title={stock?.item_label || 'Stock detail'}
+        subtitle={stock ? `${stock.category_label || stock.item_category}${stock.lot_number ? ` · Lot ${stock.lot_number}` : ''}` : ''}
+      />
 
-      <section className="card employee-main">
-        {loading ? <p className="muted">Loading...</p> : null}
-        {error ? <p className="error-message">{error}</p> : null}
-
-        {!loading && stock ? (
+      <section className="mes-card form-card">
+        {loading ? (
+          <p className="muted">Loading stock detail...</p>
+        ) : error ? (
+          <AlertBanner tone="danger">{error}</AlertBanner>
+        ) : !stock ? (
+          <p className="muted">Stock not found.</p>
+        ) : (
           <>
             <div className="employee-detail-grid" style={{ marginBottom: 24, borderBottom: '' }}>
               <div>
@@ -190,7 +179,7 @@ export default function StockDetailPage() {
               </div>
             ) : null}
           </>
-        ) : null}
+        )}
       </section>
     </main>
   );

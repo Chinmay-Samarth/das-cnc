@@ -5,9 +5,11 @@ import { appAlert } from '../components/dialog';
 import useDailyAttendance, { toDisplayTime, toISODateString } from './useDailyAttendance';
 import { formatDisplayDate } from '../utils/dateFormat';
 import { useNavigate } from 'react-router-dom';
-import AttendanceGauge from '../components/shared/Attendancegauge';
+import AttendanceGauge from '../components/shared/AttendanceGauge';
 import StatTile from '../components/shared/StatTile';
 import { Download, ChevronLeft, ChevronRight, RefreshCw, UserX, List } from 'lucide-react';
+import { PageHeader } from '../components/mes';
+import { getVisiblePages } from '../utils/listHelpers';
 
 const RECORDS_PAGE_SIZE = 10;
 const ABSENTEES_PREVIEW = 4;
@@ -39,18 +41,6 @@ function formatRecordStatus(status) {
 
 function getCheckInClass(status) {
   return status === 'LATE' ? 'check-in-late' : 'check-in-ontime';
-}
-
-function getVisiblePages(currentPage, totalPages) {
-  if (totalPages <= 5) {
-    return Array.from({ length: totalPages }, (_, index) => index + 1);
-  }
-
-  const pages = new Set([1, totalPages, currentPage]);
-  if (currentPage > 1) pages.add(currentPage - 1);
-  if (currentPage < totalPages) pages.add(currentPage + 1);
-
-  return [...pages].sort((a, b) => a - b);
 }
 
 export default function AttendancePage() {
@@ -230,40 +220,38 @@ export default function AttendancePage() {
   }
 
   return (
-    <main className="app-shell ">
-      <header className="app-header">
-        <div className="attendance-header">
-          <div className="header-title-block">
-            <p className="eyebrow">DasCNC Workforce Console</p>
-            <h1>Attendance Operations</h1>
-            <p className="muted">Shift-wise monitoring for {daily?.date ? formatDisplayDate(daily.date) : 'today'}</p>
-          </div>
+    <main className="mes-shell">
+      <PageHeader
+        eyebrow="DasCNC Workforce Console"
+        title="Attendance Operations"
+        subtitle={`Shift-wise monitoring for ${daily?.date ? formatDisplayDate(daily.date) : 'today'}`}
+        actions={
           <div className="btn-corner">
-            <div className="date-controls w-50" style={{marginTop:8, display:'flex', gap:0, alignItems:'center'}}>
-              <button type="button" className="date-pickers" onClick={prevDay} aria-label="Previous day"><ChevronLeft size={16}/></button>
+            <div className="date-controls w-50" style={{ marginTop: 8, display: 'flex', gap: 0, alignItems: 'center' }}>
+              <button type="button" className="date-pickers" onClick={prevDay} aria-label="Previous day"><ChevronLeft size={16} /></button>
               <input
                 type="date"
                 value={selectedDate || ''}
                 onChange={(e) => handleDateChange(e.target.value)}
                 aria-label="Select date"
-                className='datebar'
+                className="datebar"
                 max={toISODateString(new Date())}
-                />
-              <button type="button" className=" date-pickers" onClick={nextDay} aria-label="Next day"><ChevronRight size={16}/></button>
+              />
+              <button type="button" className="date-pickers" onClick={nextDay} aria-label="Next day"><ChevronRight size={16} /></button>
             </div>
             <button type="button" className="primary-button" onClick={goToToday} aria-label="Today">Today</button>
             <button
               type="button"
-              className="neutral-button "
+              className="neutral-button"
               onClick={downloadAttendanceExcel}
               disabled={loading || isExporting}
             >
-              <Download size={16} style={{display: 'inline'}}/>
-              <span style={{marginLeft: '4px'}}>{isExporting ? 'Preparing File...' : 'Export to XLS'}</span>
+              <Download size={16} style={{ display: 'inline' }} />
+              <span style={{ marginLeft: '4px' }}>{isExporting ? 'Preparing File...' : 'Export to XLS'}</span>
             </button>
           </div>
-        </div>
-      </header>
+        }
+      />
       {/* <div className="section-header" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         
         <button

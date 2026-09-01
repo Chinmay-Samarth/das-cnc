@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  ArrowLeft,
   Printer,
   RefreshCw,
   Banknote,
@@ -187,9 +186,6 @@ export default function SalesInvoiceDetailsPage() {
     return (
       <main className="mes-shell">
         <p className="error-message">{error || 'Invoice not found'}</p>
-        <button type="button" className="mes-btn mes-btn-secondary" onClick={() => navigate(-1)}>
-          Back
-        </button>
       </main>
     );
   }
@@ -209,19 +205,9 @@ export default function SalesInvoiceDetailsPage() {
         title={invoice.invoice_number || 'Draft invoice'}
         subtitle={invoice.customer_name || customer.name || ''}
         actions={
-          <>
-            <button
-              type="button"
-              className="mes-btn mes-btn-secondary"
-              onClick={() => navigate('/sales-invoices')}
-            >
-              <ArrowLeft size={15} />
-              Back
-            </button>
-            <StatusBadge status={tone(invoice.status)}>
-              {String(invoice.status).toUpperCase()}
-            </StatusBadge>
-          </>
+          <StatusBadge status={tone(invoice.status)}>
+            {String(invoice.status).toUpperCase()}
+          </StatusBadge>
         }
       />
 
