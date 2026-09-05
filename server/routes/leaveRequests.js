@@ -91,6 +91,7 @@ router.post(
     }
     const result = await approveLeaveRequest(req.params.id, req.user?.sub, {
       reviewNote: req.body?.review_note,
+      payType: req.body?.pay_type,
     });
     res.json(result);
   })

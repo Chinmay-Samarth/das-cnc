@@ -1,8 +1,5 @@
-/**
- * DasCNC Backend — Entry Point
- */
- 
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
+require('dotenv').config(); // also allow repo-root .env
 const http = require('http');
 const express    = require('express');
 const cron       = require('node-cron');
@@ -17,6 +14,7 @@ const { evaluateReorderAlerts } = require('./services/reorderAlertEngine');
 const { evaluatePredictiveReorder } = require('./services/predictiveReorderEngine');
 const cors = require('cors');
 const { initSocket, attachConnectionHandlers } = require('./socket');
+const { isTallyEnabled, tallyCompany, tallyUrl } = require('./services/tallyClient');
  
 const app = express();
 app.use(express.json());
@@ -55,6 +53,7 @@ app.use('/api/production', require('./routes/production'));
 app.use('/api/campaigns', require('./routes/campaigns'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/leave-requests', require('./routes/leaveRequests'));
+app.use('/api/payroll', require('./routes/payroll'));
 app.use('/api/dispatch-shortfall-approvals', require('./routes/dispatchShortfallApprovals'));
 app.use('/api/girn-approvals', require('./routes/girnApprovals'));
 app.use('/api/admin', require('./routes/adminDashboard'));
@@ -178,6 +177,9 @@ attachConnectionHandlers(io);
 
 server.listen(PORT, () => {
   console.log(`DasCNC API running on port ${PORT}`);
+  console.log(
+    `[tally] enabled=${isTallyEnabled()} company=${tallyCompany() || '(not set)'} url=${tallyUrl()}`
+  );
   // Warm custom invoice OCR (Render) so first upload is not stuck on cold start
   const ocrHealth =
     process.env.INVOICE_OCR_HEALTH_URL ||

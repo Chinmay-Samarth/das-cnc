@@ -7,6 +7,7 @@ import { AlertBanner, FormActions, PageHeader } from '../components/mes';
 
 const emptyFormData = {
   name: '',
+  ledger_name: '',
   official_address: '',
   billing_address: '',
   gstin: '',
@@ -62,6 +63,7 @@ export default function CustomerDetailsPage() {
         if (loadedCustomer) {
           setFormData({
             name: loadedCustomer.name || '',
+            ledger_name: loadedCustomer.ledger_name || '',
             official_address: loadedCustomer.official_address || '',
             billing_address: loadedCustomer.billing_address || '',
             gstin: loadedCustomer.gstin || '',
@@ -161,6 +163,7 @@ export default function CustomerDetailsPage() {
                 <div className="employee-details-grid">
                   <div className=" employee-detail-grid">
                     <DetailItem label="Customer Name" value={customer.name} />
+                    <DetailItem label="Ledger name" value={customer.ledger_name} />
                     <DetailItem label="GSTIN" value={customer.gstin} />
                     <DetailItem label="PAN" value={customer.pan_no} />
                     <DetailItem label="Contact Person" value={customer.contact_person} />
@@ -214,6 +217,19 @@ export default function CustomerDetailsPage() {
                 required
                 disabled={submitting}
                 />
+            </label>
+
+            <label htmlFor="ledger_name">
+              Ledger name
+              <input
+                id="ledger_name"
+                type="text"
+                name="ledger_name"
+                value={formData.ledger_name}
+                onChange={handleChange}
+                placeholder="Exact Tally ledger name"
+                disabled={submitting}
+              />
             </label>
 
             <label htmlFor="gstin">

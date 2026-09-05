@@ -19,6 +19,11 @@ const JOB_DESCRIPTION_OPTIONS = [
   { value: 'ADMIN', label: 'Admin' },
 ];
 
+const ACCOUNT_TYPE_OPTIONS = [
+  { value: 'SAVINGS', label: 'Savings' },
+  { value: 'CURRENT', label: 'Current' },
+];
+
 const DOCUMENT_FIELDS = [
   { id: 'aadhar', label: 'Aadhar card', hint: 'Image or PDF' },
   { id: 'marks_card', label: 'Marks card', hint: 'Image or PDF' },
@@ -59,12 +64,10 @@ export default function AddEmployeePage() {
     permanent_address: '',
     bank_name: '',
     bank_account_number: '',
+    account_type: 'SAVINGS',
     ifsc: '',
     ESI_no: '',
     basic_salary: '',
-    allowance: '',
-    PA: '',
-    PT: '',
   });
 
   useEffect(() => {
@@ -171,12 +174,10 @@ export default function AddEmployeePage() {
       payload.append('permanent_address', formData.permanent_address || '');
       payload.append('bank_name', formData.bank_name || '');
       payload.append('bank_account_number', formData.bank_account_number || '');
+      payload.append('account_type', formData.account_type || '');
       payload.append('ifsc', formData.ifsc || '');
       payload.append('ESI_no', formData.ESI_no || '');
       payload.append('basic_salary', formData.basic_salary || '');
-      payload.append('allowance', formData.allowance || '');
-      payload.append('PA', formData.PA || '');
-      payload.append('PT', formData.PT || '');
 
       if (photo) payload.append('photo', photo);
       if (aadharFile) payload.append('aadhar', aadharFile);
@@ -399,7 +400,7 @@ export default function AddEmployeePage() {
         {step === 4 ? (
           <div className="bpo-panel">
             <h2>Bank & compensation</h2>
-            <p className="muted bpo-lead">Payroll bank details and monthly compensation components.</p>
+            <p className="muted bpo-lead">Bank details and basic salary. Other pay components are calculated monthly on Payroll.</p>
 
             <p className="form-page-section-title">Bank details</p>
             <div className="bpo-grid-2">
@@ -424,6 +425,18 @@ export default function AddEmployeePage() {
                   value={formData.bank_account_number}
                   onChange={handleChange}
                   disabled={submitting}
+                />
+              </label>
+
+              <label htmlFor="account_type">
+                Account type
+                <FormSearchSelect
+                  value={formData.account_type}
+                  onChange={setFieldValue('account_type')}
+                  options={ACCOUNT_TYPE_OPTIONS}
+                  placeholder="Select account type"
+                  disabled={submitting}
+                  clearable={false}
                 />
               </label>
 
@@ -461,48 +474,6 @@ export default function AddEmployeePage() {
                   type="number"
                   name="basic_salary"
                   value={formData.basic_salary}
-                  onChange={handleChange}
-                  disabled={submitting}
-                  min="0"
-                  step="any"
-                />
-              </label>
-
-              <label htmlFor="allowance">
-                Allowance (₹/mo)
-                <input
-                  id="allowance"
-                  type="number"
-                  name="allowance"
-                  value={formData.allowance}
-                  onChange={handleChange}
-                  disabled={submitting}
-                  min="0"
-                  step="any"
-                />
-              </label>
-
-              <label htmlFor="PA">
-                PA — personal allowance (₹/mo)
-                <input
-                  id="PA"
-                  type="number"
-                  name="PA"
-                  value={formData.PA}
-                  onChange={handleChange}
-                  disabled={submitting}
-                  min="0"
-                  step="any"
-                />
-              </label>
-
-              <label htmlFor="PT">
-                PT — professional tax (₹/mo)
-                <input
-                  id="PT"
-                  type="number"
-                  name="PT"
-                  value={formData.PT}
                   onChange={handleChange}
                   disabled={submitting}
                   min="0"

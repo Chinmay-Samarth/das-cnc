@@ -2,7 +2,12 @@ const express = require('express');
 const multer = require('multer');
 const jwt = require('jsonwebtoken');
 const { getInvoice, startInvoiceOCR } = require('../services/invoiceOcrEngine');
-const { recordVendorInvoicePayment } = require('../services/invoicePaymentEngine');
+const {
+  recordVendorInvoicePayment,
+  updateInvoiceTallyFields,
+  retryVendorInvoiceTallySync,
+} = require('../services/invoicePaymentEngine');
+const { isTallyEnabled, tallyCompany, tallyUrl } = require('../services/tallyClient');
 const {
   parseInvoiceDateRange,
   listInvoicesByDateRange,
@@ -94,11 +99,45 @@ router.post('/:id/payments', verifyEmployeeAuth, async (req, res) => {
       actorId(req),
       req.body || {}
     );
-    return res.json({ invoice });
+    return res.json({ invoice, tally_enabled: isTallyEnabled() });
   } catch (err) {
     console.error('Invoice payment error:', err);
     return sendServiceError(res, err);
   }
+});
+
+router.patch('/:id/tally', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const invoice = await updateInvoiceTallyFields(req.params.id, req.body || {});
+    return res.json({ invoice, tally_enabled: isTallyEnabled() });
+  } catch (err) {
+    console.error('Invoice tally update error:', err);
+    return sendServiceError(res, err);
+  }
+});
+
+router.post('/:id/tally/sync', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const invoice = await retryVendorInvoiceTallySync(req.params.id);
+    return res.json({
+      invoice,
+      tally_enabled: isTallyEnabled(),
+      tally_company_configured: Boolean(tallyCompany()),
+      tally_url: tallyUrl(),
+    });
+  } catch (err) {
+    console.error('Invoice tally sync retry error:', err);
+    return sendServiceError(res, err);
+  }
+});
+
+router.get('/tally/status', verifyEmployeeAuth, async (req, res) => {
+  return res.json({
+    tally_enabled: isTallyEnabled(),
+    tally_company_configured: Boolean(tallyCompany()),
+    tally_company: tallyCompany() || null,
+    tally_url: tallyUrl(),
+  });
 });
 
 router.get('/:id/review', verifyEmployeeAuth, async (req, res) => {
@@ -143,6 +182,7 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
       needs_review,
       ocr_confidence_level: invoice.ocr_confidence_level,
       warning_count: Array.isArray(invoice.ocr_warnings) ? invoice.ocr_warnings.length : 0,
+      tally_enabled: isTallyEnabled(),
     });
   } catch (err) {
     console.error('Invoice detail error:', err);

@@ -186,6 +186,7 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
       bank_name: data.bank_name || null,
       bank_account_number: data.bank_account_number || null,
       ifsc: data.ifsc || null,
+      account_type: data.account_type || null,
       basic_salary: data.basic_salary || null,
       PA : data.PA || null,
       PT: data.PT || null,
@@ -328,6 +329,7 @@ router.post('/', verifyEmployeeAuth, upload.fields([
       bank_name,
       bank_account_number,
       ifsc,
+      account_type,
       PT,
       basic_salary,
       PA,
@@ -370,6 +372,7 @@ router.post('/', verifyEmployeeAuth, upload.fields([
       bank_name: bank_name || null,
       bank_account_number: bank_account_number || null,
       ifsc: ifsc || null,
+      account_type: account_type || null,
       basic_salary: basic_salary || null,
       PA: PA || null,
       allowance: allowance || null,
@@ -458,6 +461,7 @@ router.put('/:id', verifyEmployeeAuth, upload.fields([
       bank_name,
       bank_account_number,
       ifsc,
+      account_type,
       basic_salary,
       PT,
       PA,
@@ -497,6 +501,7 @@ router.put('/:id', verifyEmployeeAuth, upload.fields([
     if(bank_name !== undefined) updatePayload.bank_name = bank_name || null;
     if(bank_account_number !== undefined) updatePayload.bank_account_number = bank_account_number || null;
     if(ifsc !== undefined) updatePayload.ifsc = ifsc || null;
+    if(account_type !== undefined) updatePayload.account_type = account_type || null;
     if(basic_salary!==undefined) updatePayload.basic_salary = basic_salary || null;
     if(PA!==undefined) updatePayload.PA = PA || null;
     if(PT!==undefined) updatePayload.PT = PT || null;

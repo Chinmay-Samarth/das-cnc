@@ -12,6 +12,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
 
 const CUSTOMER_FIELDS = [
   'name',
+  'ledger_name',
   'official_address',
   'billing_address',
   'gstin',
@@ -75,6 +76,7 @@ function toCustomer(row) {
   return {
     id: row.id,
     name: row.name,
+    ledger_name: row.ledger_name,
     official_address: row.official_address,
     billing_address: row.billing_address,
     gstin: row.gstin,

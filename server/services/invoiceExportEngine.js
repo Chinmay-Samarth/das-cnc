@@ -217,8 +217,11 @@ function splitTaxItems(taxItems) {
   const classified = items.map((tax) => {
     const rate = taxRateFraction(tax.rate);
     const amount = taxLineAmount(tax);
+    const rawKind = String(tax?.kind || '').toUpperCase();
     let kind = 'other';
-    if (rate != null && Math.abs(rate - 0.09) < 0.015) kind = 'cgst_sgst';
+    if (rawKind === 'IGST') kind = 'igst';
+    else if (rawKind === 'CGST' || rawKind === 'SGST' || rawKind === 'UTGST') kind = 'cgst_sgst';
+    else if (rate != null && Math.abs(rate - 0.09) < 0.015) kind = 'cgst_sgst';
     else if (rate != null && Math.abs(rate - 0.18) < 0.015) kind = 'igst';
     return { kind, amount };
   });

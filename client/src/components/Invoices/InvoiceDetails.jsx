@@ -93,22 +93,37 @@ function taxKindFromRate(rate) {
   return 'GST';
 }
 
-function taxLabel(tax, index, siblingCount) {
-  const kind = String(tax?.kind || '').toUpperCase();
-  const pct = taxRatePercent(tax?.rate);
-  const pctLabel = pct != null ? `${Number.isInteger(pct) ? pct : pct.toFixed(1)}%` : '';
+function taxKindBadge(kind) {
+  const k = String(kind || '').toUpperCase();
+  if (k === 'CGST') return { label: 'CGST', bg: '#e0f2fe', color: '#0369a1' };
+  if (k === 'SGST' || k === 'UTGST') return { label: k, bg: '#fef3c7', color: '#b45309' };
+  if (k === 'IGST') return { label: 'IGST', bg: '#ede9fe', color: '#6d28d9' };
+  return { label: k || 'GST', bg: '#f3f4f6', color: '#4b5563' };
+}
 
-  if (kind === 'CGST' || kind === 'SGST' || kind === 'IGST' || kind === 'UTGST') {
-    return pctLabel ? `${kind} (${pctLabel})` : kind;
-  }
+function resolveTaxKind(tax, index, siblingCount) {
+  const kind = String(tax?.kind || '').toUpperCase();
+  if (kind === 'CGST' || kind === 'SGST' || kind === 'IGST' || kind === 'UTGST') return kind;
 
   const inferred = taxKindFromRate(tax?.rate);
   if (inferred === 'CGST/SGST') {
-    const name = siblingCount >= 2 ? (index === 0 ? 'CGST' : 'SGST') : 'CGST/SGST';
-    return `${name} (${pctLabel || '9%'})`;
+    return siblingCount >= 2 ? (index === 0 ? 'CGST' : 'SGST') : 'CGST/SGST';
   }
-  if (inferred === 'IGST') return `IGST (${pctLabel || '18%'})`;
-  return pctLabel ? `GST (${pctLabel})` : 'GST';
+  if (inferred === 'IGST') return 'IGST';
+  return 'GST';
+}
+
+function taxRateDisplay(tax) {
+  const pct = taxRatePercent(tax?.rate);
+  if (pct == null) return '—';
+  return `${Number.isInteger(pct) ? pct : pct.toFixed(1)}%`;
+}
+
+function taxLabel(tax, index, siblingCount) {
+  const kind = resolveTaxKind(tax, index, siblingCount);
+  const pctLabel = taxRateDisplay(tax);
+  if (pctLabel === '—') return kind;
+  return `${kind} (${pctLabel})`;
 }
 
 function synthesizeTaxItems(invoice) {
@@ -156,6 +171,10 @@ export default function InvoiceDetails() {
   const [isDragging, setIsDragging] = useState(false);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [paying, setPaying] = useState(false);
+  const [tallyEnabled, setTallyEnabled] = useState(false);
+  const [expenseType, setExpenseType] = useState('');
+  const [savingExpenseType, setSavingExpenseType] = useState(false);
+  const [syncingTally, setSyncingTally] = useState(false);
 
   const onDocLoad = useCallback(({ numPages }) => setNumPages(numPages), []);
 
@@ -209,6 +228,12 @@ export default function InvoiceDetails() {
 
         const data = invoiceRes.data.invoice;
         setInvoice(data);
+        setTallyEnabled(Boolean(invoiceRes.data.tally_enabled));
+        setExpenseType(
+          data.tally_expense_ledger_type ||
+            data.suppliers?.tally_expense_ledger_type ||
+            ''
+        );
         setLineItems(data.line_items ?? []);
 
         const storedTaxes = Array.isArray(data.tax_items) ? data.tax_items : [];
@@ -306,7 +331,70 @@ export default function InvoiceDetails() {
     };
   };
 
+  const handleExpenseTypeChange = async (value) => {
+    setExpenseType(value);
+    if (!id) return;
+    setSavingExpenseType(true);
+    try {
+      const { data } = await api.patch(`/invoices/${id}/tally`, {
+        tally_expense_ledger_type: value || null,
+      });
+      setInvoice(data.invoice);
+      setTallyEnabled(Boolean(data.tally_enabled));
+    } catch (err) {
+      await appAlert(err.response?.data?.error || 'Unable to save expense ledger type');
+      setExpenseType(
+        invoice?.tally_expense_ledger_type ||
+          invoice?.suppliers?.tally_expense_ledger_type ||
+          ''
+      );
+    } finally {
+      setSavingExpenseType(false);
+    }
+  };
+
+  const handleRetryTallySync = async () => {
+    setSyncingTally(true);
+    try {
+      const { data } = await api.post(`/invoices/${id}/tally/sync`);
+      setInvoice(data.invoice);
+      setTallyEnabled(Boolean(data.tally_enabled));
+      const syncStatus = data.invoice?.tally_sync_status;
+      if (syncStatus === 'synced') {
+        setActionMessage('Synced to Tally');
+      } else if (syncStatus === 'skipped') {
+        await appAlert(
+          data.invoice?.tally_sync_error ||
+            'Tally sync is disabled. Set TALLY_ENABLED=true and TALLY_COMPANY in server .env, then restart the API.'
+        );
+      } else {
+        await appAlert(data.invoice?.tally_sync_error || 'Tally sync failed');
+      }
+    } catch (err) {
+      await appAlert(err.response?.data?.error || 'Unable to sync to Tally');
+    } finally {
+      setSyncingTally(false);
+    }
+  };
+
   const handleRecordPayment = async () => {
+    const currentSupplier = invoice?.suppliers ?? {};
+    if (tallyEnabled) {
+      const ledgerName = String(currentSupplier.ledger_name || '').trim();
+      if (!ledgerName) {
+        await appAlert(
+          'Set ledger name on the supplier before recording payment (Tally sync is enabled).'
+        );
+        return;
+      }
+      if (!String(expenseType || '').trim()) {
+        await appAlert(
+          'Select expense ledger type (Labour / Labour Service / Raw Material) before recording payment.'
+        );
+        return;
+      }
+    }
+
     const paidAt = await appPrompt({
       title: 'Payment date',
       message: 'Date when payment was recorded',
@@ -355,10 +443,21 @@ export default function InvoiceDetails() {
         transaction_id: String(txn).trim(),
         deduction: Number(deductionRaw) || 0,
         remarks: String(remarks).trim() || undefined,
+        tally_expense_ledger_type: expenseType || undefined,
       });
       setInvoice(data.invoice);
       setLineItems(data.invoice?.line_items ?? []);
-      setActionMessage('Payment recorded');
+      setTallyEnabled(Boolean(data.tally_enabled));
+      const syncStatus = data.invoice?.tally_sync_status;
+      if (syncStatus === 'synced') {
+        setActionMessage('Payment recorded · synced to Tally');
+      } else if (syncStatus === 'failed') {
+        setActionMessage(
+          `Payment recorded · Tally sync failed: ${data.invoice?.tally_sync_error || 'unknown error'}`
+        );
+      } else {
+        setActionMessage('Payment recorded');
+      }
     } catch (err) {
       await appAlert(err.response?.data?.error || 'Unable to record payment');
     } finally {
@@ -453,6 +552,16 @@ export default function InvoiceDetails() {
               {paying ? 'Recording…' : 'Record payment'}
             </button>
           ) : null}
+          {invoice.status === 'paid' ? (
+            <button
+              type="button"
+              style={styles.downloadBtn}
+              disabled={syncingTally}
+              onClick={handleRetryTallySync}
+            >
+              {syncingTally ? 'Syncing…' : 'Sync to Tally'}
+            </button>
+          ) : null}
           <a href={invoice.file_url} download style={styles.downloadBtn}>
             <Download size={15} />
             Download PDF
@@ -489,6 +598,20 @@ export default function InvoiceDetails() {
             <span style={styles.sectionTitle}>Payment</span>
             <div style={styles.taxRows}>
               <div style={styles.summaryLine}>
+                <span style={styles.summaryLabel}>Expense ledger</span>
+                <select
+                  value={expenseType}
+                  disabled={!canPay || savingExpenseType || paying}
+                  onChange={(e) => handleExpenseTypeChange(e.target.value)}
+                  style={styles.expenseSelect}
+                >
+                  <option value="">Select type</option>
+                  <option value="labour">Labour</option>
+                  <option value="labour_service">Labour Service</option>
+                  <option value="raw_material">Raw Material</option>
+                </select>
+              </div>
+              <div style={styles.summaryLine}>
                 <span style={styles.summaryLabel}>Due date</span>
                 <span style={styles.summaryValue}>{formatDisplayDate(invoice.due_date)}</span>
               </div>
@@ -516,6 +639,42 @@ export default function InvoiceDetails() {
                 <span style={styles.summaryLabel}>Remarks</span>
                 <span style={styles.summaryValue}>{invoice.payment_remarks || '—'}</span>
               </div>
+              {invoice.tally_sync_status ? (
+                <>
+                  <div style={styles.summaryLine}>
+                    <span style={styles.summaryLabel}>Tally sync</span>
+                    <span style={styles.summaryValue}>
+                      {String(invoice.tally_sync_status).toUpperCase()}
+                      {invoice.tally_voucher_number
+                        ? ` · ${invoice.tally_voucher_number}`
+                        : ''}
+                    </span>
+                  </div>
+                  {!tallyEnabled ? (
+                    <div style={styles.summaryLine}>
+                      <span style={styles.summaryLabel}>Tally</span>
+                      <span style={{ ...styles.summaryValue, color: '#b45309' }}>
+                        Disabled (set TALLY_ENABLED=true)
+                      </span>
+                    </div>
+                  ) : null}
+                  {invoice.tally_sync_error ? (
+                    <div style={styles.summaryLine}>
+                      <span style={styles.summaryLabel}>Tally error</span>
+                      <span style={{ ...styles.summaryValue, color: '#b91c1c' }}>
+                        {invoice.tally_sync_error}
+                      </span>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <div style={styles.summaryLine}>
+                  <span style={styles.summaryLabel}>Tally sync</span>
+                  <span style={styles.summaryValue}>
+                    {tallyEnabled ? 'Not synced yet' : 'Disabled'}
+                  </span>
+                </div>
+              )}
             </div>
           </section>
 
@@ -552,16 +711,41 @@ export default function InvoiceDetails() {
             {taxLines.length > 0 && (
               <section style={styles.card}>
                 <span style={styles.sectionTitle}>Tax Breakdown</span>
-                <div style={styles.taxRows}>
-                  {taxLines.map((tax, i) => (
-                    <div key={i} style={styles.summaryLine}>
-                      <span style={styles.summaryLabel}>
-                        {taxLabel(tax, i, taxLines.length)}
-                      </span>
-                      <span style={styles.summaryValue}>₹{fmtMoney(taxLineAmount(tax, invoice.base_amount))}</span>
-                    </div>
-                  ))}
-                </div>
+                <table style={styles.table}>
+                  <thead style={styles.thead}>
+                    <tr>
+                      {['Kind', 'Rate', 'Amount (₹)'].map((h) => (
+                        <th key={h} style={styles.th}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {taxLines.map((tax, i) => {
+                      const kind = resolveTaxKind(tax, i, taxLines.length);
+                      const badge = taxKindBadge(kind);
+                      return (
+                        <tr key={i}>
+                          <td style={styles.td}>
+                            <span
+                              style={{
+                                ...styles.taxKindBadge,
+                                background: badge.bg,
+                                color: badge.color,
+                              }}
+                              title={taxLabel(tax, i, taxLines.length)}
+                            >
+                              {badge.label}
+                            </span>
+                          </td>
+                          <td style={{ ...styles.td, ...styles.tdNum }}>{taxRateDisplay(tax)}</td>
+                          <td style={{ ...styles.td, ...styles.tdNum, fontWeight: 600 }}>
+                            {fmtMoney(taxLineAmount(tax, invoice.base_amount))}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
                 <div style={styles.dottedDivider} />
                 <div style={styles.summaryLine}>
                   <span style={styles.totalGstLabel}>Total GST ({combinedGstRate}%)</span>
@@ -579,6 +763,15 @@ export default function InvoiceDetails() {
                 <span style={styles.summaryLabel}>Total Taxes</span>
                 <span style={styles.summaryValue}>₹{fmtMoney(invoice.tax_amount ?? totalGst)}</span>
               </div>
+              {(invoice.round_off != null && Number(invoice.round_off) !== 0) && (
+                <div style={styles.summaryLine}>
+                  <span style={styles.summaryLabel}>Round Off</span>
+                  <span style={styles.summaryValue}>
+                    {Number(invoice.round_off) > 0 ? '+' : ''}
+                    ₹{fmtMoney(invoice.round_off)}
+                  </span>
+                </div>
+              )}
               <div style={styles.solidDivider} />
               <span style={styles.grandTotalEyebrow}>Grand Total</span>
               <p style={styles.grandTotalAmount}>₹{fmtMoney(invoice.total_amount)}</p>
@@ -953,6 +1146,16 @@ const styles = {
     fontVariantNumeric: 'tabular-nums',
   },
 
+  taxKindBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '2px 8px',
+    borderRadius: 6,
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: '0.04em',
+  },
+
   summaryRow: {
     display: 'grid',
     gridTemplateColumns: '1fr 1fr',
@@ -979,6 +1182,17 @@ const styles = {
   summaryValue: {
     color: '#111827',
     fontVariantNumeric: 'tabular-nums',
+  },
+
+  expenseSelect: {
+    minWidth: 160,
+    maxWidth: '60%',
+    border: '1px solid #d1d5db',
+    borderRadius: 6,
+    padding: '4px 8px',
+    fontSize: 13,
+    color: '#111827',
+    background: '#fff',
   },
 
   dottedDivider: {

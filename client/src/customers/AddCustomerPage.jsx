@@ -5,6 +5,7 @@ import { FormActions, FormPage } from '../components/mes';
 
 const initialFormData = {
   name: '',
+  ledger_name: '',
   official_address: '',
   billing_address: '',
   gstin: '',
@@ -61,6 +62,18 @@ export default function AddCustomerPage() {
           <label htmlFor="name">
             Customer name <span className="required-mark">*</span>
             <input id="name" type="text" name="name" value={formData.name} onChange={handleChange} placeholder="e.g., ABC Industries" required disabled={submitting} />
+          </label>
+          <label htmlFor="ledger_name">
+            Ledger name
+            <input
+              id="ledger_name"
+              type="text"
+              name="ledger_name"
+              value={formData.ledger_name}
+              onChange={handleChange}
+              placeholder="Exact Tally ledger name"
+              disabled={submitting}
+            />
           </label>
           <label htmlFor="gstin">
             GSTIN

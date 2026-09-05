@@ -143,15 +143,46 @@ function normalizeLineItems(ocrResult) {
 function normalizeTaxItems(ocrResult) {
   const lines = Array.isArray(ocrResult?.tax_lines) ? ocrResult.tax_lines : [];
   const mapped = lines
-    .map((item) => ({
-      kind: String(item?.kind || '').toUpperCase() || null,
-      rate: toNumberOrNull(item?.rate),
-      base: toNumberOrNull(item?.base),
-      amount: toNumberOrNull(item?.amount),
-    }))
+    .map((item) => {
+      const rawKind = String(item?.kind || '').toUpperCase();
+      const kind = ['CGST', 'SGST', 'IGST', 'UTGST'].includes(rawKind) ? rawKind : null;
+      return {
+        kind,
+        rate: toNumberOrNull(item?.rate),
+        base: toNumberOrNull(item?.base),
+        amount: toNumberOrNull(item?.amount),
+      };
+    })
     .filter((item) => item.amount || item.rate);
 
-  if (mapped.length) return mapped;
+  if (mapped.length) {
+    // Fill missing kinds when OCR omitted them (rate/pairing heuristics)
+    const missing = mapped.filter((t) => !t.kind);
+    if (missing.length === mapped.length && mapped.length === 2) {
+      const r0 = Number(mapped[0].rate) || 0;
+      const r1 = Number(mapped[1].rate) || 0;
+      const asPct = (r) => (r > 0 && r <= 1 ? r * 100 : r);
+      if (Math.abs(asPct(r0) - asPct(r1)) < 0.6 && asPct(r0) <= 14) {
+        mapped[0].kind = 'CGST';
+        mapped[1].kind = 'SGST';
+      }
+    } else if (missing.length === mapped.length && mapped.length === 1) {
+      const r = Number(mapped[0].rate) || 0;
+      const pct = r > 0 && r <= 1 ? r * 100 : r;
+      mapped[0].kind = pct <= 14 ? 'CGST' : 'IGST';
+    } else {
+      for (const t of missing) {
+        const r = Number(t.rate) || 0;
+        const pct = r > 0 && r <= 1 ? r * 100 : r;
+        if (pct <= 14) {
+          t.kind = mapped.some((x) => x.kind === 'CGST') ? 'SGST' : 'CGST';
+        } else {
+          t.kind = 'IGST';
+        }
+      }
+    }
+    return mapped;
+  }
 
   const taxAmount = toNumberOrNull(ocrResult?.totals?.tax_amount);
   const baseAmount = toNumberOrNull(ocrResult?.totals?.base_amount);
@@ -188,6 +219,8 @@ async function getInvoice(invoiceId) {
       suppliers(
         id,
         name,
+        ledger_name,
+        tally_expense_ledger_type,
         billing_address,
         account_number,
         ifsc,
@@ -335,6 +368,7 @@ async function processInvoiceOCR(invoiceId, file, publicUrl) {
     base_amount: toNumberOrNull(ocrResult?.totals?.base_amount),
     total_amount: toNumberOrNull(ocrResult?.totals?.total_amount),
     tax_amount: toNumberOrNull(ocrResult?.totals?.tax_amount),
+    round_off: toNumberOrNull(ocrResult?.totals?.round_off),
     line_items: lineItems,
     tax_items: taxItems,
     raw_ocr_response: ocrResult,

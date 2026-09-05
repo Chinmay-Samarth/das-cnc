@@ -1,12 +1,19 @@
 import MasterItemSelect from '../girn/MasterItemSelect';
 import { CATEGORY_OPTIONS, getCategoryConfig, hasMasterLink } from '../girn/girnCategoryConfig';
+import { Trash2 } from 'lucide-react';
 
 function fmt(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
 }
 
-export default function InvoiceRecheckLineTable({ lines, onChange, onMasterSelect, onCategoryChange }) {
+export default function InvoiceRecheckLineTable({
+  lines,
+  onChange,
+  onMasterSelect,
+  onCategoryChange,
+  onRemove,
+}) {
   return (
     <div className="invoice-recheck-lines">
       <table className="app-table">
@@ -18,9 +25,17 @@ export default function InvoiceRecheckLineTable({ lines, onChange, onMasterSelec
             <th>Qty</th>
             <th>Rate</th>
             <th>Amount</th>
+            <th aria-label="Actions" />
           </tr>
         </thead>
         <tbody>
+          {lines.length === 0 ? (
+            <tr>
+              <td colSpan={7} className="invoice-recheck-empty">
+                No line items. Confirm will save the invoice without lines.
+              </td>
+            </tr>
+          ) : null}
           {lines.map((line, idx) => {
             const category = line.item_category || 'raw_material';
             const cfg = getCategoryConfig(category);
@@ -89,6 +104,17 @@ export default function InvoiceRecheckLineTable({ lines, onChange, onMasterSelec
                   />
                 </td>
                 <td className="invoice-recheck-amount">₹{fmt(line.total)}</td>
+                <td className="invoice-recheck-actions-cell">
+                  <button
+                    type="button"
+                    className="invoice-recheck-delete-btn"
+                    onClick={() => onRemove?.(idx)}
+                    aria-label={`Delete line ${idx + 1}`}
+                    title="Delete line"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </td>
               </tr>
             );
           })}

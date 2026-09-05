@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { useNavigate, useParams, useLocation, Link } from 'react-router-dom';
 import api from '../api/client';
 import { toDisplayTime, toISODateString } from '../attendance/useDailyAttendance';
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
@@ -189,12 +189,9 @@ export default function EmployeeDetailsPage() {
     bank_account_number: '',
     account_type: 'SAVINGS',
     ifsc: '',
+    ESI_no: '',
     // compensation
-    PT: '',
     basic_salary: '',
-    OT: '',
-    PA: '',
-    allowance: '',
   });
 
   const [photo, setPhoto] = useState(null);
@@ -207,6 +204,11 @@ export default function EmployeeDetailsPage() {
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [attendanceLoading, setAttendanceLoading] = useState(true);
   const [attendanceError, setAttendanceError] = useState(null);
+  const [payrollMonth, setPayrollMonth] = useState(() => startOfMonth(new Date()));
+  const [payrollLine, setPayrollLine] = useState(null);
+  const [payrollRun, setPayrollRun] = useState(null);
+  const [payrollLoading, setPayrollLoading] = useState(false);
+  const [payrollError, setPayrollError] = useState(null);
   const [efficiencyData, setEfficiencyData] = useState(null);
   const [efficiencyLoading, setEfficiencyLoading] = useState(false);
   const [efficiencyError, setEfficiencyError] = useState(null);
@@ -263,12 +265,8 @@ export default function EmployeeDetailsPage() {
             bank_account_number: emp.bank_account_number || '',
             account_type:        emp.account_type || 'SAVINGS',
             ifsc:                emp.ifsc || '',
-            PT:                  emp.PT ?? '',
             basic_salary:        emp.basic_salary ?? '',
-            OT:                  emp.OT ?? '',
-            PA:                  emp.PA ?? '',
-            allowance:           emp.allowance ?? '',
-            ESI_no:              emp.ESI_no
+            ESI_no:              emp.ESI_no || '',
           });
         }
       } catch (err) {
@@ -310,6 +308,37 @@ export default function EmployeeDetailsPage() {
     else { setAttendanceRecords([]); setAttendanceLoading(false); }
     return () => { mounted = false; };
   }, [id, selectedMonth]);
+
+  // ── load payroll line for commercials tab ─────────────────────────────────
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadPayrollLine() {
+      if (tab !== 'commercials' || !id) return;
+      try {
+        setPayrollLoading(true);
+        setPayrollError(null);
+        const { data } = await api.get(`/payroll/employees/${id}`, {
+          params: {
+            month: payrollMonth.getMonth() + 1,
+            year: payrollMonth.getFullYear(),
+          },
+        });
+        if (!mounted) return;
+        setPayrollLine(data.line || null);
+        setPayrollRun(data.run || null);
+      } catch (err) {
+        if (!mounted) return;
+        setPayrollError(err.response?.data?.error || 'Unable to load payroll for this month.');
+        setPayrollLine(null);
+        setPayrollRun(null);
+      } finally {
+        if (mounted) setPayrollLoading(false);
+      }
+    }
+    loadPayrollLine();
+    return () => { mounted = false; };
+  }, [id, payrollMonth, tab]);
 
   // ── load efficiency (work centers + worker_efficiency_entries) ─────────────
 
@@ -391,11 +420,7 @@ export default function EmployeeDetailsPage() {
       payload.append('bank_account_number', formData.bank_account_number || '');
       payload.append('account_type',        formData.account_type || '');
       payload.append('ifsc',                formData.ifsc || '');
-      payload.append('PT',                  formData.PT || '');
       payload.append('basic_salary',        formData.basic_salary || '');
-      payload.append('OT',                  formData.OT || '');
-      payload.append('PA',                  formData.PA || '');
-      payload.append('allowance',           formData.allowance || '');
       payload.append('ESI_no',              formData.ESI_no || '')
       if (photo)              payload.append('photo',            photo);
       if (aadharFile)         payload.append('aadhar',           aadharFile);
@@ -897,41 +922,132 @@ export default function EmployeeDetailsPage() {
             {/* ── COMMERCIALS tab ───────────────────────────────────────── */}
             {tab === 'commercials' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                <div className='employee-detail-card' style={{borderRadius: '12px', padding: '16px' }}>
-                  <h2  style={{ marginBottom: '16px' }}>Bank details</h2>
+                <div className="employee-detail-card" style={{ borderRadius: '12px', padding: '16px' }}>
+                  <h2 style={{ marginBottom: '16px' }}>Bank details</h2>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     {[
-                      { label: 'Bank name',       key: 'bank_name' },
-                      { label: 'Account type',    key: 'account_type' },
-                      { label: 'Account number',  key: 'bank_account_number' },
-                      { label: 'IFSC code',       key: 'ifsc' },
-                    ].map(({ label, key }) => (
+                      { label: 'Bank name', key: 'bank_name' },
+                      {
+                        label: 'Account type',
+                        key: 'account_type',
+                        format: (v) =>
+                          v === 'CURRENT' ? 'Current' : v === 'SAVINGS' ? 'Savings' : v || '--',
+                      },
+                      { label: 'Account number', key: 'bank_account_number' },
+                      { label: 'IFSC code', key: 'ifsc' },
+                      { label: 'ESI number', key: 'ESI_no' },
+                    ].map(({ label, key, format }) => (
                       <div key={key}>
                         <p className="employee-detail-label">{label}</p>
-                        <p className="employee-detail-value">{employee[key] || '--'}</p>
+                        <p className="employee-detail-value">
+                          {format ? format(employee[key]) : employee[key] || '--'}
+                        </p>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div style={{ borderRadius: '12px', padding: '16px' }}>
-                  {/* <p className="text-xl font-medium" style={{ marginBottom: '16px' }}>Compensation</p> */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
-                    {[
-                      { label: 'Basic salary (₹/mo)', key: 'basic_salary', accent: '#059669' },
-                      { label: 'Allowance (₹/mo)',    key: 'allowance',    accent: '#6b7280' },
-                      { label: 'PA (₹/mo)',           key: 'PA',           accent: '#6b7280' },
-                      { label: 'OT rate (₹/hr)',      key: 'OT',           accent: '#d97706' },
-                      { label: 'PT (₹/mo)',           key: 'PT',           accent: '#6b7280' },
-                    ].map(({ label, key, accent }) => (
-                      <StatTile
-                        key={key}
-                        label={label}
-                        accent={accent}
-                        value={employee[key] != null ? `₹${Number(employee[key]).toLocaleString('en-IN')}` : '--'}
-                      />
-                    ))}
+                <div className="employee-detail-card" style={{ borderRadius: '12px', padding: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+                    <h2 style={{ margin: 0 }}>Compensation master</h2>
+                    <button type="button" className="mes-btn mes-btn-secondary" onClick={() => setTab('edit')}>
+                      <Pencil size={14} /> Edit basic salary
+                    </button>
                   </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+                    <StatTile
+                      label="Basic salary (₹/mo)"
+                      accent="#059669"
+                      value={
+                        employee.basic_salary != null
+                          ? `₹${Number(employee.basic_salary).toLocaleString('en-IN')}`
+                          : '--'
+                      }
+                    />
+                  </div>
+                  <p className="muted" style={{ margin: '12px 0 0', fontSize: 13 }}>
+                    Only basic salary is maintained here. Monthly earnings and deductions are calculated on{' '}
+                    <Link to="/payroll">Payroll</Link>.
+                  </p>
+                </div>
+
+                <div className="employee-detail-card" style={{ borderRadius: '12px', padding: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+                    <h2 style={{ margin: 0 }}>Monthly salary</h2>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        className="date-pickers"
+                        onClick={() => setPayrollMonth((prev) => shiftMonth(prev, -1))}
+                        aria-label="Previous payroll month"
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <span style={{ minWidth: 140, textAlign: 'center', fontWeight: 600 }}>
+                        {payrollMonth.toLocaleString('en-IN', { month: 'long', year: 'numeric' })}
+                      </span>
+                      <button
+                        type="button"
+                        className="date-pickers"
+                        onClick={() => setPayrollMonth((prev) => shiftMonth(prev, 1))}
+                        aria-label="Next payroll month"
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {payrollRun ? (
+                    <p className="muted" style={{ marginTop: 0, marginBottom: 12, fontSize: 13 }}>
+                      Run status: {payrollRun.status}
+                      {payrollRun.formula_version?.version_number
+                        ? ` · Formula v${payrollRun.formula_version.version_number}`
+                        : ''}
+                    </p>
+                  ) : null}
+
+                  {payrollLoading ? <p className="muted">Loading monthly salary…</p> : null}
+                  {payrollError ? <AlertBanner tone="danger">{payrollError}</AlertBanner> : null}
+
+                  {!payrollLoading && !payrollLine ? (
+                    <EmptyState
+                      title="No payroll line for this month"
+                      description="Generate this month on the Payroll page to see days worked and calculated salary."
+                    />
+                  ) : null}
+
+                  {!payrollLoading && payrollLine ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
+                      {[
+                        { label: 'Days worked', value: payrollLine.days_worked, accent: '#059669' },
+                        { label: 'Paid leave', value: payrollLine.paid_leave, accent: '#0ea5e9' },
+                        { label: 'Earned leave', value: payrollLine.earned_leave, accent: '#6b7280' },
+                        { label: 'Basic earned', value: payrollLine.basic_earned, money: true, accent: '#059669' },
+                        { label: 'Allowance', value: payrollLine.allowance, money: true, accent: '#6b7280' },
+                        { label: 'Incentive', value: payrollLine.incentive_paid, money: true, accent: '#6b7280' },
+                        { label: 'Prod. allowance', value: payrollLine.production_allowance, money: true, accent: '#6b7280' },
+                        { label: 'Total earned', value: payrollLine.total_earned, money: true, accent: '#059669' },
+                        { label: 'ESI', value: payrollLine.esi, money: true, accent: '#d97706' },
+                        { label: 'PF', value: payrollLine.pf, money: true, accent: '#d97706' },
+                        { label: 'PT', value: payrollLine.pt, money: true, accent: '#d97706' },
+                        { label: 'Deductions', value: payrollLine.total_deductions, money: true, accent: '#dc2626' },
+                        { label: 'Net paid', value: payrollLine.net_paid, money: true, accent: '#059669' },
+                      ].map(({ label, value, money, accent }) => (
+                        <StatTile
+                          key={label}
+                          label={label}
+                          accent={accent}
+                          value={
+                            value == null
+                              ? '--'
+                              : money
+                                ? `₹${Number(value).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                                : Number(value).toLocaleString('en-IN', { maximumFractionDigits: 2 })
+                          }
+                        />
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             )}
@@ -1236,11 +1352,20 @@ export default function EmployeeDetailsPage() {
                   </label>
 
                   <p className="form-page-section-title form-span-2">Compensation</p>
-                  <label htmlFor="basic_salary">Basic salary (₹/mo)<input id="basic_salary" type="number" name="basic_salary" value={formData.basic_salary} onChange={handleChange} disabled={submitting} /></label>
-                  <label htmlFor="allowance">Allowance (₹/mo)<input id="allowance" type="number" name="allowance" value={formData.allowance} onChange={handleChange} disabled={submitting} /></label>
-                  <label htmlFor="PA">PA — personal allowance (₹/mo)<input id="PA" type="number" name="PA" value={formData.PA} onChange={handleChange} disabled={submitting} /></label>
-                  <label htmlFor="OT">OT rate (₹/hr)<input id="OT" type="number" name="OT" value={formData.OT} onChange={handleChange} disabled={submitting} /></label>
-                  <label htmlFor="PT">PT — professional tax (₹/mo)<input id="PT" type="number" name="PT" value={formData.PT} onChange={handleChange} disabled={submitting} /></label>
+                  <label htmlFor="basic_salary">
+                    Basic salary (₹/mo)
+                    <input
+                      id="basic_salary"
+                      type="number"
+                      name="basic_salary"
+                      value={formData.basic_salary}
+                      onChange={handleChange}
+                      disabled={submitting}
+                    />
+                  </label>
+                  <p className="muted form-span-2" style={{ margin: 0, fontSize: 13 }}>
+                    Allowance, PF, PT, ESI, and net pay are calculated on the Payroll page from monthly days worked and paid leave.
+                  </p>
                 </div>
 
                 <FormActions

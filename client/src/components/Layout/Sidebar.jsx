@@ -13,6 +13,7 @@ import {
   Users,
   CalendarCheck,
   CalendarOff,
+  Banknote,
   Building2,
   Package,
   Warehouse,
@@ -79,6 +80,7 @@ const NAV_SECTIONS = [
     items: [
       { to: '/attendance', label: 'Attendance', icon: CalendarCheck },
       { to: '/leave-requests', label: 'Leave Requests', icon: CalendarOff },
+      { to: '/payroll', label: 'Payroll', icon: Banknote },
       { to: '/employees', label: 'Employees', icon: Users },
     ],
   },

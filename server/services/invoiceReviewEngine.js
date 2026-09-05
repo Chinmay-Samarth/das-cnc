@@ -294,15 +294,46 @@ async function confirmReview(invoiceId, body, actorId) {
   });
 
   const now = new Date().toISOString();
+
+  let taxItems = invoice.tax_items || [];
+  if (Array.isArray(body.tax_items)) {
+    taxItems = body.tax_items
+      .map((t) => {
+        const kind = String(t?.kind || '').toUpperCase();
+        const rate = Number(t?.rate);
+        const base = t?.base == null || t?.base === '' ? null : Number(t.base);
+        const amount = t?.amount == null || t?.amount === '' ? null : Number(t.amount);
+        return {
+          kind: ['CGST', 'SGST', 'IGST', 'UTGST'].includes(kind) ? kind : 'GST',
+          rate: Number.isFinite(rate) ? rate : null,
+          base: Number.isFinite(base) ? base : null,
+          amount: Number.isFinite(amount) ? amount : null,
+        };
+      })
+      .filter((t) => t.rate != null || t.amount != null);
+  }
+
+  const taxAmountFromItems = taxItems.reduce(
+    (sum, t) => sum + (Number.isFinite(Number(t.amount)) ? Number(t.amount) : 0),
+    0
+  );
+
   const updatePayload = {
     supplier_id: supplierId,
     line_items: normalizedLines,
+    tax_items: taxItems,
     invoice_number: body.invoice_number ?? invoice.invoice_number,
     invoice_date: body.invoice_date ?? invoice.invoice_date,
     due_date: body.due_date ?? invoice.due_date,
     total_amount: body.total_amount ?? invoice.total_amount,
     base_amount: body.base_amount ?? invoice.base_amount,
-    tax_amount: body.tax_amount ?? invoice.tax_amount,
+    round_off: body.round_off ?? invoice.round_off ?? 0,
+    tax_amount:
+      body.tax_amount != null && body.tax_amount !== ''
+        ? body.tax_amount
+        : taxItems.length
+          ? taxAmountFromItems
+          : invoice.tax_amount,
     status: 'pending',
     review_status: 'confirmed',
     reviewed_at: now,
@@ -361,7 +392,7 @@ async function finalizeOcrReview(invoiceId, doc, invoiceDraft) {
   };
 
   const { error } = await supabase.from('invoices').update(updatePayload).eq('id', invoiceId);
-  if (error) {
+    if (error) {
     if (error.code === 'PGRST204') {
       const fallback = { ...updatePayload };
       delete fallback.ocr_confidence_level;

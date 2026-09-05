@@ -8,6 +8,8 @@ import { AlertBanner, FilePicker, FormActions } from '../components/mes';
 
 const emptyFormData = {
   name: '',
+  ledger_name: '',
+  tally_expense_ledger_type: '',
   official_address: '',
   billing_address: '',
   GSTIN: '',
@@ -80,6 +82,8 @@ export default function SupplierDetailsPage() {
         if (match) {
           setFormData({
             name: match.name || '',
+            ledger_name: match.ledger_name || '',
+            tally_expense_ledger_type: match.tally_expense_ledger_type || '',
             official_address: match.official_address || '',
             billing_address: match.billing_address || '',
             GSTIN: match.GSTIN || '',
@@ -241,6 +245,19 @@ export default function SupplierDetailsPage() {
                   <div className=" ">
                     <div className="employee-detail-grid" style={{borderBottom: '1px solid #dfe3e8'}}>
                       <DetailItem label="Supplier Name" value={supplier.name} />
+                      <DetailItem label="Ledger name" value={supplier.ledger_name} />
+                      <DetailItem
+                        label="Expense ledger type"
+                        value={
+                          supplier.tally_expense_ledger_type === 'labour'
+                            ? 'Labour'
+                            : supplier.tally_expense_ledger_type === 'labour_service'
+                              ? 'Labour Service'
+                              : supplier.tally_expense_ledger_type === 'raw_material'
+                                ? 'Raw Material'
+                                : supplier.tally_expense_ledger_type
+                        }
+                      />
                       <DetailItem label="GSTIN" value={supplier.GSTIN} />
                       <DetailItem label="PAN" value={supplier.PAN_no} />
                       <DetailItem
@@ -417,6 +434,35 @@ export default function SupplierDetailsPage() {
                 required
                 disabled={submitting}
               />
+            </label>
+
+            <label htmlFor="ledger_name">
+              Ledger name
+              <input
+                id="ledger_name"
+                type="text"
+                name="ledger_name"
+                value={formData.ledger_name}
+                onChange={handleChange}
+                placeholder="Exact Tally ledger name"
+                disabled={submitting}
+              />
+            </label>
+
+            <label htmlFor="tally_expense_ledger_type">
+              Expense ledger type
+              <select
+                id="tally_expense_ledger_type"
+                name="tally_expense_ledger_type"
+                value={formData.tally_expense_ledger_type}
+                onChange={handleChange}
+                disabled={submitting}
+              >
+                <option value="">Select type</option>
+                <option value="labour">Labour</option>
+                <option value="labour_service">Labour Service</option>
+                <option value="raw_material">Raw Material</option>
+              </select>
             </label>
 
             <label htmlFor="GSTIN">

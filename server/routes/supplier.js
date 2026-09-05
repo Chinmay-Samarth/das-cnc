@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken')
 const multer = require('multer')
 const {createClient} = require('@supabase/supabase-js');
 const path = require('path');
+const { isValidExpenseType } = require('../config/tallyLedgers');
 
 const router = express.Router();
 const supabase = createClient(
@@ -28,6 +29,47 @@ function verifyEmployeeAuth(req, res, next) {
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
+}
+
+function cleanText(value) {
+  if (value == null) return null;
+  const trimmed = String(value).trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+function normalizeExpenseType(value) {
+  if (value === undefined) return undefined;
+  const raw = cleanText(value);
+  if (raw == null) return null;
+  if (!isValidExpenseType(raw)) {
+    return { error: 'tally_expense_ledger_type must be labour, labour_service, or raw_material' };
+  }
+  return { value: raw };
+}
+
+function toSupplier(s) {
+  return {
+    id: s.id,
+    name: s.name,
+    ledger_name: s.ledger_name || null,
+    tally_expense_ledger_type: s.tally_expense_ledger_type || null,
+    official_address: s.official_address,
+    billing_address: s.billing_address,
+    GSTIN: s.GSTIN,
+    PAN_no: s.pan_no,
+    contact_person: s.contact_person,
+    contact_number: s.contact_phone ?? s.contact_number ?? null,
+    email: s.email,
+    customer_recommended: s.customer_recommended,
+    bank_name: s.bank_name,
+    account_number: s.account_number,
+    account_type: s.account_type,
+    IFSC: s.ifsc,
+    payment_details: s.payment_details,
+    iso_certificate_url: s.iso_certificate_url,
+    lead_time_days: s.lead_time_days,
+    credit_period_days: s.credit_period_days,
+  };
 }
 
 async function uploadCertificatePhoto(supplierId, file) {
@@ -70,26 +112,7 @@ router.get('/',verifyEmployeeAuth, async(req,res)=>{
             throw error;
         }
 
-        const suppliers = (data || []).map((s)=>({
-            id: s.id,
-            name: s.name,
-            official_address: s.official_address,
-            billing_address: s.billing_address,
-            GSTIN: s.GSTIN,
-            PAN_no: s.pan_no,
-            contact_person: s.contact_person,
-            contact_number: s.contact_number,
-            email: s.email,
-            customer_recommended: s.customer_recommended,
-            bank_name: s.bank_name,
-            account_number : s.account_number,
-            account_type: s.account_type,
-            IFSC: s.ifsc,
-            payment_details: s.payment_details,
-            iso_certificate_url: s.iso_certificate_url,
-            lead_time_days: s.lead_time_days,
-            credit_period_days: s.credit_period_days,
-        }))
+        const suppliers = (data || []).map(toSupplier)
 
         return res.json({ suppliers })
     }
@@ -133,6 +156,8 @@ router.post('/', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>{
     try {
         const {
             name,
+            ledger_name,
+            tally_expense_ledger_type,
             official_address,
             billing_address,
             GSTIN,
@@ -156,6 +181,11 @@ router.post('/', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>{
             })
         }
 
+        const expense = normalizeExpenseType(tally_expense_ledger_type);
+        if (expense?.error) {
+          return res.status(400).json({ error: expense.error });
+        }
+
         const {data: existing, error:checkError} = await supabase
         .from('suppliers')
         .select('id')
@@ -174,12 +204,14 @@ router.post('/', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>{
 
         const insertPayload = {
             name: name,
+            ledger_name: cleanText(ledger_name),
+            tally_expense_ledger_type: expense?.value ?? null,
             official_address: official_address,
             billing_address: billing_address || null,
             GSTIN: GSTIN,
             pan_no: PAN_no || null,
             contact_person: contact_person || null,
-            contact_number: contact_number || null,
+            contact_phone: contact_number || null,
             email: email || null,
             customer_recommended: customer_recommended === 'true' || customer_recommended === true,
             bank_name: bank_name,
@@ -216,12 +248,15 @@ router.post('/', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>{
 
         return res.status(201).json({
             message: 'Supplier Created Successfully',
-            supplier: createdSupplier,
+            supplier: toSupplier(createdSupplier),
         })
     }
     catch(err){
         console.error("Supplier Creation error", err)
-        return res.status(500).json({error: "Unable to create Supplier"})
+        return res.status(500).json({
+          error: err.message || 'Unable to create Supplier',
+          details: err.details || err.hint || undefined,
+        })
     }
 })
 
@@ -230,6 +265,8 @@ router.put('/:id', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>
         const supplierId = req.params.id
         const {
             name,
+            ledger_name,
+            tally_expense_ledger_type,
             official_address,
             billing_address,
             GSTIN,
@@ -253,8 +290,15 @@ router.put('/:id', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>
             })
         }
 
+        const expense = normalizeExpenseType(tally_expense_ledger_type);
+        if (expense?.error) {
+          return res.status(400).json({ error: expense.error });
+        }
+
         const updatePayload = {
             name: name,
+            ledger_name: cleanText(ledger_name),
+            tally_expense_ledger_type: expense?.value ?? null,
             official_address: official_address || null,
             billing_address: billing_address || null,
             GSTIN: GSTIN,
@@ -270,6 +314,7 @@ router.put('/:id', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>
             payment_details: payment_details || null,
             lead_time_days: lead_time_days != null && lead_time_days !== '' ? Number(lead_time_days) : null,
             credit_period_days: credit_period_days != null && credit_period_days !== '' ? Number(credit_period_days) : null,
+            updated_at: new Date().toISOString(),
         }
 
         if(req.file){
@@ -287,12 +332,15 @@ router.put('/:id', verifyEmployeeAuth, upload.single('photo'), async(req, res)=>
 
         return res.json({
             message: 'Supplier Updated Successfully',
-            supplier: updatedSupplier,
+            supplier: toSupplier(updatedSupplier),
         })
     }
     catch(err){
         console.error("Supplier update error", err)
-        return res.status(500).json({error: "Unable to update Supplier"})
+        return res.status(500).json({
+          error: err.message || 'Unable to update Supplier',
+          details: err.details || err.hint || undefined,
+        })
     }
 })
 

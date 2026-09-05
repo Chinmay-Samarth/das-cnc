@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserPlus } from 'lucide-react';
+import { Download, UserPlus } from 'lucide-react';
 import api from '../api/client';
 import { ListPage, EmptyState } from '../components/mes';
+import { appAlert, appConfirm } from '../components/dialog';
 import { sortBy, getVisiblePages } from '../utils/listHelpers';
 
 const PLACEHOLDER_AVATAR = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect fill="%23E5E7EB" width="100%25" height="100%25"/><text x="50%25" y="54%25" dominant-baseline="middle" text-anchor="middle" font-size="48" fill="%23717A83" font-family="system-ui, sans-serif">?</text></svg>';
 const RECORDS_PAGE_SIZE = 10;
+
+function previousMonthYm() {
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  return { year: d.getFullYear(), month: d.getMonth() + 1, label: d.toLocaleString('en-IN', { month: 'long', year: 'numeric' }) };
+}
 
 export default function EmployeesPage() {
   const navigate = useNavigate();
@@ -18,6 +25,7 @@ export default function EmployeesPage() {
   const [recordsPage, setRecordsPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -92,6 +100,49 @@ export default function EmployeesPage() {
     }
   };
 
+  async function exportPreviousMonthPayroll() {
+    const { year, month, label } = previousMonthYm();
+    const ok = await appConfirm({
+      title: 'Export previous month payroll?',
+      message: `Download calculated salary for ${label} for all employees. If the month has not been generated yet, it will be generated first.`,
+      confirmLabel: 'Export Excel',
+    });
+    if (!ok) return;
+    setExporting(true);
+    try {
+      const response = await api.get(`/payroll/${year}/${month}/export`, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([response.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `payroll-${year}-${String(month).padStart(2, '0')}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
+    } catch (err) {
+      console.error('Payroll export failed', err);
+      let message = 'Could not export previous month payroll';
+      try {
+        if (err.response?.data instanceof Blob) {
+          const text = await err.response.data.text();
+          const parsed = JSON.parse(text);
+          if (parsed?.error) message = parsed.error;
+        } else if (err.response?.data?.error) {
+          message = err.response.data.error;
+        }
+      } catch {
+        /* keep default */
+      }
+      await appAlert({ title: 'Export failed', message, tone: 'danger' });
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <ListPage
       eyebrow="Workforce management"
@@ -124,6 +175,15 @@ export default function EmployeesPage() {
             className="search-input"
             aria-label="Search employees"
           />
+          <button
+            type="button"
+            className="mes-btn mes-btn-secondary"
+            disabled={exporting}
+            onClick={exportPreviousMonthPayroll}
+          >
+            <Download size={16} style={{ display: 'inline', marginRight: 4 }} />
+            {exporting ? 'Exporting…' : 'Export previous month'}
+          </button>
           <button type="button" className="primary-button" onClick={() => navigate('/employees/add')}>
             <UserPlus size={16} style={{ display: 'inline', marginRight: 4 }} />
             Add Employee

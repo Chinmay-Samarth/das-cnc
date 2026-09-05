@@ -9785,6 +9785,107 @@ button:hover:not(:disabled) {
   text-align: right;
 }
 
+.invoice-recheck-lines .app-table th:nth-child(7),
+.invoice-recheck-lines .app-table td:nth-child(7) {
+  width: 48px;
+  min-width: 48px;
+  padding-left: 4px;
+  padding-right: 4px;
+  text-align: center;
+}
+
+.invoice-recheck-actions-cell {
+  vertical-align: middle;
+}
+
+.invoice-recheck-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #fecdd3;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #be123c;
+  cursor: pointer;
+}
+
+.invoice-recheck-delete-btn:hover {
+  background: #ffe4e6;
+  border-color: #fda4af;
+}
+
+.invoice-recheck-empty {
+  text-align: center;
+  color: #64748b;
+  padding: 20px 12px !important;
+}
+
+.invoice-recheck-taxes .app-table {
+  min-width: 560px;
+}
+
+.invoice-recheck-taxes .app-table th:nth-child(1),
+.invoice-recheck-taxes .app-table td:nth-child(1) {
+  min-width: 110px;
+  width: 120px;
+  max-width: none;
+}
+
+.invoice-recheck-taxes .app-table th:nth-child(2),
+.invoice-recheck-taxes .app-table td:nth-child(2),
+.invoice-recheck-taxes .app-table th:nth-child(3),
+.invoice-recheck-taxes .app-table td:nth-child(3),
+.invoice-recheck-taxes .app-table th:nth-child(4),
+.invoice-recheck-taxes .app-table td:nth-child(4) {
+  min-width: 110px;
+  width: 120px;
+}
+
+.invoice-recheck-taxes .app-table th:nth-child(5),
+.invoice-recheck-taxes .app-table td:nth-child(5) {
+  width: 48px;
+  min-width: 48px;
+  text-align: center;
+}
+
+.invoice-recheck-tax-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.invoice-recheck-add-tax {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px dashed #94a3b8;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.invoice-recheck-add-tax:hover {
+  background: #f1f5f9;
+  border-color: #64748b;
+}
+
+.invoice-recheck-tax-total {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
 .invoice-recheck-line-name {
   font-weight: 550;
   font-size: 0.875rem;
@@ -10808,5 +10909,187 @@ button:hover:not(:disabled) {
 
   .mes-dash-weekcal-list {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ── Payroll table ───────────────────────────────────────── */
+.payroll-table-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.payroll-table-totals {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 16px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.payroll-table-totals strong {
+  color: #0f172a;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.payroll-table-totals span:last-child strong {
+  color: #047857;
+}
+
+.payroll-table-scroller {
+  width: 100%;
+  max-height: calc(100vh - 260px);
+  overflow: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  -webkit-overflow-scrolling: touch;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.payroll-table-scroller.is-dragging {
+  cursor: grabbing;
+}
+
+.payroll-table-scroller input,
+.payroll-table-scroller button,
+.payroll-table-scroller select,
+.payroll-table-scroller textarea,
+.payroll-table-scroller a,
+.payroll-table-scroller .payroll-input,
+.payroll-table-scroller .payroll-save-btn {
+  cursor: auto;
+  user-select: auto;
+  touch-action: auto;
+}
+
+.payroll-table-scroller .payroll-save-btn,
+.payroll-table-scroller button {
+  cursor: pointer;
+}
+
+.payroll-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12.5px;
+  table-layout: fixed;
+}
+
+.payroll-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  padding: 8px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  box-shadow: 0 1px 0 #e2e8f0;
+}
+
+.payroll-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #f1f5f9;
+  white-space: nowrap;
+  vertical-align: middle;
+  background: #fff;
+}
+
+.payroll-table tbody tr:hover td {
+  background: #f8fafc;
+}
+
+.payroll-table tbody tr.is-dirty td {
+  background: #fffbeb;
+}
+
+.payroll-col-sticky {
+  position: sticky;
+  z-index: 2;
+  background: #fff;
+}
+
+.payroll-table thead .payroll-col-sticky {
+  z-index: 4;
+  background: #f8fafc;
+}
+
+.payroll-col-code {
+  left: 0;
+  min-width: 72px;
+  width: 72px;
+  box-shadow: 1px 0 0 #e2e8f0;
+}
+
+.payroll-col-name {
+  left: 72px;
+  min-width: 140px;
+  width: 140px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 2px 0 6px -2px rgba(15, 23, 42, 0.08);
+  font-weight: 550;
+}
+
+.payroll-num,
+.payroll-money {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.payroll-net {
+  font-weight: 700;
+  color: #047857;
+}
+
+.payroll-input {
+  width: 64px;
+  max-width: 100%;
+  padding: 3px 5px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 12.5px;
+  text-align: right;
+  background: #fff;
+}
+
+.payroll-input:focus {
+  outline: none;
+  border-color: #94a3b8;
+  box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.25);
+}
+
+.payroll-col-action {
+  width: 56px;
+  min-width: 56px;
+  text-align: center;
+}
+
+.payroll-save-btn {
+  padding: 2px 8px !important;
+  font-size: 11px !important;
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .payroll-table-scroller {
+    max-height: calc(100vh - 220px);
+  }
+
+  .payroll-col-name {
+    min-width: 110px;
+    width: 110px;
+    max-width: 110px;
   }
 }

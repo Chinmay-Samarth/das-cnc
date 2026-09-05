@@ -206,6 +206,7 @@ async function writeLeaveDaysForRequest(request, reviewerId) {
   let leaveDaysWritten = 0;
   let skippedPresentDays = 0;
   let alreadyLeaveDays = 0;
+  const payType = request.pay_type === 'unpaid' ? 'unpaid' : 'paid';
 
   const { data: employee } = await supabase
     .from('employees')
@@ -232,7 +233,7 @@ async function writeLeaveDaysForRequest(request, reviewerId) {
       continue;
     }
 
-    const note = `Approved leave request ${request.id}`;
+    const note = `Approved ${payType} leave request ${request.id}`;
     if (existing) {
       const { error: uErr } = await supabase
         .from('attendance_records')
@@ -261,8 +262,12 @@ async function writeLeaveDaysForRequest(request, reviewerId) {
   return { leaveDaysWritten, skippedPresentDays, alreadyLeaveDays };
 }
 
-async function approveLeaveRequest(requestId, reviewerId, { reviewNote } = {}) {
+async function approveLeaveRequest(requestId, reviewerId, { reviewNote, payType } = {}) {
   if (!isValidUUID(requestId)) throw httpError('Invalid leave request id', 400);
+  const normalizedPayType = String(payType || '').toLowerCase();
+  if (normalizedPayType !== 'paid' && normalizedPayType !== 'unpaid') {
+    throw httpError('pay_type is required and must be paid or unpaid', 400);
+  }
 
   const { data: request, error } = await supabase
     .from('leave_requests')
@@ -275,12 +280,14 @@ async function approveLeaveRequest(requestId, reviewerId, { reviewNote } = {}) {
     throw httpError(`Leave request is already ${request.status}`, 409);
   }
 
-  const writeSummary = await writeLeaveDaysForRequest(request, reviewerId);
+  const requestWithPay = { ...request, pay_type: normalizedPayType };
+  const writeSummary = await writeLeaveDaysForRequest(requestWithPay, reviewerId);
   const now = new Date().toISOString();
   const { data: updated, error: uErr } = await supabase
     .from('leave_requests')
     .update({
       status: 'approved',
+      pay_type: normalizedPayType,
       reviewed_by: reviewerId || null,
       reviewed_at: now,
       review_note: reviewNote ? String(reviewNote).trim() : null,
@@ -296,6 +303,7 @@ async function approveLeaveRequest(requestId, reviewerId, { reviewNote } = {}) {
     leaveRequestId: updated.id,
     employeeId: updated.employee_id,
     status: 'approved',
+    payType: updated.pay_type,
     startDate: updated.start_date,
     endDate: updated.end_date,
     days: updated.days,

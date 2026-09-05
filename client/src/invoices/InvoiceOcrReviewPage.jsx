@@ -7,6 +7,7 @@ import { AlertBanner, PageHeader, StatusBadge } from '../components/mes';
 import { appAlert } from '../components/dialog';
 import { getCategoryConfig } from '../girn/girnCategoryConfig';
 import InvoiceRecheckLineTable from './InvoiceRecheckLineTable';
+import InvoiceRecheckTaxTable, { normalizeTaxRows, recalcTax } from './InvoiceRecheckTaxTable';
 import SupplierSelect from './SupplierSelect';
 import { InvoiceUploadInlineStatus } from './InvoiceUploadQueueStatus';
 import {
@@ -41,6 +42,7 @@ export default function InvoiceOcrReviewPage() {
   const [invoice, setInvoice] = useState(null);
   const [review, setReview] = useState(null);
   const [lines, setLines] = useState([]);
+  const [taxes, setTaxes] = useState([]);
   const [supplierId, setSupplierId] = useState('');
   const [supplierLabel, setSupplierLabel] = useState('');
   const [header, setHeader] = useState({
@@ -48,6 +50,8 @@ export default function InvoiceOcrReviewPage() {
     invoice_date: '',
     due_date: '',
     total_amount: '',
+    base_amount: '',
+    round_off: '',
   });
 
   const processing = Boolean(
@@ -66,6 +70,7 @@ export default function InvoiceOcrReviewPage() {
         setInvoice(detail.data.invoice);
         setReview(null);
         setLines([]);
+        setTaxes([]);
         return;
       }
 
@@ -80,6 +85,7 @@ export default function InvoiceOcrReviewPage() {
       setInvoice(inv);
       setReview(data.review);
       setLines((data.lines || inv.line_items || []).map(recalcLine));
+      setTaxes(normalizeTaxRows(inv.tax_items, inv.base_amount));
       setSupplierId(inv.supplier_id || '');
       setSupplierLabel(inv.suppliers?.name || '');
       setHeader({
@@ -87,6 +93,8 @@ export default function InvoiceOcrReviewPage() {
         invoice_date: inv.invoice_date || '',
         due_date: inv.due_date || '',
         total_amount: inv.total_amount ?? '',
+        base_amount: inv.base_amount ?? '',
+        round_off: inv.round_off ?? '',
       });
     } catch (err) {
       setError(err.response?.data?.error || 'Unable to load invoice review.');
@@ -199,16 +207,71 @@ export default function InvoiceOcrReviewPage() {
     });
   }
 
+  function handleRemoveLine(idx) {
+    setLines((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function handleTaxChange(idx, field, value) {
+    setTaxes((prev) => {
+      const next = [...prev];
+      const updated = { ...next[idx], [field]: value };
+      // Recalc amount from base × rate when base/rate change; keep manual amount edits
+      if (field === 'base' || field === 'rate') {
+        next[idx] = recalcTax(updated);
+      } else if (field === 'kind') {
+        next[idx] = { ...updated, kind: String(value || 'CGST').toUpperCase() };
+      } else {
+        next[idx] = updated;
+      }
+      return next;
+    });
+  }
+
+  function handleRemoveTax(idx) {
+    setTaxes((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function handleAddTax() {
+    const base = Number(header.base_amount);
+    setTaxes((prev) => [
+      ...prev,
+      recalcTax({
+        kind: prev.some((t) => t.kind === 'CGST') ? 'SGST' : 'CGST',
+        rate: 9,
+        base: Number.isFinite(base) ? base : '',
+        amount: '',
+      }),
+    ]);
+  }
+
   async function handleConfirm() {
     setSubmitting(true);
     setError('');
     try {
+      const normalizedTaxes = taxes
+        .map((t) => ({
+          kind: String(t.kind || '').toUpperCase(),
+          rate: Number(t.rate),
+          base: t.base === '' || t.base == null ? null : Number(t.base),
+          amount: t.amount === '' || t.amount == null ? null : Number(t.amount),
+        }))
+        .filter((t) => t.kind && (Number.isFinite(t.amount) || Number.isFinite(t.rate)));
+
+      const taxAmount = normalizedTaxes.reduce(
+        (sum, t) => sum + (Number.isFinite(t.amount) ? t.amount : 0),
+        0
+      );
+
       const payload = {
         supplier_id: supplierId,
         invoice_number: header.invoice_number,
         invoice_date: header.invoice_date,
         due_date: header.due_date,
         total_amount: header.total_amount,
+        base_amount: header.base_amount,
+        round_off: header.round_off,
+        tax_amount: taxAmount,
+        tax_items: normalizedTaxes,
         lines: lines.map((line) => ({
           ...line,
           scanned_description: line.scanned_description || line.description || '',
@@ -386,6 +449,27 @@ export default function InvoiceOcrReviewPage() {
                 onChange={(e) => setHeader((h) => ({ ...h, total_amount: e.target.value }))}
               />
             </label>
+
+            <label>
+              Taxable / base amount
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={header.base_amount}
+                onChange={(e) => setHeader((h) => ({ ...h, base_amount: e.target.value }))}
+              />
+            </label>
+
+            <label>
+              Round off
+              <input
+                type="number"
+                step="any"
+                value={header.round_off}
+                onChange={(e) => setHeader((h) => ({ ...h, round_off: e.target.value }))}
+              />
+            </label>
           </div>
 
           <h3 className="invoice-recheck-subtitle">Line items</h3>
@@ -394,6 +478,15 @@ export default function InvoiceOcrReviewPage() {
             onChange={handleLineChange}
             onMasterSelect={handleMasterSelect}
             onCategoryChange={handleCategoryChange}
+            onRemove={handleRemoveLine}
+          />
+
+          <h3 className="invoice-recheck-subtitle">Tax lines</h3>
+          <InvoiceRecheckTaxTable
+            taxes={taxes}
+            onChange={handleTaxChange}
+            onRemove={handleRemoveTax}
+            onAdd={handleAddTax}
           />
 
           <div className="invoice-recheck-actions">

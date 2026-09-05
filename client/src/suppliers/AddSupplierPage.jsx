@@ -5,6 +5,8 @@ import { FilePicker, FormActions, FormPage } from '../components/mes';
 
 const initialFormData = {
   name: '',
+  ledger_name: '',
+  tally_expense_ledger_type: '',
   official_address: '',
   billing_address: '',
   GSTIN: '',
@@ -65,6 +67,33 @@ export default function AddSupplierPage() {
           <label htmlFor="name">
             Supplier name <span className="required-mark">*</span>
             <input id="name" type="text" name="name" value={formData.name} onChange={handleChange} placeholder="e.g., ABC Engineering" required disabled={submitting} />
+          </label>
+          <label htmlFor="ledger_name">
+            Ledger name
+            <input
+              id="ledger_name"
+              type="text"
+              name="ledger_name"
+              value={formData.ledger_name}
+              onChange={handleChange}
+              placeholder="Exact Tally ledger name"
+              disabled={submitting}
+            />
+          </label>
+          <label htmlFor="tally_expense_ledger_type">
+            Expense ledger type
+            <select
+              id="tally_expense_ledger_type"
+              name="tally_expense_ledger_type"
+              value={formData.tally_expense_ledger_type}
+              onChange={handleChange}
+              disabled={submitting}
+            >
+              <option value="">Select type</option>
+              <option value="labour">Labour</option>
+              <option value="labour_service">Labour Service</option>
+              <option value="raw_material">Raw Material</option>
+            </select>
           </label>
           <label htmlFor="GSTIN">
             GSTIN <span className="required-mark">*</span>

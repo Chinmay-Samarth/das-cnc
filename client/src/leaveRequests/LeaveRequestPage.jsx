@@ -203,6 +203,11 @@ function ApplicantLeaveView() {
                 <p className="mes-list-item-sub">
                   <TruncatedText>{row.reason}</TruncatedText>
                 </p>
+                {row.pay_type ? (
+                  <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                    Pay type: {row.pay_type === 'paid' ? 'Paid leave' : 'Unpaid leave'}
+                  </p>
+                ) : null}
                 {row.review_note ? (
                   <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
                     Note: {row.review_note}
@@ -224,6 +229,7 @@ function AdminLeaveView({ initialStatus = 'pending' }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [busyId, setBusyId] = useState(null);
+  const [approveDraft, setApproveDraft] = useState(null); // { id, payType }
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) {
@@ -255,24 +261,36 @@ function AdminLeaveView({ initialStatus = 'pending' }) {
     });
   }, [subscribe, load]);
 
-  async function handleApprove(row) {
+  async function confirmApprove(row) {
+    if (!approveDraft || approveDraft.id !== row.id || !approveDraft.payType) {
+      await appAlert({
+        title: 'Select leave pay type',
+        message: 'Choose Paid leave or Unpaid leave before approving.',
+        tone: 'warning',
+      });
+      return;
+    }
+    const payLabel = approveDraft.payType === 'paid' ? 'Paid' : 'Unpaid';
     const ok = await appConfirm({
-      title: 'Approve leave?',
+      title: `Approve as ${payLabel} leave?`,
       message: `${row.employee_name || 'Employee'}: ${formatDisplayDate(row.start_date)} → ${formatDisplayDate(row.end_date)} (${row.days} day(s)). Present days will not be overwritten.`,
       confirmLabel: 'Approve',
     });
     if (!ok) return;
     setBusyId(row.id);
     try {
-      const { data } = await api.post(`/leave-requests/${row.id}/approve`);
+      const { data } = await api.post(`/leave-requests/${row.id}/approve`, {
+        pay_type: approveDraft.payType,
+      });
       const skipped = Number(data.skipped_present_days || 0);
       const written = Number(data.leave_days_written || 0);
+      setApproveDraft(null);
       await appAlert({
         title: 'Leave approved',
         message:
           skipped > 0
-            ? `Marked ${written} day(s) as leave. Skipped ${skipped} present day(s).`
-            : `Marked ${written} day(s) as leave.`,
+            ? `Marked ${written} day(s) as ${payLabel.toLowerCase()} leave. Skipped ${skipped} present day(s).`
+            : `Marked ${written} day(s) as ${payLabel.toLowerCase()} leave.`,
         tone: 'success',
       });
       await load();
@@ -350,55 +368,105 @@ function AdminLeaveView({ initialStatus = 'pending' }) {
                 <th>Reason</th>
                 <th>Requested</th>
                 <th>Status</th>
+                <th>Pay type</th>
                 <th />
               </tr>
             </thead>
             <tbody>
-              {requests.map((row) => (
-                <tr key={row.id}>
-                  <td>
-                    <div>{row.employee_name || '—'}</div>
-                    {row.employee_code ? (
-                      <div className="muted" style={{ fontSize: 12 }}>
-                        {row.employee_code}
-                      </div>
-                    ) : null}
-                  </td>
-                  <td>
-                    {formatDisplayDate(row.start_date)} → {formatDisplayDate(row.end_date)}
-                  </td>
-                  <td>{row.days}</td>
-                  <td style={{ maxWidth: 220 }}>
-                    <TruncatedText>{row.reason}</TruncatedText>
-                  </td>
-                  <td>{formatDisplayDateTime(row.created_at)}</td>
-                  <td>
-                    <StatusBadge status={statusTone(row.status)}>{row.status}</StatusBadge>
-                  </td>
-                  <td>
-                    {row.status === 'pending' ? (
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <button
-                          type="button"
-                          className="mes-btn mes-btn-primary"
-                          disabled={busyId === row.id}
-                          onClick={() => handleApprove(row)}
-                        >
-                          Approve
-                        </button>
-                        <button
-                          type="button"
-                          className="mes-btn mes-btn-secondary"
-                          disabled={busyId === row.id}
-                          onClick={() => handleDeny(row)}
-                        >
-                          Deny
-                        </button>
-                      </div>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
+              {requests.map((row) => {
+                const drafting = approveDraft?.id === row.id;
+                return (
+                  <tr key={row.id}>
+                    <td>
+                      <div>{row.employee_name || '—'}</div>
+                      {row.employee_code ? (
+                        <div className="muted" style={{ fontSize: 12 }}>
+                          {row.employee_code}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td>
+                      {formatDisplayDate(row.start_date)} → {formatDisplayDate(row.end_date)}
+                    </td>
+                    <td>{row.days}</td>
+                    <td style={{ maxWidth: 220 }}>
+                      <TruncatedText>{row.reason}</TruncatedText>
+                    </td>
+                    <td>{formatDisplayDateTime(row.created_at)}</td>
+                    <td>
+                      <StatusBadge status={statusTone(row.status)}>{row.status}</StatusBadge>
+                    </td>
+                    <td>
+                      {row.pay_type === 'paid' ? (
+                        <StatusBadge status="COMPLETED">Paid</StatusBadge>
+                      ) : row.pay_type === 'unpaid' ? (
+                        <StatusBadge status="overdue">Unpaid</StatusBadge>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
+                    <td>
+                      {row.status === 'pending' ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 200 }}>
+                          {drafting ? (
+                            <>
+                              <div className="mes-view-toggle" role="group" aria-label="Leave pay type">
+                                {['paid', 'unpaid'].map((t) => (
+                                  <button
+                                    key={t}
+                                    type="button"
+                                    className={`mes-view-toggle-btn${approveDraft.payType === t ? ' is-active' : ''}`}
+                                    onClick={() => setApproveDraft({ id: row.id, payType: t })}
+                                  >
+                                    {t === 'paid' ? 'Paid leave' : 'Unpaid leave'}
+                                  </button>
+                                ))}
+                              </div>
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <button
+                                  type="button"
+                                  className="mes-btn mes-btn-primary"
+                                  disabled={busyId === row.id || !approveDraft.payType}
+                                  onClick={() => confirmApprove(row)}
+                                >
+                                  Confirm
+                                </button>
+                                <button
+                                  type="button"
+                                  className="mes-btn mes-btn-secondary"
+                                  disabled={busyId === row.id}
+                                  onClick={() => setApproveDraft(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              <button
+                                type="button"
+                                className="mes-btn mes-btn-primary"
+                                disabled={busyId === row.id}
+                                onClick={() => setApproveDraft({ id: row.id, payType: 'paid' })}
+                              >
+                                Approve
+                              </button>
+                              <button
+                                type="button"
+                                className="mes-btn mes-btn-secondary"
+                                disabled={busyId === row.id}
+                                onClick={() => handleDeny(row)}
+                              >
+                                Deny
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
