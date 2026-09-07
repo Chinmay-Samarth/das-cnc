@@ -4,11 +4,20 @@
  */
 
 const { createClient } = require('@supabase/supabase-js');
+const { isTallyEnabled } = require('./tallyClient');
+const {
+  assertReadyForSalesTallySync,
+  syncSalesVoucherForInvoice,
+} = require('./tallySalesVoucher');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
+
+/** Prefer Component Name; also accept Regex Name if present on the master. */
+const COMPONENT_ITEM_NAME_SLUGS = ['component_name', 'regex_name'];
+const COMPONENT_ITEM_NAME_LABEL_RE = /^(component\s*name|regex\s*name)$/i;
 
 const GST_RATE = 18;
 const HALF_RATE = 9;
@@ -528,13 +537,7 @@ async function resolveLotBillingContext(lotId) {
   if (custErr) throw custErr;
   if (!customer) throw httpError('Customer not found', 404);
 
-  let componentLabel = null;
-  const { data: lookup } = await supabase
-    .from('v_master_lookup')
-    .select('record_id, label')
-    .eq('record_id', line.master_record_id)
-    .maybeSingle();
-  componentLabel = lookup?.label || null;
+  const componentLabel = await resolveComponentItemName(line.master_record_id);
 
   const remaining_qty = await remainingQtyForSchedule(schedule.id, schedule.quantity);
 
@@ -547,6 +550,56 @@ async function resolveLotBillingContext(lotId) {
     customer,
     componentLabel,
   };
+}
+
+/**
+ * Item name for sales / Tally: Component Name (or Regex Name), not v_master_lookup.label
+ * (lookup uses first required text field, which is Component ID).
+ */
+async function resolveComponentItemName(masterRecordId) {
+  if (!masterRecordId || !isValidUUID(masterRecordId)) return null;
+
+  const { data: record, error: recErr } = await supabase
+    .from('master_records')
+    .select('id, master_id')
+    .eq('id', masterRecordId)
+    .maybeSingle();
+  if (recErr) throw recErr;
+  if (!record?.master_id) return null;
+
+  const { data: schema, error: schemaErr } = await supabase
+    .from('v_master_schema')
+    .select('field_id, field_slug, field_label')
+    .eq('master_id', record.master_id);
+  if (schemaErr) throw schemaErr;
+
+  const fields = schema || [];
+  const bySlug = Object.fromEntries(fields.map((f) => [String(f.field_slug || ''), f]));
+
+  let fieldId = null;
+  for (const slug of COMPONENT_ITEM_NAME_SLUGS) {
+    if (bySlug[slug]?.field_id) {
+      fieldId = bySlug[slug].field_id;
+      break;
+    }
+  }
+  if (!fieldId) {
+    const byLabel = fields.find((f) =>
+      COMPONENT_ITEM_NAME_LABEL_RE.test(String(f.field_label || '').trim())
+    );
+    fieldId = byLabel?.field_id || null;
+  }
+  if (!fieldId) return null;
+
+  const { data: valueRow, error: valErr } = await supabase
+    .from('record_values')
+    .select('value')
+    .eq('record_id', masterRecordId)
+    .eq('field_id', fieldId)
+    .maybeSingle();
+  if (valErr) throw valErr;
+
+  return cleanText(valueRow?.value);
 }
 
 function buildLineItems({
@@ -633,7 +686,11 @@ async function getInvoiceById(id) {
           .maybeSingle()
       : Promise.resolve({ data: null }),
     data.customer_id
-      ? supabase.from('customers').select('id, name, gstin').eq('id', data.customer_id).maybeSingle()
+      ? supabase
+          .from('customers')
+          .select('id, name, gstin, ledger_name')
+          .eq('id', data.customer_id)
+          .maybeSingle()
       : Promise.resolve({ data: null }),
     data.lot_id
       ? supabase
@@ -672,6 +729,7 @@ async function getInvoiceById(id) {
     igst_amount: toNumber(data.igst_amount),
     total_amount: toNumber(data.total_amount),
     gst_rate: toNumber(data.gst_rate),
+    customer: customerRes.data || null,
     customer_name: customerRes.data?.name || data.customer_snapshot?.name || null,
     lot_number: lotRes.data?.lot_number || null,
     lot_status: lotRes.data?.status || null,
@@ -687,6 +745,23 @@ async function getInvoiceById(id) {
       recorded_by_employee: p.recorded_by ? empById[p.recorded_by] || null : null,
     })),
   };
+}
+
+async function persistSalesTallySyncResult(id, result) {
+  const { error } = await supabase
+    .from('sales_invoices')
+    .update({
+      tally_sync_status: result.status,
+      tally_sync_error: result.error || null,
+      tally_synced_at: result.syncedAt || null,
+      tally_voucher_number: result.voucherNumber || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+
+  if (error) {
+    console.error('Unable to persist sales Tally sync status:', error.message);
+  }
 }
 
 async function listInvoices({ status } = {}) {
@@ -1045,6 +1120,12 @@ async function recordPayment(id, actorId, body = {}) {
     throw httpError('Invoice is already paid', 409);
   }
 
+  const customer = inv.customer || null;
+  const tallyBlockReason = assertReadyForSalesTallySync(inv, customer);
+  if (tallyBlockReason) {
+    throw httpError(tallyBlockReason, 422);
+  }
+
   const txnId = cleanText(body.transaction_id);
   if (!txnId) throw httpError('transaction_id is required');
 
@@ -1070,20 +1151,118 @@ async function recordPayment(id, actorId, body = {}) {
   });
   if (payErr) throw payErr;
 
+  const paidPatch = {
+    status: 'paid',
+    paid_at: paidAt,
+    payment_transaction_id: txnId,
+    payment_recorded_by: actorId || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (isTallyEnabled()) {
+    paidPatch.tally_sync_status = 'pending';
+    paidPatch.tally_sync_error = null;
+  }
+
   const { data, error } = await supabase
     .from('sales_invoices')
-    .update({
-      status: 'paid',
-      paid_at: paidAt,
-      payment_transaction_id: txnId,
-      payment_recorded_by: actorId || null,
-      updated_at: new Date().toISOString(),
-    })
+    .update(paidPatch)
     .eq('id', id)
     .select('*')
     .single();
   if (error) throw error;
-  return getInvoiceById(data.id);
+
+  const paidInvoice = await getInvoiceById(data.id);
+  const invoiceForTally = await attachComponentItemName(paidInvoice);
+
+  if (isTallyEnabled()) {
+    const syncResult = await syncSalesVoucherForInvoice(
+      invoiceForTally,
+      invoiceForTally.customer || customer
+    );
+    await persistSalesTallySyncResult(id, syncResult);
+    return getInvoiceById(id);
+  }
+
+  await persistSalesTallySyncResult(id, {
+    status: 'skipped',
+    error: 'TALLY_ENABLED is not true — set TALLY_ENABLED=true and restart the API',
+    voucherNumber: null,
+    syncedAt: null,
+  });
+
+  return getInvoiceById(id);
+}
+
+async function retrySalesInvoiceTallySync(id) {
+  const inv = await getInvoiceById(id);
+  if (inv.status !== 'paid') {
+    throw httpError('Only paid sales invoices can be synced to Tally', 409);
+  }
+
+  const customer = inv.customer || null;
+
+  if (!isTallyEnabled()) {
+    await persistSalesTallySyncResult(id, {
+      status: 'skipped',
+      error: 'TALLY_ENABLED is not true — set TALLY_ENABLED=true and restart the API',
+      voucherNumber: null,
+      syncedAt: null,
+    });
+    return getInvoiceById(id);
+  }
+
+  const block = assertReadyForSalesTallySync(inv, customer);
+  if (block) throw httpError(block, 422);
+
+  await supabase
+    .from('sales_invoices')
+    .update({
+      tally_sync_status: 'pending',
+      tally_sync_error: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+
+  const syncResult = await syncSalesVoucherForInvoice(
+    await attachComponentItemName(inv),
+    customer
+  );
+  await persistSalesTallySyncResult(id, syncResult);
+  return getInvoiceById(id);
+}
+
+/**
+ * Ensure line description / component_name uses Component Name (not lookup label).
+ */
+async function attachComponentItemName(invoice) {
+  if (!invoice) return invoice;
+
+  let masterRecordId = null;
+  if (invoice.blanket_po_line_id && isValidUUID(invoice.blanket_po_line_id)) {
+    const { data: line } = await supabase
+      .from('blanket_po_lines')
+      .select('master_record_id')
+      .eq('id', invoice.blanket_po_line_id)
+      .maybeSingle();
+    masterRecordId = line?.master_record_id || null;
+  }
+
+  const componentName = masterRecordId
+    ? await resolveComponentItemName(masterRecordId)
+    : null;
+  if (!componentName) return invoice;
+
+  const lines = Array.isArray(invoice.line_items) ? [...invoice.line_items] : [];
+  if (lines[0]) {
+    lines[0] = { ...lines[0], description: componentName };
+  }
+
+  return {
+    ...invoice,
+    component_name: componentName,
+    line_items: lines,
+  };
 }
 
 async function markDispatched(lotId) {
@@ -1203,6 +1382,7 @@ module.exports = {
   confirmPrinted,
   cancelInvoice,
   recordPayment,
+  retrySalesInvoiceTallySync,
   markDispatched,
   assertLotPrintGate,
   findActiveInvoiceForLot,

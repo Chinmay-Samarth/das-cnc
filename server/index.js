@@ -12,6 +12,7 @@ const { evaluateSalesInvoiceOverdueAlerts } = require('./services/salesInvoiceAl
 const { evaluateProductionAlerts } = require('./services/productionAlertEngine');
 const { evaluateReorderAlerts } = require('./services/reorderAlertEngine');
 const { evaluatePredictiveReorder } = require('./services/predictiveReorderEngine');
+const { applyCurrentWeek } = require('./services/nightShiftRosterEngine');
 const cors = require('cors');
 const { initSocket, attachConnectionHandlers } = require('./socket');
 const { isTallyEnabled, tallyCompany, tallyUrl } = require('./services/tallyClient');
@@ -54,6 +55,7 @@ app.use('/api/campaigns', require('./routes/campaigns'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/leave-requests', require('./routes/leaveRequests'));
 app.use('/api/payroll', require('./routes/payroll'));
+app.use('/api/night-shift', require('./routes/nightShift'));
 app.use('/api/dispatch-shortfall-approvals', require('./routes/dispatchShortfallApprovals'));
 app.use('/api/girn-approvals', require('./routes/girnApprovals'));
 app.use('/api/admin', require('./routes/adminDashboard'));
@@ -100,6 +102,19 @@ cron.schedule('0 7 * * *', async () => {
     await markAbsentees();
   } catch (err) {
     console.error('Absent sweep failed:', err);
+  }
+}, {
+  timezone: process.env.TIMEZONE || 'Asia/Kolkata'
+});
+
+// Apply night-shift roster at start of ISO week (Monday 00:05 plant time)
+cron.schedule('5 0 * * 1', async () => {
+  console.log('Applying night shift weekly roster...');
+  try {
+    const result = await applyCurrentWeek();
+    console.log('Night shift roster applied:', result);
+  } catch (err) {
+    console.error('Night shift roster apply failed:', err);
   }
 }, {
   timezone: process.env.TIMEZONE || 'Asia/Kolkata'

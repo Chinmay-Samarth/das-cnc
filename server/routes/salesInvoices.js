@@ -13,10 +13,12 @@ const {
   confirmPrinted,
   cancelInvoice,
   recordPayment,
+  retrySalesInvoiceTallySync,
   findActiveInvoiceForLot,
   resolveLotBillingContext,
   storeSalesInvoicePdf,
 } = require('../services/salesInvoiceEngine');
+const { isTallyEnabled, tallyCompany, tallyUrl } = require('../services/tallyClient');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -127,6 +129,17 @@ router.get(
   })
 );
 
+router.get(
+  '/tally/status',
+  wrap(async (req, res) => {
+    return res.json({
+      tally_enabled: isTallyEnabled(),
+      company: tallyCompany() || null,
+      url: tallyUrl(),
+    });
+  })
+);
+
 router.post(
   '/',
   requireAdminOrSupervisor,
@@ -141,7 +154,10 @@ router.get(
   '/:id',
   wrap(async (req, res) => {
     const invoice = await getInvoiceById(req.params.id);
-    return res.json({ sales_invoice: invoice });
+    return res.json({
+      sales_invoice: invoice,
+      tally_enabled: isTallyEnabled(),
+    });
   })
 );
 
@@ -202,7 +218,22 @@ router.post(
   requireAdminOrSupervisor,
   wrap(async (req, res) => {
     const invoice = await recordPayment(req.params.id, actorId(req), req.body || {});
-    return res.json({ sales_invoice: invoice });
+    return res.json({
+      sales_invoice: invoice,
+      tally_enabled: isTallyEnabled(),
+    });
+  })
+);
+
+router.post(
+  '/:id/tally/sync',
+  requireAdminOrSupervisor,
+  wrap(async (req, res) => {
+    const invoice = await retrySalesInvoiceTallySync(req.params.id);
+    return res.json({
+      sales_invoice: invoice,
+      tally_enabled: isTallyEnabled(),
+    });
   })
 );
 

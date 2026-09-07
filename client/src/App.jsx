@@ -48,6 +48,7 @@ import ReadyForDispatchPage from './production/ReadyForDispatchPage';
 import OutsourcingPage from './production/OutsourcingPage';
 import LeaveRequestPage from './leaveRequests/LeaveRequestPage';
 import PayrollPage from './payroll/PayrollPage';
+import NightShiftPage from './nightShift/NightShiftPage';
 import ApprovalsPage, { DispatchApprovalsRedirect } from './approvals/ApprovalsPage';
 import SalesInvoicesPage from './salesInvoices/SalesInvoicesPage';
 import SalesInvoiceDetailsPage from './salesInvoices/SalesInvoiceDetailsPage';
@@ -181,6 +182,7 @@ export default function App() {
               </Route>
               <Route path="/attendance" element={<AttendancePage />} />
               <Route path="/payroll" element={<PayrollPage />} />
+              <Route path="/night-shift" element={<NightShiftPage />} />
               <Route path="/employees" element={<EmployeesPage />} />
               <Route path="/employees/add" element={<AddEmployeePage />} />
               <Route path="/employees/:id" element={<EmployeeDetailsPage />} />

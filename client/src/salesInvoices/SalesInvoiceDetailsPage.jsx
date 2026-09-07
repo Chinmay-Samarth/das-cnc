@@ -33,6 +33,8 @@ export default function SalesInvoiceDetailsPage() {
   const [downloaded, setDownloaded] = useState(false);
   const [pdfFile, setPdfFile] = useState(null);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [tallyEnabled, setTallyEnabled] = useState(false);
+  const [actionMessage, setActionMessage] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -40,6 +42,7 @@ export default function SalesInvoiceDetailsPage() {
     try {
       const { data } = await api.get(`/sales-invoices/${id}`);
       setInvoice(data.sales_invoice);
+      setTallyEnabled(Boolean(data.tally_enabled));
     } catch (err) {
       setError(err.response?.data?.error || 'Unable to load invoice');
       setInvoice(null);
@@ -51,6 +54,12 @@ export default function SalesInvoiceDetailsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!actionMessage) return undefined;
+    const timer = setTimeout(() => setActionMessage(''), 3500);
+    return () => clearTimeout(timer);
+  }, [actionMessage]);
 
   useEffect(() => {
     if (!invoice) {
@@ -134,6 +143,18 @@ export default function SalesInvoiceDetailsPage() {
   }
 
   async function handleRecordPayment() {
+    if (tallyEnabled) {
+      const ledgerName = String(
+        invoice?.customer?.ledger_name || ''
+      ).trim();
+      if (!ledgerName) {
+        await appAlert(
+          'Set ledger name on the customer before recording payment (Tally sync is enabled).'
+        );
+        return;
+      }
+    }
+
     const txn = await appPrompt('Transaction / UTR / cheque reference', '');
     if (txn == null) return;
     if (!String(txn).trim()) {
@@ -147,8 +168,42 @@ export default function SalesInvoiceDetailsPage() {
         amount: invoice.total_amount,
       });
       setInvoice(data.sales_invoice);
+      setTallyEnabled(Boolean(data.tally_enabled));
+      const syncStatus = data.sales_invoice?.tally_sync_status;
+      if (syncStatus === 'synced') {
+        setActionMessage('Payment recorded · synced to Tally');
+      } else if (syncStatus === 'failed') {
+        setActionMessage(
+          `Payment recorded · Tally sync failed: ${data.sales_invoice?.tally_sync_error || 'unknown error'}`
+        );
+      } else {
+        setActionMessage('Payment recorded');
+      }
     } catch (err) {
       await appAlert(err.response?.data?.error || 'Payment failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRetryTallySync() {
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/sales-invoices/${id}/tally/sync`);
+      setInvoice(data.sales_invoice);
+      setTallyEnabled(Boolean(data.tally_enabled));
+      const syncStatus = data.sales_invoice?.tally_sync_status;
+      if (syncStatus === 'synced') {
+        setActionMessage('Synced to Tally');
+      } else if (syncStatus === 'skipped') {
+        await appAlert(
+          data.sales_invoice?.tally_sync_error || 'Tally sync skipped'
+        );
+      } else {
+        await appAlert(data.sales_invoice?.tally_sync_error || 'Tally sync failed');
+      }
+    } catch (err) {
+      await appAlert(err.response?.data?.error || 'Unable to sync to Tally');
     } finally {
       setBusy(false);
     }
@@ -212,6 +267,11 @@ export default function SalesInvoiceDetailsPage() {
       />
 
       {error ? <p className="error-message">{error}</p> : null}
+      {actionMessage ? (
+        <p className="muted" style={{ marginBottom: 12 }}>
+          {actionMessage}
+        </p>
+      ) : null}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
         <button
@@ -253,6 +313,19 @@ export default function SalesInvoiceDetailsPage() {
           >
             <Banknote size={15} />
             Record payment
+          </button>
+        ) : null}
+        {invoice.status === 'paid' &&
+        tallyEnabled &&
+        invoice.tally_sync_status !== 'synced' ? (
+          <button
+            type="button"
+            className="mes-btn mes-btn-secondary"
+            disabled={busy}
+            onClick={handleRetryTallySync}
+          >
+            <RefreshCw size={15} />
+            Retry Tally sync
           </button>
         ) : null}
         {canCancel ? (
@@ -416,6 +489,29 @@ export default function SalesInvoiceDetailsPage() {
             <p style={{ margin: 0 }}>
               {invoice.due_date ? formatDisplayDate(invoice.due_date) : '—'}
             </p>
+          </div>
+          <div>
+            <p className="mes-eyebrow">Tally sync</p>
+            <p style={{ margin: 0 }}>
+              {invoice.tally_sync_status
+                ? String(invoice.tally_sync_status).toUpperCase()
+                : tallyEnabled
+                  ? 'Not synced yet'
+                  : 'Disabled'}
+              {invoice.tally_voucher_number
+                ? ` · ${invoice.tally_voucher_number}`
+                : ''}
+            </p>
+            {!tallyEnabled ? (
+              <p className="muted" style={{ margin: 0, color: '#b45309' }}>
+                Set TALLY_ENABLED=true to sync
+              </p>
+            ) : null}
+            {invoice.tally_sync_error ? (
+              <p className="muted" style={{ margin: 0, color: '#b91c1c' }}>
+                {invoice.tally_sync_error}
+              </p>
+            ) : null}
           </div>
           {invoice.cancel_reason ? (
             <div>

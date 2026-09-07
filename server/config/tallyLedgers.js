@@ -34,6 +34,25 @@ const INPUT_GST_LEDGERS = {
 
 const ROUND_OFF_LEDGER = 'Round Off';
 
+/** Single sales ledger for Phase 1 — must exist in Tally chart. */
+const DEFAULT_SALES_LEDGER = 'Das Cnc Products PVT LTD';
+
+/**
+ * Output Tax ledgers (sales). Exact spellings from company chart
+ * (Duties & Taxes → GST). Keys are percent rates.
+ */
+const OUTPUT_GST_LEDGERS = {
+  CGST: {
+    9: 'Output Tax CGST@9%',
+  },
+  SGST: {
+    9: 'Output Tax SGST@9%',
+  },
+  IGST: {
+    18: 'OUTPUT TAX IGST@18%',
+  },
+};
+
 function isValidExpenseType(value) {
   return EXPENSE_TYPES.includes(String(value || '').trim());
 }
@@ -101,15 +120,35 @@ function inputGstLedgerName(kind, rate) {
   return map[key];
 }
 
+function outputGstLedgerName(kind, rate) {
+  const rawKind = String(kind || '').toUpperCase();
+  const normalizedKind = rawKind === 'UTGST' ? 'SGST' : rawKind;
+  const map = OUTPUT_GST_LEDGERS[normalizedKind];
+  if (!map) return null;
+  const percent = rateToPercent(rate);
+  const key = nearestRateKey(map, percent);
+  if (key == null) return null;
+  return map[key];
+}
+
+function salesLedgerName(_type) {
+  // Phase 1: one ledger only. Phase 2 will map by product type.
+  return DEFAULT_SALES_LEDGER;
+}
+
 module.exports = {
   EXPENSE_LEDGER_BY_TYPE,
   RAW_MATERIAL_IGST_18_LEDGER,
   EXPENSE_TYPES,
   INPUT_GST_LEDGERS,
+  OUTPUT_GST_LEDGERS,
+  DEFAULT_SALES_LEDGER,
   ROUND_OFF_LEDGER,
   isValidExpenseType,
   expenseLedgerName,
   taxItemsHaveIgst18,
   rateToPercent,
   inputGstLedgerName,
+  outputGstLedgerName,
+  salesLedgerName,
 };

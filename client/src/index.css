@@ -11093,3 +11093,236 @@ button:hover:not(:disabled) {
     max-width: 110px;
   }
 }
+
+/* ── Night Shift week stack ── */
+.night-week-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.night-week-card {
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.night-week-card.is-current {
+  border-right: 3px solid var(--green-dot, #10b981);
+  box-shadow: 0 8px 20px rgba(16, 185, 129, 0.08);
+}
+
+.night-week-card.is-expanded {
+  border-color: rgba(29, 78, 216, 0.28);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.07);
+}
+
+.night-week-card.is-current.is-expanded {
+  border-right-color: var(--green-dot, #10b981);
+}
+
+.night-week-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 16px 18px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+
+.night-week-card-header:hover {
+  background: rgba(243, 246, 251, 0.85) !important;
+}
+
+.night-week-card-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.night-week-card-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary, #64748b);
+}
+
+.night-week-card-title strong {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary, #0f172a);
+}
+
+.night-week-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.night-week-card-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary, #64748b);
+  white-space: nowrap;
+}
+
+.night-week-chevron {
+  color: var(--text-secondary, #64748b);
+  transition: transform 0.28s ease;
+  flex-shrink: 0;
+}
+
+.night-week-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.night-week-card-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.32s ease;
+}
+
+.night-week-card-body.is-open {
+  grid-template-rows: 1fr;
+}
+
+.night-week-card-body-inner {
+  overflow: hidden;
+  min-height: 0;
+  padding: 0 18px;
+  border-top: 1px solid transparent;
+  transition: padding 0.32s ease, border-color 0.2s ease;
+}
+
+.night-week-card-body.is-open .night-week-card-body-inner {
+  padding: 4px 18px 18px;
+  border-top-color: var(--border-default, #e2e8f0);
+}
+
+.night-week-add {
+  margin: 12px 0 16px;
+}
+
+.night-week-readonly-note {
+  margin: 12px 0 16px;
+  font-size: 13px;
+}
+
+.night-week-roster {
+  max-height: none;
+}
+
+.night-add-dialog {
+  width: min(440px, 100%);
+  max-height: min(560px, calc(100vh - 40px));
+  display: flex;
+  flex-direction: column;
+}
+
+.night-add-dialog .app-dialog-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.night-add-search {
+  position: relative;
+  display: block;
+  margin: 0 0 12px;
+}
+
+.night-add-search svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-secondary, #64748b);
+  pointer-events: none;
+}
+
+.night-add-search .app-dialog-input {
+  padding-left: 36px;
+  margin: 0;
+}
+
+.night-add-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow: auto;
+  margin: 0 0 4px;
+  padding-right: 2px;
+}
+
+.night-add-empty {
+  margin: 12px 4px;
+  font-size: 13px;
+}
+
+.night-add-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default, #e2e8f0);
+  border-radius: var(--radius-md, 10px);
+  background: var(--bg-overlay, #f8fafc);
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.night-add-option:hover:not(:disabled) {
+  border-color: rgba(29, 78, 216, 0.35);
+  background: #eff6ff;
+}
+
+.night-add-option:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.night-add-option-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.night-add-option-info strong {
+  font-size: 14px;
+}
+
+.night-add-option-info span {
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
+}
+
+@media (max-width: 640px) {
+  .night-week-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .night-week-card-meta {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
