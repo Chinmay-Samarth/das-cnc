@@ -15,7 +15,7 @@ function round2(value) {
 
 /**
  * Export a single ledger's closing balance from Tally.
- * Closing balance convention: positive = debit (customer owes us for Sundry Debtors).
+ * Closing balance convention: positive = debit.
  */
 function buildLedgerOutstandingXml(ledgerName) {
   const company = tallyCompany();
@@ -24,7 +24,7 @@ function buildLedgerOutstandingXml(ledgerName) {
     <VERSION>1</VERSION>
     <TALLYREQUEST>Export</TALLYREQUEST>
     <TYPE>Collection</TYPE>
-    <ID>ERP Customer Outstanding</ID>
+    <ID>ERP Ledger Outstanding</ID>
   </HEADER>
   <BODY>
     <DESC>
@@ -34,7 +34,7 @@ function buildLedgerOutstandingXml(ledgerName) {
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
-          <COLLECTION NAME="ERP Customer Outstanding" ISMODIFY="No">
+          <COLLECTION NAME="ERP Ledger Outstanding" ISMODIFY="No">
             <TYPE>Ledger</TYPE>
             <FILTERS>ERPMatchLedger</FILTERS>
             <FETCH>Name, ClosingBalance, Parent</FETCH>
@@ -55,7 +55,6 @@ function parseClosingBalance(xmlBody) {
   const match = body.match(closingRe);
   if (match) return round2(match[1]);
 
-  // Some exports use attribute form
   const attrRe = /CLOSINGBALANCE="(-?[\d.]+)"/i;
   const attr = body.match(attrRe);
   if (attr) return round2(attr[1]);
@@ -64,13 +63,13 @@ function parseClosingBalance(xmlBody) {
 }
 
 /**
- * Fetch how much a customer owes (ledger closing balance) from Tally.
- * @returns {{ outstanding: number|null, ledger_name: string, error: string|null }}
+ * Fetch ledger closing balance from Tally.
+ * @returns {{ outstanding: number|null, closing_balance: number|null, ledger_name: string|null, error: string|null }}
  */
-async function fetchCustomerOutstandingFromTally(ledgerName) {
+async function fetchLedgerOutstandingFromTally(ledgerName) {
   const name = String(ledgerName || '').trim();
   if (!name) {
-    return { outstanding: null, ledger_name: null, error: 'Customer ledger name is required' };
+    return { outstanding: null, ledger_name: null, error: 'Ledger name is required' };
   }
 
   if (!isTallyEnabled()) {
@@ -91,9 +90,7 @@ async function fetchCustomerOutstandingFromTally(ledgerName) {
         error: 'Could not parse closing balance from Tally',
       };
     }
-    // For debtors, debit (positive in Tally ISDEEMEDPOSITIVE convention) means they owe us.
-    // Exported CLOSINGBALANCE is often negative for credit balances; take absolute when
-    // parent is Sundry Debtors-style. We return raw balance and a positive "owes" amount.
+    // Absolute amount for UI "Owes" / "Payable" cards (debtors & creditors).
     const owes = Math.abs(balance);
     return { outstanding: owes, closing_balance: balance, ledger_name: name, error: null };
   } catch (err) {
@@ -105,8 +102,18 @@ async function fetchCustomerOutstandingFromTally(ledgerName) {
   }
 }
 
+async function fetchCustomerOutstandingFromTally(ledgerName) {
+  return fetchLedgerOutstandingFromTally(ledgerName);
+}
+
+async function fetchSupplierOutstandingFromTally(ledgerName) {
+  return fetchLedgerOutstandingFromTally(ledgerName);
+}
+
 module.exports = {
   fetchCustomerOutstandingFromTally,
+  fetchSupplierOutstandingFromTally,
+  fetchLedgerOutstandingFromTally,
   buildLedgerOutstandingXml,
   parseClosingBalance,
 };

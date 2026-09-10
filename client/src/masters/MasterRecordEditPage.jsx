@@ -17,7 +17,7 @@ export default function MasterRecordEditPage() {
     <MasterForm
       slug={slug}
       recordId={id}
-      variant="edit"
+      variant="wizard"
       onSave={handleSave}
       onCancel={handleCancel}
     />

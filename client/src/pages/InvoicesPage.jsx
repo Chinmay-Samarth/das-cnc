@@ -49,6 +49,20 @@ const fmt = (val) =>
     ? '—'
     : Number(val).toLocaleString('en-IN');
 
+/** Prefer base + tax + round_off when stored total drifted (OCR ₹1 gaps). */
+function invoiceDisplayTotal(invoice) {
+  const base = Number(invoice?.base_amount);
+  const tax = Number(invoice?.tax_amount);
+  const roundOff = Number(invoice?.round_off) || 0;
+  const stored = Number(invoice?.total_amount);
+  if (!Number.isFinite(base) || !Number.isFinite(tax)) {
+    return Number.isFinite(stored) ? stored : 0;
+  }
+  const computed = Math.round((base + tax + roundOff) * 100) / 100;
+  if (!Number.isFinite(stored) || Math.abs(stored - computed) >= 0.005) return computed;
+  return stored;
+}
+
 function currentMonthRange() {
   const now = new Date();
   return {
@@ -137,7 +151,7 @@ export default function InvoicesPage() {
         invoice.suppliers?.name,
         invoice.invoice_number,
         invoice.invoice_date,
-        invoice.total_amount,
+        invoiceDisplayTotal(invoice),
         invoice.due_date,
         invoice.status,
         invoice.customer_GSTIN,
@@ -148,7 +162,7 @@ export default function InvoicesPage() {
     });
 
     return sortBy(matches, sortKey, sortAsc, (row) => {
-      if (sortKey === 'total_amount') return Number(row.total_amount) || 0;
+      if (sortKey === 'total_amount') return invoiceDisplayTotal(row);
       if (sortKey === 'supplier_name') return row.suppliers?.name ?? row.supplier_name ?? '';
       return row[sortKey] ?? '';
     });
@@ -403,7 +417,7 @@ export default function InvoicesPage() {
                     <td>{item.suppliers?.name || '—'}</td>
                     <td>{item.invoice_number || '—'}</td>
                     <td>{formatDisplayDate(item.invoice_date || item.created_at)}</td>
-                    <td>₹{fmt(item.total_amount)}</td>
+                    <td>₹{fmt(invoiceDisplayTotal(item))}</td>
                     <td>
                       {Number(item.po_advance_amount) > 0
                         ? `₹${fmt(item.po_advance_amount)}`

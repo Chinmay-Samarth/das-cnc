@@ -37,6 +37,7 @@ const {
   listReadyForDispatch,
   listLotOpCompletions,
   mergeLotsForDispatch,
+  pinLotDeliverySchedule,
 } = require('../services/lotTravelerEngine');
 const {
   getOpCardById,
@@ -509,6 +510,17 @@ router.get(
   wrap(async (req, res) => {
     const lots = await listReadyForDispatch();
     return res.json({ lots });
+  })
+);
+
+router.post(
+  '/lots/:id/delivery-schedule',
+  wrap(async (req, res) => {
+    const lot = await pinLotDeliverySchedule(
+      req.params.id,
+      req.body?.delivery_schedule_id
+    );
+    return res.json({ lot });
   })
 );
 

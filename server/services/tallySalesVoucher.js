@@ -29,24 +29,6 @@ function resolvePartyLedgerName(customer) {
   return name || null;
 }
 
-function resolveItemDetails(invoice) {
-  const line = Array.isArray(invoice?.line_items) ? invoice.line_items[0] : null;
-  const itemName = String(
-    line?.description || invoice?.component_name || 'Component'
-  ).trim();
-  const quantity =
-    line?.quantity != null ? Number(line.quantity) : Number(invoice?.quantity);
-  const rate =
-    line?.unit_price != null ? Number(line.unit_price) : Number(invoice?.unit_price);
-  const uom = String(line?.uom || invoice?.uom || '').trim();
-  return {
-    itemName: itemName || 'Component',
-    quantity: Number.isFinite(quantity) ? quantity : null,
-    rate: Number.isFinite(rate) ? rate : null,
-    uom: uom || null,
-  };
-}
-
 function buildOutputGstLegs(invoice) {
   const taxType = String(invoice?.tax_type || '').toUpperCase();
   const gstRate = rateToPercent(invoice?.gst_rate) ?? 18;
@@ -182,14 +164,7 @@ function buildSalesVoucherXml({ invoice, customer }) {
     );
   }
 
-  const { itemName, quantity, rate, uom } = resolveItemDetails(invoice);
-  const qtyPart =
-    quantity != null
-      ? `Qty ${quantity}${uom ? ` ${uom}` : ''}`
-      : null;
-  const ratePart = rate != null ? `Rate ${rate}` : null;
-  const itemParts = [itemName, qtyPart, ratePart].filter(Boolean).join(' | ');
-  const narration = `Sales ${invoiceNumber} | ${itemParts} | ERP sales sync`;
+  const narration = String(invoiceNumber || '').trim();
 
   // Sales: party debit (ISDEEMEDPOSITIVE Yes), sales + GST credits (No)
   let entriesXml = ledgerEntryXml({

@@ -98,7 +98,7 @@ function buildReceiptVoucherXml({
   const date = DEFAULT_TALLY_VOUCHER_DATE;
   const vchNo = String(voucherNumber || reference || '').trim() || `RCT-${Date.now()}`;
   const ref = String(reference || vchNo).trim();
-  const narr = String(narration || `Receipt ${ref} | ERP sync`).trim();
+  const narr = String(narration ?? ref).trim();
 
   let entriesXml = ledgerEntryXml({
     ledgerName: bank,
@@ -219,7 +219,7 @@ async function syncReceiptVoucherForInvoice(invoice, customer, { bankLedger, amo
     amount: payAmount,
     reference: ref || invoiceNumber,
     voucherNumber: `RCT-${invoiceNumber || invoice?.id}`,
-    narration: `Receipt ${ref || invoiceNumber} | Invoice ${invoiceNumber} | ERP`,
+    narration: ref || '',
     billAllocations: invoiceNumber
       ? [{ name: invoiceNumber, amount: payAmount, billType: 'Agst Ref' }]
       : [],
@@ -262,7 +262,7 @@ async function syncReceiptVoucherForInvoices(invoices, customer, { bankLedger, a
     amount: payAmount,
     reference: ref || numbers,
     voucherNumber: `RCT-BULK-${Date.now()}`,
-    narration: `Bulk receipt ${ref || ''} | Invoices ${numbers} | ERP`,
+    narration: ref || '',
     billAllocations: allocations,
   });
 }

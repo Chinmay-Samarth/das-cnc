@@ -85,6 +85,20 @@ function taxLineAmount(tax, baseAmount) {
   return 0;
 }
 
+/** Prefer base + tax + round_off when stored total is out of sync (OCR ₹1 gaps). */
+function reconcileGrandTotal(invoice, taxFallback = 0) {
+  const base = Number(invoice?.base_amount);
+  const taxRaw = invoice?.tax_amount != null ? Number(invoice.tax_amount) : Number(taxFallback);
+  const roundOff = Number(invoice?.round_off) || 0;
+  const stored = Number(invoice?.total_amount);
+  if (!Number.isFinite(base) || !Number.isFinite(taxRaw)) {
+    return Number.isFinite(stored) ? stored : 0;
+  }
+  const computed = Math.round((base + taxRaw + roundOff) * 100) / 100;
+  if (!Number.isFinite(stored) || Math.abs(stored - computed) >= 0.005) return computed;
+  return stored;
+}
+
 function taxKindFromRate(rate) {
   const pct = taxRatePercent(rate);
   if (pct == null) return 'GST';
@@ -286,6 +300,9 @@ export default function InvoiceDetails() {
   const supplier = invoice.suppliers ?? {};
   const canPay = statusKey === 'due' || statusKey === 'overdue';
   const totalGst = taxLines.reduce((sum, tax) => sum + taxLineAmount(tax, invoice.base_amount), 0);
+  const taxAmountDisplay = Number(invoice.tax_amount ?? totalGst) || 0;
+  const roundOffDisplay = Number(invoice.round_off) || 0;
+  const grandTotal = reconcileGrandTotal(invoice, totalGst);
   const combinedGstRate = (() => {
     const percents = taxLines.map((t) => taxRatePercent(t.rate)).filter((n) => n != null);
     if (!percents.length) return invoice.gst_rate ?? 18;
@@ -367,7 +384,7 @@ export default function InvoiceDetails() {
     }
 
     const advance = Number(invoice?.po_advance_amount) || 0;
-    const total = Number(invoice?.total_amount) || 0;
+    const total = reconcileGrandTotal(invoice);
     const remaining = Math.max(Math.round((total - advance) * 100) / 100, 0);
 
     let bankOptions = [];
@@ -648,8 +665,7 @@ export default function InvoiceDetails() {
                     invoice.amount_due_after_advance != null
                       ? invoice.amount_due_after_advance
                       : Math.max(
-                          (Number(invoice.total_amount) || 0) -
-                            (Number(invoice.po_advance_amount) || 0),
+                          grandTotal - (Number(invoice.po_advance_amount) || 0),
                           0
                         )
                   )}
@@ -787,20 +803,20 @@ export default function InvoiceDetails() {
               </div>
               <div style={styles.summaryLine}>
                 <span style={styles.summaryLabel}>Total Taxes</span>
-                <span style={styles.summaryValue}>₹{fmtMoney(invoice.tax_amount ?? totalGst)}</span>
+                <span style={styles.summaryValue}>₹{fmtMoney(taxAmountDisplay)}</span>
               </div>
-              {(invoice.round_off != null && Number(invoice.round_off) !== 0) && (
+              {roundOffDisplay !== 0 && (
                 <div style={styles.summaryLine}>
                   <span style={styles.summaryLabel}>Round Off</span>
                   <span style={styles.summaryValue}>
-                    {Number(invoice.round_off) > 0 ? '+' : ''}
-                    ₹{fmtMoney(invoice.round_off)}
+                    {roundOffDisplay > 0 ? '+' : ''}
+                    ₹{fmtMoney(roundOffDisplay)}
                   </span>
                 </div>
               )}
               <div style={styles.solidDivider} />
               <span style={styles.grandTotalEyebrow}>Grand Total</span>
-              <p style={styles.grandTotalAmount}>₹{fmtMoney(invoice.total_amount)}</p>
+              <p style={styles.grandTotalAmount}>₹{fmtMoney(grandTotal)}</p>
             </section>
           </div>
         </div>

@@ -54,6 +54,7 @@ import SalesInvoicesPage from './salesInvoices/SalesInvoicesPage';
 import SalesInvoiceDetailsPage from './salesInvoices/SalesInvoiceDetailsPage';
 import AddSalesInvoiceWizard from './salesInvoices/AddSalesInvoiceWizard';
 import SalesPaymentsPage from './salesInvoices/SalesPaymentsPage';
+import PurchasePaymentsPage from './invoices/PurchasePaymentsPage';
 import CompanySettingsPage from './salesInvoices/CompanySettingsPage';
 import NotFoundPage from './pages/NotFoundPage';
 import PurchaseOrderDetailPage from './procurement/PurchaseOrderDetailPage';
@@ -196,6 +197,7 @@ export default function App() {
               <Route path="/components" element={<ComponentRedirect />} />
               <Route path="/components/:id" element={<ComponentDetailRedirect />} />
               <Route path="/invoices" element={<InvoicesPage />} />
+              <Route path="/purchase-payments" element={<PurchasePaymentsPage />} />
               <Route path="/invoices/:id/review" element={<InvoiceOcrReviewPage />} />
               <Route path="/invoices/:id" element={<InvoiceDetails />} />
               <Route path="/sales-invoices" element={<SalesInvoicesPage />} />

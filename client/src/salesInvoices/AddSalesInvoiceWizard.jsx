@@ -42,6 +42,7 @@ export default function AddSalesInvoiceWizard() {
   const [searchParams] = useSearchParams();
   const lotId = searchParams.get('lotId');
   const quantityParam = searchParams.get('quantity');
+  const scheduleIdParam = searchParams.get('delivery_schedule_id');
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -84,9 +85,12 @@ export default function AddSalesInvoiceWizard() {
     setLoading(true);
     setError(null);
     try {
+      const previewQs = scheduleIdParam
+        ? `?delivery_schedule_id=${encodeURIComponent(scheduleIdParam)}`
+        : '';
       const [byLot, prev] = await Promise.all([
         api.get(`/sales-invoices/by-lot/${lotId}`),
-        api.get(`/sales-invoices/preview-lot/${lotId}`),
+        api.get(`/sales-invoices/preview-lot/${lotId}${previewQs}`),
       ]);
       const existing = byLot.data?.sales_invoice;
       setPreview(prev.data);
@@ -101,7 +105,9 @@ export default function AddSalesInvoiceWizard() {
       const defaultQty =
         Number.isFinite(qtyFromQuery) && qtyFromQuery > 0
           ? qtyFromQuery
-          : prev.data?.lot?.quantity;
+          : prev.data?.remaining_qty != null
+            ? prev.data.remaining_qty
+            : prev.data?.lot?.quantity;
       setQuantity(String(defaultQty ?? ''));
       setUnitPrice(String(prev.data?.line?.unit_price ?? ''));
       const gstin = prev.data?.customer?.gstin || '';
@@ -122,7 +128,7 @@ export default function AddSalesInvoiceWizard() {
     } finally {
       setLoading(false);
     }
-  }, [lotId, quantityParam]);
+  }, [lotId, quantityParam, scheduleIdParam]);
 
   useEffect(() => {
     bootstrap();
@@ -177,6 +183,11 @@ export default function AddSalesInvoiceWizard() {
       notes: notes || undefined,
       company_override: { ...companyForm },
     };
+    if (scheduleIdParam) {
+      payload.delivery_schedule_id = scheduleIdParam;
+    } else if (preview?.schedule?.id) {
+      payload.delivery_schedule_id = preview.schedule.id;
+    }
 
     if (saveCompany) {
       await api.patch('/sales-invoices/company-settings', companyForm);
@@ -370,7 +381,20 @@ export default function AddSalesInvoiceWizard() {
             <p className="muted">
               Schedule: <strong>{preview.schedule?.schedule_number}</strong> · Due{' '}
               {preview.schedule?.due_date}
+              {preview.remaining_qty != null ? (
+                <>
+                  {' '}
+                  · Remaining <strong>{Number(preview.remaining_qty)}</strong>
+                </>
+              ) : null}
             </p>
+            {preview.schedule_choice_required ? (
+              <AlertBanner tone="warning">
+                Past-due and upcoming schedules both have remaining qty. The schedule above is what
+                this invoice will bill — change it on Ready for Dispatch before creating the draft if
+                needed.
+              </AlertBanner>
+            ) : null}
             <p className="muted">
               Blanket: <strong>{preview.blanket?.blanket_number}</strong>
             </p>

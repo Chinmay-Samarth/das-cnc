@@ -7,9 +7,18 @@ function normalizeOption(option) {
     const text = String(option)
     return { value: text, label: text }
   }
+  const composed = [option.typeLabel, option.title, option.subtitle]
+    .filter(Boolean)
+    .join(' · ')
+  const label =
+    option.label ??
+    (composed || String(option.value ?? option.record_id ?? option.id ?? ''))
   return {
     value: option.value ?? option.record_id ?? option.id ?? '',
-    label: option.label ?? String(option.value ?? option.record_id ?? option.id ?? ''),
+    label,
+    typeLabel: option.typeLabel || option.type_label || null,
+    title: option.title || null,
+    subtitle: option.subtitle || null,
     raw: option,
   }
 }
@@ -211,17 +220,32 @@ export default function FormSearchSelect({
             filteredOptions.map((option, index) => {
               const isSelected = String(option.value) === String(value)
               const isActive = index === activeIndex
+              const rich = !!(option.typeLabel || option.title || option.subtitle)
               return (
                 <button
                   key={String(option.value)}
                   type="button"
                   role="option"
                   aria-selected={isSelected}
-                  className={`global-search-result is-simple${isSelected || isActive ? ' is-active' : ''}`}
+                  className={`global-search-result${rich ? '' : ' is-simple'}${isSelected || isActive ? ' is-active' : ''}`}
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => selectOption(option)}
                 >
-                  <span className="global-search-result-title">{option.label}</span>
+                  {rich ? (
+                    <>
+                      {option.typeLabel ? (
+                        <span className="global-search-result-type">{option.typeLabel}</span>
+                      ) : null}
+                      <span className="global-search-result-title">
+                        {option.title || option.label}
+                      </span>
+                      {option.subtitle ? (
+                        <span className="global-search-result-subtitle">{option.subtitle}</span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="global-search-result-title">{option.label}</span>
+                  )}
                 </button>
               )
             })

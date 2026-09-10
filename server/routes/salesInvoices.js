@@ -108,7 +108,10 @@ router.get(
 router.get(
   '/preview-lot/:lotId',
   wrap(async (req, res) => {
-    const ctx = await resolveLotBillingContext(req.params.lotId);
+    const preferredScheduleId = req.query.delivery_schedule_id || null;
+    const ctx = await resolveLotBillingContext(req.params.lotId, {
+      preferredScheduleId,
+    });
     const company = await getCompanySettings();
     return res.json({
       lot: {
@@ -116,12 +119,15 @@ router.get(
         lot_number: ctx.lot.lot_number,
         quantity: ctx.lot.quantity,
         status: ctx.lot.status,
+        delivery_schedule_id: ctx.lot.delivery_schedule_id || null,
       },
       schedule: {
         ...ctx.schedule,
         remaining_qty: ctx.remaining_qty,
       },
       remaining_qty: ctx.remaining_qty,
+      schedule_options: ctx.schedule_options || [],
+      schedule_choice_required: !!ctx.schedule_choice_required,
       line: ctx.line,
       blanket: ctx.blanket,
       customer: ctx.customer,

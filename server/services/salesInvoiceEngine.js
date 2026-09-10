@@ -22,14 +22,20 @@ const supabase = createClient(
 /** Prefer Component Name; also accept Regex Name if present on the master. */
 const COMPONENT_ITEM_NAME_SLUGS = ['component_name', 'regex_name'];
 const COMPONENT_ITEM_NAME_LABEL_RE = /^(component\s*name|regex\s*name)$/i;
+/** Prefer drawing_no; also accept common drawing / drg variants. */
 const DRAWING_NUMBER_SLUGS = [
-  'drawing_number',
   'drawing_no',
+  'drawing_number',
   'drg_no',
   'drg_number',
   'drawing',
 ];
+const DRAWING_NUMBER_SLUG_RE = /drawing[_\s-]?no|drg[_\s-]?no|drawing[_\s-]?number|^drawing$/i;
 const DRAWING_NUMBER_LABEL_RE = /^(drawing(\s*(no\.?|number))?|drg\.?\s*no\.?)$/i;
+/** HSN from dynamic component master (hsn_code slug). */
+const HSN_CODE_SLUGS = ['hsn_code', 'hsn', 'sac_code', 'sac'];
+const HSN_CODE_SLUG_RE = /hsn[_\s-]?code|^hsn$|sac[_\s-]?code|^sac$/i;
+const HSN_CODE_LABEL_RE = /^(hsn(\s*code)?|sac(\s*code)?)$/i;
 
 const GST_RATE = 18;
 const HALF_RATE = 9;
@@ -384,40 +390,129 @@ function remainingFromShipped(scheduleQty, shipped) {
   return Math.round((toNumber(scheduleQty) - toNumber(shipped)) * 10000) / 10000;
 }
 
+function todayDateString() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function scheduleBucket(dueDate, today = todayDateString()) {
+  const due = String(dueDate || '').slice(0, 10);
+  if (!due) return 'upcoming';
+  return due < today ? 'past_due' : 'upcoming';
+}
+
+function toScheduleOption(sched, remaining, today = todayDateString()) {
+  const due = String(sched.due_date || '').slice(0, 10);
+  const bucket = scheduleBucket(due, today);
+  const isOneOff = sched.rule_id == null;
+  return {
+    id: sched.id,
+    schedule_number: sched.schedule_number || null,
+    due_date: sched.due_date || null,
+    remaining_qty: toNumber(remaining),
+    original_qty: toNumber(sched.quantity),
+    bucket,
+    is_one_off: isOneOff,
+    rule_id: sched.rule_id ?? null,
+  };
+}
+
+function choiceRequiredFromOptions(options) {
+  if (!options?.length) return false;
+  let past = false;
+  let upcoming = false;
+  for (const opt of options) {
+    if (opt.bucket === 'past_due') past = true;
+    else upcoming = true;
+    if (past && upcoming) return true;
+  }
+  return false;
+}
+
+function pickOpenFromList(openList) {
+  if (!openList?.length) return null;
+  return openList[0];
+}
+
 /**
- * Earliest-due campaign coverage row that still has remaining shippable qty.
+ * Open campaign coverage rows that still have remaining shippable qty (earliest due first).
  */
-async function pickOpenCampaignScheduleId(campaignId) {
-  if (!isValidUUID(campaignId)) return null;
+async function listOpenCampaignSchedules(campaignId) {
+  if (!isValidUUID(campaignId)) return [];
   const { data: coverage, error: covErr } = await supabase
     .from('campaign_schedule_coverage')
     .select('delivery_schedule_id, schedule_qty, covered_qty')
     .eq('campaign_id', campaignId);
   if (covErr) throw covErr;
-  if (!coverage?.length) return null;
+  if (!coverage?.length) return [];
 
   const scheduleIds = coverage.map((c) => c.delivery_schedule_id).filter(Boolean);
-  if (!scheduleIds.length) return null;
+  if (!scheduleIds.length) return [];
 
   const [{ data: schedules, error: sErr }, shippedMap] = await Promise.all([
     supabase
       .from('delivery_schedules')
-      .select('id, due_date, quantity, status')
+      .select(
+        'id, schedule_number, due_date, quantity, status, blanket_po_line_id, notes, rule_id'
+      )
       .in('id', scheduleIds),
     dispatchedQtyByScheduleIds(scheduleIds),
   ]);
   if (sErr) throw sErr;
 
-  const open = (schedules || [])
+  return (schedules || [])
     .filter((s) => s.status !== 'cancelled')
     .map((s) => ({
-      ...s,
+      schedule: s,
       remaining: remainingFromShipped(s.quantity, shippedMap[s.id] || 0),
+      due_date: s.due_date,
     }))
     .filter((s) => s.remaining > 0.0001)
     .sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || '')));
+}
 
-  return open[0]?.id || null;
+/**
+ * Open one-off schedules (rule_id IS NULL) for the same component as the lot.
+ * These are often created after horizon lock and are missing from campaign coverage.
+ */
+async function listOpenOneOffSchedulesForMaster(masterRecordId) {
+  if (!isValidUUID(masterRecordId)) return [];
+
+  const { data: lines, error: lineErr } = await supabase
+    .from('blanket_po_lines')
+    .select('id')
+    .eq('master_record_id', masterRecordId);
+  if (lineErr) throw lineErr;
+  const lineIds = (lines || []).map((l) => l.id).filter(Boolean);
+  if (!lineIds.length) return [];
+
+  const { data: schedules, error: sErr } = await supabase
+    .from('delivery_schedules')
+    .select(
+      'id, schedule_number, due_date, quantity, status, blanket_po_line_id, notes, rule_id'
+    )
+    .in('blanket_po_line_id', lineIds)
+    .is('rule_id', null)
+    .neq('status', 'cancelled');
+  if (sErr) throw sErr;
+  if (!schedules?.length) return [];
+
+  const scheduleIds = schedules.map((s) => s.id);
+  const shippedMap = await dispatchedQtyByScheduleIds(scheduleIds);
+
+  return schedules
+    .map((s) => ({
+      schedule: s,
+      remaining: remainingFromShipped(s.quantity, shippedMap[s.id] || 0),
+      due_date: s.due_date,
+    }))
+    .filter((s) => s.remaining > 0.0001)
+    .sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || '')));
+}
+
+/** Earliest-due campaign coverage row that still has remaining shippable qty. */
+async function pickOpenCampaignScheduleId(campaignId) {
+  const open = await listOpenCampaignSchedules(campaignId);
+  return pickOpenFromList(open)?.schedule?.id || null;
 }
 
 async function remainingQtyForSchedule(scheduleId, scheduleQty) {
@@ -427,13 +522,63 @@ async function remainingQtyForSchedule(scheduleId, scheduleQty) {
 }
 
 /**
+ * Open schedules a lot may invoice against:
+ * campaign coverage + open card pin + open one-off schedules for the same component.
+ */
+async function listOpenScheduleOptionsForLot(lot, { card = null } = {}) {
+  const today = todayDateString();
+  const campaignId = lot.campaign_id || card?.campaign_id || null;
+  const open = campaignId ? await listOpenCampaignSchedules(campaignId) : [];
+  const byId = new Map(open.map((o) => [o.schedule.id, o]));
+
+  const cardPinId = card?.delivery_schedule_id || null;
+  if (cardPinId && !byId.has(cardPinId)) {
+    const { data: pinned, error } = await supabase
+      .from('delivery_schedules')
+      .select(
+        'id, schedule_number, due_date, quantity, status, blanket_po_line_id, notes, rule_id'
+      )
+      .eq('id', cardPinId)
+      .maybeSingle();
+    if (error) throw error;
+    if (pinned && pinned.status !== 'cancelled') {
+      const remaining = await remainingQtyForSchedule(pinned.id, pinned.quantity);
+      if (remaining > 0.0001) {
+        byId.set(pinned.id, {
+          schedule: pinned,
+          remaining,
+          due_date: pinned.due_date,
+        });
+      }
+    }
+  }
+
+  if (lot.master_record_id) {
+    const oneOffs = await listOpenOneOffSchedulesForMaster(lot.master_record_id);
+    for (const row of oneOffs) {
+      if (!byId.has(row.schedule.id)) byId.set(row.schedule.id, row);
+    }
+  }
+
+  const list = [...byId.values()].sort((a, b) =>
+    String(a.due_date || '').localeCompare(String(b.due_date || ''))
+  );
+  return list.map((o) => toScheduleOption(o.schedule, o.remaining, today));
+}
+
+function isScheduleIdAllowed(scheduleId, options) {
+  return (options || []).some((o) => o.id === scheduleId);
+}
+
+/**
  * Batch schedule + remaining demand for many lots (Ready for Dispatch list).
- * Same pick rules as resolveLotBillingContext, without per-lot round trips.
+ * Pick order: lot pin → card pin → earliest open campaign coverage.
  */
 async function resolveScheduleRemainingForLots(lots) {
   const result = {};
   if (!lots?.length) return result;
 
+  const today = todayDateString();
   const cardIds = [...new Set(lots.map((l) => l.production_card_id).filter(isValidUUID))];
   let cards = [];
   if (cardIds.length) {
@@ -464,11 +609,50 @@ async function resolveScheduleRemainingForLots(lots) {
     coverage = data || [];
   }
 
+  const masterIds = [
+    ...new Set(lots.map((l) => l.master_record_id).filter(isValidUUID)),
+  ];
+  let oneOffByMaster = {};
+  if (masterIds.length) {
+    const { data: lines, error: lineErr } = await supabase
+      .from('blanket_po_lines')
+      .select('id, master_record_id')
+      .in('master_record_id', masterIds);
+    if (lineErr) throw lineErr;
+    const lineIds = (lines || []).map((l) => l.id);
+    const lineMaster = Object.fromEntries(
+      (lines || []).map((l) => [l.id, l.master_record_id])
+    );
+    if (lineIds.length) {
+      const { data: oneOffSchedules, error: ooErr } = await supabase
+        .from('delivery_schedules')
+        .select(
+          'id, schedule_number, due_date, quantity, blanket_po_line_id, status, notes, rule_id'
+        )
+        .in('blanket_po_line_id', lineIds)
+        .is('rule_id', null)
+        .neq('status', 'cancelled');
+      if (ooErr) throw ooErr;
+      for (const s of oneOffSchedules || []) {
+        const mid = lineMaster[s.blanket_po_line_id];
+        if (!mid) continue;
+        if (!oneOffByMaster[mid]) oneOffByMaster[mid] = [];
+        oneOffByMaster[mid].push(s);
+      }
+    }
+  }
+
+  const oneOffScheduleIds = Object.values(oneOffByMaster)
+    .flat()
+    .map((s) => s.id);
+
   const scheduleIds = [
     ...new Set(
       [
+        ...lots.map((l) => l.delivery_schedule_id),
         ...cards.map((c) => c.delivery_schedule_id),
         ...coverage.map((c) => c.delivery_schedule_id),
+        ...oneOffScheduleIds,
       ].filter(isValidUUID)
     ),
   ];
@@ -480,7 +664,7 @@ async function resolveScheduleRemainingForLots(lots) {
       supabase
         .from('delivery_schedules')
         .select(
-          'id, schedule_number, due_date, quantity, blanket_po_line_id, status, notes'
+          'id, schedule_number, due_date, quantity, blanket_po_line_id, status, notes, rule_id'
         )
         .in('id', scheduleIds),
       dispatchedQtyByScheduleIds(scheduleIds),
@@ -507,29 +691,72 @@ async function resolveScheduleRemainingForLots(lots) {
     arr.sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || '')));
   }
 
+  const openOneOffByMaster = {};
+  for (const [mid, rows] of Object.entries(oneOffByMaster)) {
+    const open = [];
+    for (const raw of rows) {
+      const sched = scheduleById[raw.id] || raw;
+      if (!sched || sched.status === 'cancelled') continue;
+      const remaining = remainingFromShipped(sched.quantity, shippedMap[sched.id] || 0);
+      if (!(remaining > 0.0001)) continue;
+      open.push({ schedule: sched, remaining, due_date: sched.due_date });
+    }
+    open.sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || '')));
+    openOneOffByMaster[mid] = open;
+  }
+
+  function tryOpenSchedule(scheduleId) {
+    if (!scheduleId || !scheduleById[scheduleId]) return null;
+    const sched = scheduleById[scheduleId];
+    if (sched.status === 'cancelled') return null;
+    const rem = remainingFromShipped(sched.quantity, shippedMap[sched.id] || 0);
+    if (!(rem > 0.0001)) return null;
+    return { schedule: sched, remaining: rem };
+  }
+
   for (const lot of lots) {
     const card = lot.production_card_id ? cardById[lot.production_card_id] : null;
     const campaignId = lot.campaign_id || card?.campaign_id || null;
-    let schedule = null;
-    let remaining = null;
 
-    const pinnedId = card?.delivery_schedule_id || null;
-    if (pinnedId && scheduleById[pinnedId]) {
-      const pinned = scheduleById[pinnedId];
-      const rem = remainingFromShipped(pinned.quantity, shippedMap[pinned.id] || 0);
-      if (pinned.status !== 'cancelled' && rem > 0.0001) {
-        schedule = pinned;
-        remaining = rem;
-      }
+    const optionMap = new Map();
+    for (const open of openByCampaign[campaignId] || []) {
+      optionMap.set(open.schedule.id, open);
+    }
+    const cardPinOpen = tryOpenSchedule(card?.delivery_schedule_id || null);
+    if (cardPinOpen) optionMap.set(cardPinOpen.schedule.id, cardPinOpen);
+    for (const open of openOneOffByMaster[lot.master_record_id] || []) {
+      if (!optionMap.has(open.schedule.id)) optionMap.set(open.schedule.id, open);
     }
 
-    if (!schedule && campaignId && openByCampaign[campaignId]?.length) {
+    const schedule_options = [...optionMap.values()]
+      .sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || '')))
+      .map((o) => toScheduleOption(o.schedule, o.remaining, today));
+    const schedule_choice_required = choiceRequiredFromOptions(schedule_options);
+
+    let picked = tryOpenSchedule(lot.delivery_schedule_id || null);
+    if (!picked) picked = tryOpenSchedule(card?.delivery_schedule_id || null);
+    if (!picked && campaignId && openByCampaign[campaignId]?.length) {
       const open = openByCampaign[campaignId][0];
-      schedule = open.schedule;
-      remaining = open.remaining;
+      picked = { schedule: open.schedule, remaining: open.remaining };
+    }
+    if (!picked && schedule_options.length) {
+      const first = optionMap.get(schedule_options[0].id);
+      if (first) picked = { schedule: first.schedule, remaining: first.remaining };
     }
 
-    result[lot.id] = schedule ? { schedule, remaining_qty: remaining } : null;
+    result[lot.id] = picked
+      ? {
+          schedule: picked.schedule,
+          remaining_qty: picked.remaining,
+          schedule_options,
+          schedule_choice_required,
+        }
+      : {
+          schedule: null,
+          remaining_qty: null,
+          schedule_options,
+          schedule_choice_required,
+        };
   }
 
   return result;
@@ -537,10 +764,14 @@ async function resolveScheduleRemainingForLots(lots) {
 
 /**
  * Resolve lot → delivery schedule → blanket line → customer + component label.
- * Campaign lots attach to the earliest-due coverage row that still has remaining demand.
+ * Pick order: preferredScheduleId → lot pin → card pin → earliest open coverage.
  */
-async function resolveLotBillingContext(lotId) {
+async function resolveLotBillingContext(lotId, opts = {}) {
   if (!isValidUUID(lotId)) throw httpError('lot_id is required');
+
+  const preferredScheduleId = isValidUUID(opts.preferredScheduleId)
+    ? opts.preferredScheduleId
+    : null;
 
   const { data: lot, error: lotErr } = await supabase
     .from('production_lots')
@@ -550,46 +781,65 @@ async function resolveLotBillingContext(lotId) {
   if (lotErr) throw lotErr;
   if (!lot) throw httpError('Production lot not found', 404);
 
-  let deliveryScheduleId = null;
-  let cardCampaignId = null;
-
+  let card = null;
   if (lot.production_card_id) {
-    const { data: card, error: cErr } = await supabase
+    const { data, error: cErr } = await supabase
       .from('production_cards')
       .select('id, delivery_schedule_id, campaign_id')
       .eq('id', lot.production_card_id)
       .maybeSingle();
     if (cErr) throw cErr;
-    deliveryScheduleId = card?.delivery_schedule_id || null;
-    cardCampaignId = card?.campaign_id || null;
+    card = data || null;
   }
 
-  const campaignId = lot.campaign_id || cardCampaignId || null;
+  const campaignId = lot.campaign_id || card?.campaign_id || null;
+  const schedule_options = await listOpenScheduleOptionsForLot(lot, { card });
+  const schedule_choice_required = choiceRequiredFromOptions(schedule_options);
 
-  if (deliveryScheduleId) {
+  async function resolveOpenId(candidateId) {
+    if (!isValidUUID(candidateId)) return null;
     const { data: pinned, error: pinErr } = await supabase
       .from('delivery_schedules')
       .select('id, quantity, status')
-      .eq('id', deliveryScheduleId)
+      .eq('id', candidateId)
       .maybeSingle();
     if (pinErr) throw pinErr;
-    const pinnedRemaining = pinned
-      ? await remainingQtyForSchedule(pinned.id, pinned.quantity)
-      : 0;
-    if (!(pinnedRemaining > 0.0001) || pinned?.status === 'cancelled') {
-      deliveryScheduleId = campaignId
-        ? await pickOpenCampaignScheduleId(campaignId)
-        : null;
+    if (!pinned || pinned.status === 'cancelled') return null;
+    const rem = await remainingQtyForSchedule(pinned.id, pinned.quantity);
+    return rem > 0.0001 ? pinned.id : null;
+  }
+
+  let deliveryScheduleId = null;
+
+  if (preferredScheduleId) {
+    if (!isScheduleIdAllowed(preferredScheduleId, schedule_options)) {
+      throw httpError(
+        'delivery_schedule_id is not an open schedule for this lot',
+        422
+      );
+    }
+    deliveryScheduleId = await resolveOpenId(preferredScheduleId);
+    if (!deliveryScheduleId) {
+      throw httpError('Selected delivery schedule has no remaining quantity', 422);
     }
   }
 
+  if (!deliveryScheduleId) {
+    deliveryScheduleId = await resolveOpenId(lot.delivery_schedule_id);
+  }
+  if (!deliveryScheduleId) {
+    deliveryScheduleId = await resolveOpenId(card?.delivery_schedule_id);
+  }
   if (!deliveryScheduleId && campaignId) {
     deliveryScheduleId = await pickOpenCampaignScheduleId(campaignId);
+  }
+  if (!deliveryScheduleId && schedule_options.length) {
+    deliveryScheduleId = schedule_options[0].id;
   }
 
   if (!deliveryScheduleId) {
     throw httpError(
-      'Cannot invoice this lot — no delivery schedule linked (card or campaign coverage)',
+      'Cannot invoice this lot — no delivery schedule linked (card, campaign coverage, or one-off)',
       422
     );
   }
@@ -643,13 +893,18 @@ async function resolveLotBillingContext(lotId) {
     blanket,
     customer,
     componentLabel,
+    schedule_options,
+    schedule_choice_required,
   };
 }
 
 /**
- * Resolve a master-record field value by preferred slugs then label regex.
+ * Resolve a master-record field value by preferred slugs, slug regex, then label regex.
  */
-async function resolveMasterFieldValue(masterRecordId, { slugs = [], labelRe = null } = {}) {
+async function resolveMasterFieldValue(
+  masterRecordId,
+  { slugs = [], slugRe = null, labelRe = null } = {}
+) {
   if (!masterRecordId || !isValidUUID(masterRecordId)) return null;
 
   const { data: record, error: recErr } = await supabase
@@ -675,6 +930,10 @@ async function resolveMasterFieldValue(masterRecordId, { slugs = [], labelRe = n
       fieldId = bySlug[slug].field_id;
       break;
     }
+  }
+  if (!fieldId && slugRe) {
+    const bySlugRe = fields.find((f) => slugRe.test(String(f.field_slug || '').trim()));
+    fieldId = bySlugRe?.field_id || null;
   }
   if (!fieldId && labelRe) {
     const byLabel = fields.find((f) => labelRe.test(String(f.field_label || '').trim()));
@@ -707,7 +966,16 @@ async function resolveComponentItemName(masterRecordId) {
 async function resolveDrawingNumber(masterRecordId) {
   return resolveMasterFieldValue(masterRecordId, {
     slugs: DRAWING_NUMBER_SLUGS,
+    slugRe: DRAWING_NUMBER_SLUG_RE,
     labelRe: DRAWING_NUMBER_LABEL_RE,
+  });
+}
+
+async function resolveHsnCode(masterRecordId) {
+  return resolveMasterFieldValue(masterRecordId, {
+    slugs: HSN_CODE_SLUGS,
+    slugRe: HSN_CODE_SLUG_RE,
+    labelRe: HSN_CODE_LABEL_RE,
   });
 }
 
@@ -956,7 +1224,26 @@ async function createDraftFromLot(lotId, actorId, body = {}) {
     );
   }
 
-  const ctx = await resolveLotBillingContext(lotId);
+  const preferredScheduleId = isValidUUID(body.delivery_schedule_id)
+    ? body.delivery_schedule_id
+    : null;
+  const ctx = await resolveLotBillingContext(lotId, { preferredScheduleId });
+
+  // Persist preferred / resolved schedule on the lot so dispatch gates stay aligned
+  if (
+    ctx.schedule?.id &&
+    ctx.lot.delivery_schedule_id !== ctx.schedule.id
+  ) {
+    const { error: pinErr } = await supabase
+      .from('production_lots')
+      .update({
+        delivery_schedule_id: ctx.schedule.id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', lotId);
+    if (pinErr) throw pinErr;
+    ctx.lot.delivery_schedule_id = ctx.schedule.id;
+  }
   const company = await getCompanySettings();
   const remaining = toNumber(ctx.remaining_qty);
   const lotQty = toNumber(ctx.lot.quantity);
@@ -1019,7 +1306,10 @@ async function createDraftFromLot(lotId, actorId, body = {}) {
     ctx.customer.components_per_packet,
     qty
   );
-  const drawingNumber = await resolveDrawingNumber(ctx.line.master_record_id);
+  const [drawingNumber, hsnCode] = await Promise.all([
+    resolveDrawingNumber(ctx.line.master_record_id),
+    resolveHsnCode(ctx.line.master_record_id),
+  ]);
 
   const override = body.company_override && typeof body.company_override === 'object'
     ? body.company_override
@@ -1064,7 +1354,7 @@ async function createDraftFromLot(lotId, actorId, body = {}) {
     schedule: ctx.schedule,
     poRef: ctx.blanket.blanket_number,
     poDate: ctx.blanket.created_at || null,
-    hsn: ctx.line.hsn || null,
+    hsn: hsnCode,
     packageLabel,
     drawingNumber,
   });
@@ -1140,6 +1430,27 @@ async function updateDraft(id, patch) {
     inv.customer?.components_per_packet;
   const packageLabel = buildPackageLabel(packetSize, qty);
 
+  let refreshedHsn = prevLine.hsn || null;
+  let refreshedDrawing = prevLine.drawing_number || null;
+  let refreshedDescription = prevLine.description || null;
+  if (inv.blanket_po_line_id && isValidUUID(inv.blanket_po_line_id)) {
+    const { data: poLine } = await supabase
+      .from('blanket_po_lines')
+      .select('master_record_id')
+      .eq('id', inv.blanket_po_line_id)
+      .maybeSingle();
+    if (poLine?.master_record_id) {
+      const [hsnCode, drawingNumber, componentName] = await Promise.all([
+        resolveHsnCode(poLine.master_record_id),
+        resolveDrawingNumber(poLine.master_record_id),
+        resolveComponentItemName(poLine.master_record_id),
+      ]);
+      if (hsnCode) refreshedHsn = hsnCode;
+      if (drawingNumber) refreshedDrawing = drawingNumber;
+      if (componentName) refreshedDescription = componentName;
+    }
+  }
+
   if (inv.delivery_schedule_id) {
     const { data: sched } = await supabase
       .from('delivery_schedules')
@@ -1178,7 +1489,7 @@ async function updateDraft(id, patch) {
   }
 
   const lineItems = buildLineItems({
-    componentLabel: prevLine.description,
+    componentLabel: refreshedDescription,
     quantity: qty,
     unitPrice,
     uom: inv.uom,
@@ -1189,9 +1500,9 @@ async function updateDraft(id, patch) {
     },
     poRef: prevLine.po_ref || inv.blanket_number,
     poDate: prevLine.po_date || inv.blanket_created_at,
-    hsn: prevLine.hsn || null,
+    hsn: refreshedHsn,
     packageLabel,
-    drawingNumber: prevLine.drawing_number || null,
+    drawingNumber: refreshedDrawing,
   });
 
   const update = {
@@ -1727,19 +2038,28 @@ async function attachComponentItemName(invoice) {
     masterRecordId = line?.master_record_id || null;
   }
 
-  const componentName = masterRecordId
-    ? await resolveComponentItemName(masterRecordId)
-    : null;
-  if (!componentName) return invoice;
+  if (!masterRecordId) return invoice;
+
+  const [componentName, hsnCode, drawingNumber] = await Promise.all([
+    resolveComponentItemName(masterRecordId),
+    resolveHsnCode(masterRecordId),
+    resolveDrawingNumber(masterRecordId),
+  ]);
+  if (!componentName && !hsnCode && !drawingNumber) return invoice;
 
   const lines = Array.isArray(invoice.line_items) ? [...invoice.line_items] : [];
   if (lines[0]) {
-    lines[0] = { ...lines[0], description: componentName };
+    lines[0] = {
+      ...lines[0],
+      ...(componentName ? { description: componentName } : null),
+      ...(hsnCode ? { hsn: hsnCode } : null),
+      ...(drawingNumber ? { drawing_number: drawingNumber } : null),
+    };
   }
 
   return {
     ...invoice,
-    component_name: componentName,
+    component_name: componentName || invoice.component_name || null,
     line_items: lines,
   };
 }
@@ -1884,6 +2204,9 @@ module.exports = {
   dispatchedQtyByScheduleIds,
   remainingQtyForSchedule,
   pickOpenCampaignScheduleId,
+  listOpenCampaignSchedules,
+  listOpenOneOffSchedulesForMaster,
+  listOpenScheduleOptionsForLot,
   resolveScheduleRemainingForLots,
   buildPackageLabel,
 };

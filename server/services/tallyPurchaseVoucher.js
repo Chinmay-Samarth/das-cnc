@@ -216,7 +216,7 @@ function buildPurchaseVoucherXml({ invoice, supplier, expenseType }) {
     );
   }
 
-  const narration = `Purchase ${invoiceNumber} | ERP invoice sync`;
+  const narration = String(invoiceNumber || '').trim();
 
   let entriesXml = ledgerEntryXml({
     ledgerName: expenseLedger,

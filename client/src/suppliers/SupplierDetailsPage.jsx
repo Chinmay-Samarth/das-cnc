@@ -2,9 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import ImageLightbox from '../components/shared/ImageLightBox';
-import { Pencil } from 'lucide-react';
+import { Banknote, Pencil } from 'lucide-react';
 import { formatDisplayDate } from '../utils/dateFormat';
 import { AlertBanner, FilePicker, FormActions } from '../components/mes';
+import { appAlert } from '../components/dialog';
+import {
+  openPurchasePaymentDialog,
+  formatInr,
+} from '../invoices/purchasePaymentDialog';
 
 const emptyFormData = {
   name: '',
@@ -56,6 +61,9 @@ export default function SupplierDetailsPage() {
   const [lightBox, setLightBox] = useState('')
   const [isPdf, setIsPdf] = useState(false)
   const [formUpdate, setFormUpdate] = useState(false)
+  const [outstanding, setOutstanding] = useState(null)
+  const [tallyEnabled, setTallyEnabled] = useState(false)
+  const [paying, setPaying] = useState(false)
 
   useEffect(() => {
     if (location.pathname.endsWith('/invoices')) {
@@ -146,10 +154,87 @@ export default function SupplierDetailsPage() {
     };
   }, [id]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadOutstanding() {
+      if (!id) return;
+      try {
+        const [outRes, tallyRes] = await Promise.all([
+          api.get(`/invoices/tally/supplier-outstanding/${id}`),
+          api.get('/invoices/tally/status'),
+        ]);
+        if (!cancelled) {
+          setOutstanding(outRes.data);
+          setTallyEnabled(Boolean(tallyRes.data?.tally_enabled));
+        }
+      } catch {
+        if (!cancelled) setOutstanding(null);
+      }
+    }
+    loadOutstanding();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
   const invoiceTotal = useMemo(
     () => invoices.reduce((sum, invoice) => sum + (Number(invoice.total_amount) || 0), 0),
     [invoices]
   );
+
+  const handlePayInvoices = async () => {
+    setPaying(true);
+    setError(null);
+    try {
+      const { data } = await api.get('/invoices/payable', {
+        params: { supplier_id: id },
+      });
+      const due = data.invoices || [];
+      if (!due.length) {
+        await appAlert('No due purchase invoices for this supplier');
+        return;
+      }
+      const result = await openPurchasePaymentDialog({
+        supplierId: id,
+        supplierName: supplier?.name,
+        ledgerName: supplier?.ledger_name,
+        invoices: due,
+        tallyEnabled,
+        mode: due.length > 1 ? 'bulk' : 'single',
+        selectInvoices: true,
+      });
+      if (!result) return;
+      await appAlert({
+        title: 'Payment recorded',
+        message:
+          result.payment_sync?.status === 'synced'
+            ? 'Payment voucher synced to Tally'
+            : result.payment_sync?.error || 'Payment saved',
+        tone: 'success',
+      });
+      try {
+        const { data: out } = await api.get(
+          `/invoices/tally/supplier-outstanding/${id}`
+        );
+        setOutstanding(out);
+      } catch {
+        /* ignore */
+      }
+      // Refresh invoices tab list
+      try {
+        const { data: listData } = await api.get('/invoices/list');
+        setInvoices(
+          (listData || []).filter((invoice) => String(invoice.supplier_id) === String(id))
+        );
+      } catch {
+        /* ignore */
+      }
+    } catch (err) {
+      await appAlert(err.response?.data?.error || 'Payment failed');
+    } finally {
+      setPaying(false);
+    }
+  };
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -196,7 +281,16 @@ export default function SupplierDetailsPage() {
             <h1>{supplier?.name}</h1>
             <p className='muted'>{supplier?.GSTIN}</p>
           </div>
-          <div className="employee-top-bar">
+          <div className="employee-top-bar" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="neutral-button"
+              onClick={handlePayInvoices}
+              disabled={paying || loading || !supplier}
+            >
+              <Banknote size={16} style={{ marginRight: 4, display: 'inline' }} />
+              {paying ? 'Paying…' : 'Pay invoices'}
+            </button>
             <button
             type="button"
             className={'neutral-button'}
@@ -286,6 +380,20 @@ export default function SupplierDetailsPage() {
               </div>
 
               <aside className="attendance-side-column">
+                {outstanding?.outstanding != null || outstanding?.error ? (
+                  <section className="tally-balance-card" style={{ marginBottom: 12 }}>
+                    <div className="section-header">
+                      <h2>Payable (Tally)</h2>
+                    </div>
+                    {outstanding.outstanding != null ? (
+                      <p className="tally-balance-amount">
+                        ₹{formatInr(outstanding.outstanding)}
+                      </p>
+                    ) : (
+                      <p className="tally-balance-error">{outstanding.error}</p>
+                    )}
+                  </section>
+                ) : null}
                 <section className="card employee-details-attendance">
                   <div
                     className="section-header"

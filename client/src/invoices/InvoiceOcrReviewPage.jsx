@@ -22,6 +22,25 @@ function recalcLine(line) {
   return { ...line, total };
 }
 
+function round2(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
+
+function sumTaxAmount(taxRows) {
+  return round2(taxRows.reduce((sum, t) => sum + (Number(t.amount) || 0), 0));
+}
+
+/** Grand total always follows base + tax + round_off. */
+function computeHeaderTotal(baseAmount, taxAmount, roundOff) {
+  const base = Number(baseAmount);
+  const tax = Number(taxAmount);
+  const round = Number(roundOff);
+  if (!Number.isFinite(base) || !Number.isFinite(tax)) return '';
+  return round2(base + tax + (Number.isFinite(round) ? round : 0));
+}
+
 function isProcessingStatus(status) {
   return status === 'extracting' || status === 'saving' || status === 'queued' || status === 'uploading';
 }
@@ -85,16 +104,22 @@ export default function InvoiceOcrReviewPage() {
       setInvoice(inv);
       setReview(data.review);
       setLines((data.lines || inv.line_items || []).map(recalcLine));
-      setTaxes(normalizeTaxRows(inv.tax_items, inv.base_amount));
+      const nextTaxes = normalizeTaxRows(inv.tax_items, inv.base_amount);
+      setTaxes(nextTaxes);
       setSupplierId(inv.supplier_id || '');
       setSupplierLabel(inv.suppliers?.name || '');
+      const baseAmount = inv.base_amount ?? '';
+      const roundOff = inv.round_off ?? '';
+      const taxAmount = sumTaxAmount(nextTaxes);
+      // After tax recalc, derive grand total from parts so OCR ₹1 misreads don't stick.
+      const derivedTotal = computeHeaderTotal(baseAmount, taxAmount, roundOff);
       setHeader({
         invoice_number: inv.invoice_number || '',
         invoice_date: inv.invoice_date || '',
         due_date: inv.due_date || '',
-        total_amount: inv.total_amount ?? '',
-        base_amount: inv.base_amount ?? '',
-        round_off: inv.round_off ?? '',
+        total_amount: derivedTotal !== '' ? derivedTotal : inv.total_amount ?? '',
+        base_amount: baseAmount,
+        round_off: roundOff,
       });
     } catch (err) {
       setError(err.response?.data?.error || 'Unable to load invoice review.');
@@ -211,6 +236,32 @@ export default function InvoiceOcrReviewPage() {
     setLines((prev) => prev.filter((_, i) => i !== idx));
   }
 
+  function syncHeaderTotal(nextHeader, nextTaxes = taxes) {
+    const taxAmount = sumTaxAmount(nextTaxes);
+    const total = computeHeaderTotal(nextHeader.base_amount, taxAmount, nextHeader.round_off);
+    if (total === '') return nextHeader;
+    return { ...nextHeader, total_amount: total };
+  }
+
+  function handleHeaderField(field, value) {
+    setHeader((h) => {
+      const next = { ...h, [field]: value };
+      if (field === 'base_amount' || field === 'round_off') {
+        return syncHeaderTotal(next);
+      }
+      if (field === 'total_amount') {
+        // Manual total edit → capture gap as round-off so confirm stays consistent.
+        const base = Number(next.base_amount);
+        const tax = sumTaxAmount(taxes);
+        const total = Number(value);
+        if (Number.isFinite(base) && Number.isFinite(total)) {
+          next.round_off = round2(total - base - tax);
+        }
+      }
+      return next;
+    });
+  }
+
   function handleTaxChange(idx, field, value) {
     setTaxes((prev) => {
       const next = [...prev];
@@ -223,25 +274,34 @@ export default function InvoiceOcrReviewPage() {
       } else {
         next[idx] = updated;
       }
+      setHeader((h) => syncHeaderTotal(h, next));
       return next;
     });
   }
 
   function handleRemoveTax(idx) {
-    setTaxes((prev) => prev.filter((_, i) => i !== idx));
+    setTaxes((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      setHeader((h) => syncHeaderTotal(h, next));
+      return next;
+    });
   }
 
   function handleAddTax() {
     const base = Number(header.base_amount);
-    setTaxes((prev) => [
-      ...prev,
-      recalcTax({
-        kind: prev.some((t) => t.kind === 'CGST') ? 'SGST' : 'CGST',
-        rate: 9,
-        base: Number.isFinite(base) ? base : '',
-        amount: '',
-      }),
-    ]);
+    setTaxes((prev) => {
+      const next = [
+        ...prev,
+        recalcTax({
+          kind: prev.some((t) => t.kind === 'CGST') ? 'SGST' : 'CGST',
+          rate: 9,
+          base: Number.isFinite(base) ? base : '',
+          amount: '',
+        }),
+      ];
+      setHeader((h) => syncHeaderTotal(h, next));
+      return next;
+    });
   }
 
   async function handleConfirm() {
@@ -261,15 +321,21 @@ export default function InvoiceOcrReviewPage() {
         (sum, t) => sum + (Number.isFinite(t.amount) ? t.amount : 0),
         0
       );
+      const roundOff = header.round_off === '' || header.round_off == null ? 0 : Number(header.round_off);
+      const baseAmount = header.base_amount === '' || header.base_amount == null ? null : Number(header.base_amount);
+      const reconciledTotal =
+        baseAmount != null && Number.isFinite(baseAmount)
+          ? computeHeaderTotal(baseAmount, taxAmount, roundOff)
+          : header.total_amount;
 
       const payload = {
         supplier_id: supplierId,
         invoice_number: header.invoice_number,
         invoice_date: header.invoice_date,
         due_date: header.due_date,
-        total_amount: header.total_amount,
+        total_amount: reconciledTotal,
         base_amount: header.base_amount,
-        round_off: header.round_off,
+        round_off: roundOff,
         tax_amount: taxAmount,
         tax_items: normalizedTaxes,
         lines: lines.map((line) => ({
@@ -415,7 +481,7 @@ export default function InvoiceOcrReviewPage() {
               Invoice number
               <input
                 value={header.invoice_number}
-                onChange={(e) => setHeader((h) => ({ ...h, invoice_number: e.target.value }))}
+                onChange={(e) => handleHeaderField('invoice_number', e.target.value)}
               />
             </label>
 
@@ -425,7 +491,7 @@ export default function InvoiceOcrReviewPage() {
                 type="date"
                 className="date-bar"
                 value={header.invoice_date || ''}
-                onChange={(e) => setHeader((h) => ({ ...h, invoice_date: e.target.value }))}
+                onChange={(e) => handleHeaderField('invoice_date', e.target.value)}
               />
             </label>
 
@@ -435,7 +501,7 @@ export default function InvoiceOcrReviewPage() {
                 type="date"
                 className="date-bar"
                 value={header.due_date || ''}
-                onChange={(e) => setHeader((h) => ({ ...h, due_date: e.target.value }))}
+                onChange={(e) => handleHeaderField('due_date', e.target.value)}
               />
             </label>
 
@@ -446,7 +512,7 @@ export default function InvoiceOcrReviewPage() {
                 min="0"
                 step="any"
                 value={header.total_amount}
-                onChange={(e) => setHeader((h) => ({ ...h, total_amount: e.target.value }))}
+                onChange={(e) => handleHeaderField('total_amount', e.target.value)}
               />
             </label>
 
@@ -457,7 +523,7 @@ export default function InvoiceOcrReviewPage() {
                 min="0"
                 step="any"
                 value={header.base_amount}
-                onChange={(e) => setHeader((h) => ({ ...h, base_amount: e.target.value }))}
+                onChange={(e) => handleHeaderField('base_amount', e.target.value)}
               />
             </label>
 
@@ -467,7 +533,7 @@ export default function InvoiceOcrReviewPage() {
                 type="number"
                 step="any"
                 value={header.round_off}
-                onChange={(e) => setHeader((h) => ({ ...h, round_off: e.target.value }))}
+                onChange={(e) => handleHeaderField('round_off', e.target.value)}
               />
             </label>
           </div>

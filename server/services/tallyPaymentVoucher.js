@@ -23,16 +23,32 @@ function resolvePartyLedgerName(party) {
   return name || null;
 }
 
-function ledgerEntryXml({ ledgerName, isDeemedPositive, amount, billAllocation }) {
+function ledgerEntryXml({ ledgerName, isDeemedPositive, amount, billAllocations, billAllocation }) {
   const amt = round2(amount);
   const signed = isDeemedPositive ? -Math.abs(amt) : Math.abs(amt);
+
+  let allocations = Array.isArray(billAllocations)
+    ? billAllocations.filter((b) => b?.name && Number(b.amount) > 0)
+    : [];
+  if (!allocations.length && billAllocation?.name) {
+    allocations = [
+      {
+        name: billAllocation.name,
+        amount: billAllocation.amount != null ? billAllocation.amount : amt,
+        billType: billAllocation.billType || 'Agst Ref',
+      },
+    ];
+  }
+
   let billXml = '';
-  if (billAllocation) {
-    billXml = `
+  for (const b of allocations) {
+    const billAmt = round2(b.amount);
+    const billSigned = isDeemedPositive ? -Math.abs(billAmt) : Math.abs(billAmt);
+    billXml += `
             <BILLALLOCATIONS.LIST>
-              <NAME>${escapeXml(billAllocation.name)}</NAME>
-              <BILLTYPE>${escapeXml(billAllocation.billType)}</BILLTYPE>
-              <AMOUNT>${signed.toFixed(2)}</AMOUNT>
+              <NAME>${escapeXml(b.name)}</NAME>
+              <BILLTYPE>${escapeXml(b.billType || 'Agst Ref')}</BILLTYPE>
+              <AMOUNT>${billSigned.toFixed(2)}</AMOUNT>
             </BILLALLOCATIONS.LIST>`;
   }
 
@@ -46,7 +62,7 @@ function ledgerEntryXml({ ledgerName, isDeemedPositive, amount, billAllocation }
 
 /**
  * Build Payment voucher XML.
- * @param {{ party, bankLedger, amount, reference, voucherNumber, narration, billRefName }} opts
+ * Payment: debit party (Yes), credit bank (No), optional Agst Ref bill allocations.
  */
 function buildPaymentVoucherXml({
   party,
@@ -56,6 +72,7 @@ function buildPaymentVoucherXml({
   voucherNumber,
   narration,
   billRefName,
+  billAllocations,
 }) {
   const company = tallyCompany();
   if (!company) {
@@ -88,16 +105,19 @@ function buildPaymentVoucherXml({
   const date = DEFAULT_TALLY_VOUCHER_DATE;
   const vchNo = String(voucherNumber || reference || '').trim() || `PAY-${Date.now()}`;
   const ref = String(reference || vchNo).trim();
-  const narr = String(narration || `Payment ${ref} | ERP sync`).trim();
+  const narr = String(narration ?? ref).trim();
 
-  // Payment: debit party (Yes), credit bank (No)
+  const allocations = Array.isArray(billAllocations)
+    ? billAllocations
+    : billRefName
+      ? [{ name: billRefName, amount: payAmount, billType: 'Agst Ref' }]
+      : [];
+
   let entriesXml = ledgerEntryXml({
     ledgerName: partyLedger,
     isDeemedPositive: true,
     amount: payAmount,
-    billAllocation: billRefName
-      ? { name: billRefName, billType: 'Agst Ref' }
-      : undefined,
+    billAllocations: allocations,
   });
 
   entriesXml += ledgerEntryXml({
@@ -181,15 +201,19 @@ async function syncPaymentVoucher(opts) {
   }
 }
 
+function amountDueAfterAdvance(invoice) {
+  const billTotal = round2(invoice?.total_amount);
+  const advanceAmount = round2(
+    Math.min(Number(invoice?.po_advance_amount) || 0, billTotal)
+  );
+  return round2(Math.max(billTotal - advanceAmount, 0));
+}
+
 async function syncPaymentVoucherForInvoice(invoice, supplier, { bankLedger, amount, reference } = {}) {
   const party = supplier || invoice?.suppliers || null;
   const bank = String(bankLedger || invoice?.payment_bank_ledger || '').trim();
   const payAmount =
-    amount != null
-      ? round2(amount)
-      : round2(
-          Number(invoice?.total_amount || 0) - Number(invoice?.po_advance_amount || 0)
-        );
+    amount != null ? round2(amount) : amountDueAfterAdvance(invoice);
   const ref = String(reference || invoice?.payment_reference || '').trim();
   const invoiceNumber = String(invoice?.invoice_number || '').trim();
 
@@ -217,8 +241,64 @@ async function syncPaymentVoucherForInvoice(invoice, supplier, { bankLedger, amo
     amount: payAmount,
     reference: ref || invoiceNumber,
     voucherNumber: `PAY-${invoiceNumber || invoice?.id}`,
-    narration: `Payment ${ref || invoiceNumber} | Invoice ${invoiceNumber} | ERP`,
+    narration: ref || '',
     billRefName: invoiceNumber || null,
+  });
+}
+
+/**
+ * Bulk payment across multiple purchase invoices (one voucher, many Agst Ref).
+ */
+async function syncPaymentVoucherForInvoices(
+  invoices,
+  supplier,
+  { bankLedger, amount, reference } = {}
+) {
+  const list = Array.isArray(invoices) ? invoices : [];
+  const party = supplier || list[0]?.suppliers || null;
+  const bank = String(bankLedger || '').trim();
+  const ref = String(reference || '').trim();
+
+  const allocations = list
+    .map((inv) => ({
+      name: String(inv.invoice_number || '').trim(),
+      amount: amountDueAfterAdvance(inv),
+      billType: 'Agst Ref',
+    }))
+    .filter((b) => b.name && b.amount > 0);
+
+  const payAmount =
+    amount != null
+      ? round2(amount)
+      : round2(allocations.reduce((s, b) => s + b.amount, 0));
+
+  if (!bank) {
+    return {
+      status: 'failed',
+      error: 'Bank ledger is required for Payment voucher',
+      voucherNumber: null,
+      syncedAt: null,
+    };
+  }
+
+  if (!(payAmount > 0) || !allocations.length) {
+    return {
+      status: 'skipped',
+      error: 'No payable amount after advances — no Payment voucher needed',
+      voucherNumber: null,
+      syncedAt: null,
+    };
+  }
+
+  const numbers = allocations.map((b) => b.name).join(',');
+  return syncPaymentVoucher({
+    party,
+    bankLedger: bank,
+    amount: payAmount,
+    reference: ref || numbers,
+    voucherNumber: `PAY-BULK-${Date.now()}`,
+    narration: ref || '',
+    billAllocations: allocations,
   });
 }
 
@@ -235,7 +315,7 @@ async function syncAdvancePaymentVoucher(po, supplier, { bankLedger, amount, ref
     amount: payAmount,
     reference: ref || poNumber,
     voucherNumber: `ADV-${poNumber || po?.id}`,
-    narration: `Advance ${ref || poNumber} | PO ${poNumber} | ERP`,
+    narration: ref || '',
     billRefName: null,
   });
 }
@@ -244,7 +324,9 @@ module.exports = {
   buildPaymentVoucherXml,
   syncPaymentVoucher,
   syncPaymentVoucherForInvoice,
+  syncPaymentVoucherForInvoices,
   syncAdvancePaymentVoucher,
   resolvePartyLedgerName,
+  amountDueAfterAdvance,
   DEFAULT_TALLY_VOUCHER_DATE,
 };

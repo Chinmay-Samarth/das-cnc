@@ -760,7 +760,12 @@ async function enrichLots(rows) {
   const cardById = Object.fromEntries((cards || []).map((c) => [c.id, c]));
 
   const scheduleIds = [
-    ...new Set((cards || []).map((c) => c.delivery_schedule_id).filter(Boolean)),
+    ...new Set(
+      [
+        ...lots.map((l) => l.delivery_schedule_id),
+        ...(cards || []).map((c) => c.delivery_schedule_id),
+      ].filter(Boolean)
+    ),
   ];
   let scheduleById = {};
   if (scheduleIds.length) {
@@ -773,7 +778,8 @@ async function enrichLots(rows) {
 
   return lots.map((l) => {
     const card = cardById[l.production_card_id];
-    const sched = card ? scheduleById[card.delivery_schedule_id] : null;
+    const resolvedScheduleId = l.delivery_schedule_id || card?.delivery_schedule_id || null;
+    const sched = resolvedScheduleId ? scheduleById[resolvedScheduleId] : null;
     const cur = l.current_activity_flow_node_id
       ? nodeById[l.current_activity_flow_node_id]
       : null;
@@ -790,7 +796,7 @@ async function enrichLots(rows) {
       current_node_type: cur?.activity_type || null,
       card_number: card?.card_number || null,
       work_date: card?.work_date || null,
-      delivery_schedule_id: card?.delivery_schedule_id || null,
+      delivery_schedule_id: resolvedScheduleId,
       schedule_number: sched?.schedule_number || null,
       schedule_due_date: sched?.due_date || null,
       delivery_schedule_qty:
@@ -994,6 +1000,8 @@ async function listReadyForDispatch() {
       gate.mode === 'match' ||
       gate.mode === 'overage' ||
       (gate.mode === 'shortfall' && shortfallRequest?.status === 'approved');
+    const schedule_options = ctx?.schedule_options || [];
+    const schedule_choice_required = !!ctx?.schedule_choice_required;
     return {
       ...lot,
       delivery_schedule_id: gate.schedule_id || lot.delivery_schedule_id || null,
@@ -1001,6 +1009,8 @@ async function listReadyForDispatch() {
         gate.schedule_qty != null ? gate.schedule_qty : lot.delivery_schedule_qty,
       schedule_number: gate.schedule_number || lot.schedule_number || null,
       schedule_due_date: gate.schedule_due_date || lot.schedule_due_date || null,
+      schedule_options,
+      schedule_choice_required,
       qty_gate: gate,
       shortfall_request: shortfallRequest,
       sales_invoice: inv,
@@ -1085,6 +1095,9 @@ function attachMergeGroups(lots) {
       component_label: primary.component_label || null,
       schedule_number: primary.schedule_number || null,
       schedule_due_date: primary.schedule_due_date || null,
+      delivery_schedule_id: bucket.delivery_schedule_id,
+      schedule_options: primary.schedule_options || [],
+      schedule_choice_required: bucket.lots.some((l) => l.schedule_choice_required),
     };
 
     for (const lot of bucket.lots) {
@@ -1115,6 +1128,82 @@ async function getDispatchQtyGate(lot) {
     }
     throw err;
   }
+}
+
+/**
+ * Pin which open delivery schedule an RFD lot invoices / dispatches against.
+ */
+async function pinLotDeliverySchedule(lotId, scheduleId) {
+  if (!isValidUUID(lotId)) throw httpError('Invalid lot id');
+  if (!isValidUUID(scheduleId)) throw httpError('delivery_schedule_id is required');
+
+  const { data: lot, error: lotErr } = await supabase
+    .from('production_lots')
+    .select('*')
+    .eq('id', lotId)
+    .maybeSingle();
+  if (lotErr) throw lotErr;
+  if (!lot) throw httpError('Production lot not found', 404);
+  if (lot.status !== 'ready_for_dispatch') {
+    throw httpError('Only ready-for-dispatch lots can pin a delivery schedule', 409);
+  }
+
+  const { findActiveInvoiceForLot, listOpenScheduleOptionsForLot } = require('./salesInvoiceEngine');
+  const existingInv = await findActiveInvoiceForLot(lotId);
+  if (existingInv) {
+    throw httpError(
+      `Lot already has an active invoice (${existingInv.invoice_number || existingInv.status}). Cancel it before changing the delivery schedule.`,
+      409
+    );
+  }
+
+  const { findActiveForLot } = require('./dispatchShortfallEngine');
+  const activeShortfall = await findActiveForLot(lotId);
+  if (activeShortfall) {
+    throw httpError(
+      `Lot has a ${activeShortfall.status} shortfall request. Resolve or deny it before changing the delivery schedule.`,
+      409
+    );
+  }
+
+  let card = null;
+  if (lot.production_card_id) {
+    const { data, error: cErr } = await supabase
+      .from('production_cards')
+      .select('id, delivery_schedule_id, campaign_id')
+      .eq('id', lot.production_card_id)
+      .maybeSingle();
+    if (cErr) throw cErr;
+    card = data || null;
+  }
+
+  const options = await listOpenScheduleOptionsForLot(lot, { card });
+  if (!options.some((o) => o.id === scheduleId)) {
+    throw httpError('delivery_schedule_id is not an open schedule for this lot', 422);
+  }
+
+  const now = new Date().toISOString();
+  const { data: updated, error: upErr } = await supabase
+    .from('production_lots')
+    .update({ delivery_schedule_id: scheduleId, updated_at: now })
+    .eq('id', lotId)
+    .select('*')
+    .single();
+  if (upErr) throw upErr;
+
+  try {
+    const { emitProductionUpdated } = require('../socket/emitter');
+    emitProductionUpdated({
+      action: 'lot_delivery_schedule_pinned',
+      cardId: lot.production_card_id || null,
+      workCenterId: lot.work_center_id || null,
+      status: lot.status,
+    });
+  } catch (_) {
+    /* optional */
+  }
+
+  return updated;
 }
 
 /**
@@ -1176,6 +1265,7 @@ async function splitLotRetainExtra(lotId, shipQty) {
       assignment_status: 'unassigned',
       work_center_id: lot.work_center_id || null,
       assigned_employee_id: null,
+      delivery_schedule_id: lot.delivery_schedule_id || null,
       split_from_lot_id: lot.id,
       created_at: now,
       updated_at: now,
@@ -1649,6 +1739,7 @@ module.exports = {
   listLotsForWorkCenter,
   listReadyForDispatch,
   getDispatchQtyGate,
+  pinLotDeliverySchedule,
   splitLotRetainExtra,
   completeLotOp,
   mergeLotsForDispatch,

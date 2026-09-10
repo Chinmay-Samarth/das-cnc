@@ -73,6 +73,47 @@ function toNumber(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function round2(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
+
+function toNumberOrNull(value) {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Keep base + tax + round_off = total so OCR misreads / tax recalcs
+ * cannot leave a ₹1 gap on the purchase invoice.
+ * Grand total always follows the parts; set round_off explicitly for ±₹1 bills.
+ */
+function reconcileInvoiceTotals({ baseAmount, taxAmount, roundOff, totalAmount }) {
+  const base = toNumberOrNull(baseAmount);
+  const tax = toNumberOrNull(taxAmount);
+  let round = toNumberOrNull(roundOff);
+
+  if (base == null || tax == null) {
+    return {
+      base_amount: baseAmount,
+      tax_amount: taxAmount,
+      round_off: round ?? 0,
+      total_amount: totalAmount,
+    };
+  }
+
+  if (round == null) round = 0;
+
+  return {
+    base_amount: round2(base),
+    tax_amount: round2(tax),
+    round_off: round2(round),
+    total_amount: round2(base + tax + round),
+  };
+}
+
 function enrichLineForReview(lineItem, classification = {}) {
   const scanned = lineItem.scanned_description || lineItem.description || '';
   const category = classification.item_category || lineItem.item_category || 'other';
@@ -320,6 +361,20 @@ async function confirmReview(invoiceId, body, actorId) {
 
   const invoiceNumber = body.invoice_number ?? invoice.invoice_number;
 
+  const resolvedTaxAmount =
+    body.tax_amount != null && body.tax_amount !== ''
+      ? body.tax_amount
+      : taxItems.length
+        ? taxAmountFromItems
+        : invoice.tax_amount;
+
+  const reconciled = reconcileInvoiceTotals({
+    baseAmount: body.base_amount ?? invoice.base_amount,
+    taxAmount: resolvedTaxAmount,
+    roundOff: body.round_off ?? invoice.round_off ?? 0,
+    totalAmount: body.total_amount ?? invoice.total_amount,
+  });
+
   const updatePayload = {
     supplier_id: supplierId,
     line_items: normalizedLines,
@@ -327,15 +382,10 @@ async function confirmReview(invoiceId, body, actorId) {
     invoice_number: invoiceNumber,
     invoice_date: body.invoice_date ?? invoice.invoice_date,
     due_date: body.due_date ?? invoice.due_date,
-    total_amount: body.total_amount ?? invoice.total_amount,
-    base_amount: body.base_amount ?? invoice.base_amount,
-    round_off: body.round_off ?? invoice.round_off ?? 0,
-    tax_amount:
-      body.tax_amount != null && body.tax_amount !== ''
-        ? body.tax_amount
-        : taxItems.length
-          ? taxAmountFromItems
-          : invoice.tax_amount,
+    total_amount: reconciled.total_amount,
+    base_amount: reconciled.base_amount,
+    round_off: reconciled.round_off,
+    tax_amount: reconciled.tax_amount,
     // Clear OCR review state — status must not remain needs_review
     status: 'pending',
     review_status: 'confirmed',
@@ -467,4 +517,5 @@ module.exports = {
   upsertAliases,
   lookupAlias,
   enrichLineForReview,
+  reconcileInvoiceTotals,
 };

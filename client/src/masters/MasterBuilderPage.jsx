@@ -170,7 +170,12 @@ export default function MasterBuilderPage() {
         navigate(`/masters/${master.slug || saved.master.slug}`);
       }
     } catch (err) {
-      setSaveMsg({ type: 'error', text: `Save failed: ${err.message || err}` });
+      const serverMsg =
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        err.message ||
+        err;
+      setSaveMsg({ type: 'error', text: `Save failed: ${serverMsg}` });
     } finally {
       setSaving(false);
     }

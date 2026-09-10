@@ -429,7 +429,7 @@ function formatReviewValue(field, value, existingUrl) {
 
 export default function MasterForm({ slug, recordId, onSave, onCancel, variant }) {
   const isEdit = Boolean(recordId)
-  const isWizard = variant === 'wizard' && !isEdit
+  const isWizard = variant === 'wizard'
 
   const [schema, setSchema] = useState(null)   // { master, sections }
   const [activeTab, setActiveTab] = useState(0)
@@ -609,7 +609,7 @@ export default function MasterForm({ slug, recordId, onSave, onCancel, variant }
       {
         id: sectionSteps.length + 1,
         title: 'Review',
-        hint: 'Confirm before creating',
+        hint: isEdit ? 'Confirm before saving' : 'Confirm before creating',
         sectionIndex: null,
         isReview: true,
       },
@@ -780,12 +780,21 @@ export default function MasterForm({ slug, recordId, onSave, onCancel, variant }
     const currentSection =
       current?.sectionIndex != null ? sections[current.sectionIndex] : null
     const isReview = !!current?.isReview
+    const pageTitle = isEdit ? `Edit ${master.name}` : `New ${master.name}`
+    const reviewAction = isEdit
+      ? `Confirm the details, then save changes to this ${master.name.toLowerCase()}.`
+      : `Confirm the details, then create this ${master.name.toLowerCase()}.`
+    const submitLabel = isEdit ? 'Save changes' : `Create ${master.name}`
+    const submittingLabel = isEdit ? 'Saving…' : 'Creating…'
 
     return (
       <main className="mes-shell bpo-setup-page">
-        <PageHeader title={`New ${master.name}`} />
+        <PageHeader
+          title={pageTitle}
+          subtitle={isEdit && name ? name : undefined}
+        />
 
-        <nav className="bpo-steps" aria-label="Create steps">
+        <nav className="bpo-steps" aria-label={isEdit ? 'Edit steps' : 'Create steps'}>
           {steps.map((s) => (
             <button
               key={s.id}
@@ -829,7 +838,7 @@ export default function MasterForm({ slug, recordId, onSave, onCancel, variant }
             <div className="bpo-panel mf-review">
               <h2 style={{ marginTop: 0 }}>Review</h2>
               <p className="muted" style={{ marginTop: 0 }}>
-                Confirm the details, then create this {master.name.toLowerCase()}.
+                {reviewAction}
               </p>
               {sections.map((section) => (
                 <div key={section.id} className="mf-review-block">
@@ -918,8 +927,8 @@ export default function MasterForm({ slug, recordId, onSave, onCancel, variant }
                 onClick={handleSubmit}
               >
                 {saving
-                  ? <><i className="ti ti-loader-2 mf-spin" /> Creating…</>
-                  : `Create ${master.name}`
+                  ? <><i className="ti ti-loader-2 mf-spin" /> {submittingLabel}</>
+                  : submitLabel
                 }
               </button>
             )}

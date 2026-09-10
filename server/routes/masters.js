@@ -920,7 +920,7 @@ router.post('/', wrap(async(req,res)=>{
       name: section.name,
       slug: section.slug,
       is_repeatable: section.is_repeatable,
-      section_order: sectionIndex+1
+      display_order: sectionIndex+1
     })
     .select()
     .single()
@@ -936,21 +936,20 @@ router.post('/', wrap(async(req,res)=>{
       related_master_id: field.related_master_id || null,
       placeholder: field.placeholder || null,
       is_required: field.is_required || false,
-      field_order: fieldIndex + 1
+      display_order: fieldIndex + 1
     }))
 
-    if (fieldRows.length){
-      const {error:fieldError} = await supabase
-      .from('section_fields')
-      .insert(fieldRows)
+    if (fieldRows.length) {
+      const { error: fieldError } = await supabase
+        .from('section_fields')
+        .insert(fieldRows)
+      if (fieldError) throw fieldError
     }
-
-    if(fieldError) throw fieldError
-
   }
 
   return res.status(201).json({
-    id: newMaster.id
+    master: newMaster,
+    id: newMaster.id,
   })
 }))
 
@@ -958,8 +957,9 @@ router.put('/:id', wrap(async (req, res) => {
   const { id } = req.params;
   if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid master id' });
  
-  const master = req.body.body.master
-  const sections = req.body.body.sections
+  // Client sends { master, sections } at the top level (not nested under body)
+  const master = req.body?.master
+  const sections = req.body?.sections
 
  
   if (!master?.name || !master?.slug) {
@@ -993,8 +993,6 @@ router.put('/:id', wrap(async (req, res) => {
     return res.status(500).json({ message: mErr.message });
 
   }
-
-  console.log('I reached updated master')
 
   // ── 3. Sync sections ─────────────────────────────────────────────────────
   //
@@ -1042,14 +1040,10 @@ router.put('/:id', wrap(async (req, res) => {
       .in('id', toDeleteSectionIds);
     if (delErr) return res.status(500).json({ message: delErr.message });
   }
-
-  console.log('im done with deleting sections')
  
   // ── 4. Upsert remaining sections + their fields ──────────────────────────
   
   const syncedSections = await upsertSectionsAndFields(id, sections || []);
-
-  console.log('im done with syncing sections')
  
   return res.json({ master: updatedMaster, sections: syncedSections });
 }));
@@ -1057,15 +1051,15 @@ router.put('/:id', wrap(async (req, res) => {
 /* ─── Shared helper: upsert sections + fields for a master ───────────────── */
 async function upsertSectionsAndFields(masterId, sections) {
   const results = [];
-  let syncedFields = [];
  
   for (const [sIdx, section] of sections.entries()) {
+    const syncedFields = [];
     const sectionPayload = clean({
       master_id:     masterId,
       name:          section.name,
       slug:          section.slug,
       is_repeatable: section.is_repeatable ?? false,
-      display_order:         sIdx,
+      display_order: sIdx + 1,
     });
  
     let sectionRow;
@@ -1127,7 +1121,7 @@ async function upsertSectionsAndFields(masterId, sections) {
                              ? field.related_master_id
                              : null,
         is_required:       field.is_required ?? false,
-        display_order:             fIdx,
+        display_order:     fIdx + 1,
       });
  
       let fieldRow;
@@ -1155,7 +1149,6 @@ async function upsertSectionsAndFields(masterId, sections) {
       }
  
       syncedFields.push(fieldRow);
-      console.log(syncedFields)
     }
  
     results.push({ ...sectionRow, fields: syncedFields });

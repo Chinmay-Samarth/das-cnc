@@ -4,6 +4,8 @@ const jwt = require('jsonwebtoken');
 const { getInvoice, startInvoiceOCR } = require('../services/invoiceOcrEngine');
 const {
   recordVendorInvoicePayment,
+  recordBulkVendorPayments,
+  listPayableInvoices,
   updateInvoiceTallyFields,
   retryVendorInvoicePurchaseSync,
   retryVendorInvoicePaymentSync,
@@ -11,6 +13,15 @@ const {
 } = require('../services/invoicePaymentEngine');
 const { isTallyEnabled, tallyCompany, tallyUrl } = require('../services/tallyClient');
 const { fetchBankLedgersFromTally } = require('../services/tallyBankLedgers');
+const {
+  fetchSupplierOutstandingFromTally,
+} = require('../services/tallyCustomerOutstanding');
+const { createClient } = require('@supabase/supabase-js');
+
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
 const {
   syncPurchaseVoucherOnGirnRegister,
 } = require('../services/girnTallyPurchaseSync');
@@ -123,6 +134,61 @@ router.get('/tally/bank-ledgers', verifyEmployeeAuth, async (req, res) => {
       bank_ledgers: [],
       tally_enabled: true,
     });
+  }
+});
+
+router.get(
+  '/tally/supplier-outstanding/:supplierId',
+  verifyEmployeeAuth,
+  async (req, res) => {
+    try {
+      const supplierId = req.params.supplierId;
+      const { data: supplier, error } = await supabaseAdmin
+        .from('suppliers')
+        .select('id, name, ledger_name')
+        .eq('id', supplierId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!supplier) {
+        return res.status(404).json({ error: 'Supplier not found' });
+      }
+
+      const ledger =
+        String(supplier.ledger_name || '').trim() ||
+        String(supplier.name || '').trim();
+      const result = await fetchSupplierOutstandingFromTally(ledger);
+      return res.json({
+        supplier_id: supplier.id,
+        supplier_name: supplier.name,
+        tally_enabled: isTallyEnabled(),
+        ...result,
+      });
+    } catch (err) {
+      console.error('Supplier outstanding error:', err);
+      return sendServiceError(res, err);
+    }
+  }
+);
+
+router.get('/payable', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const invoices = await listPayableInvoices({
+      supplierId: req.query.supplier_id || null,
+    });
+    return res.json({ invoices, tally_enabled: isTallyEnabled() });
+  } catch (err) {
+    console.error('Payable invoices list error:', err);
+    return sendServiceError(res, err);
+  }
+});
+
+router.post('/bulk-payments', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const result = await recordBulkVendorPayments(actorId(req), req.body || {});
+    return res.json({ ...result, tally_enabled: isTallyEnabled() });
+  } catch (err) {
+    console.error('Bulk invoice payment error:', err);
+    return sendServiceError(res, err);
   }
 });
 

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, Layers, PackageCheck, RefreshCw, Truck } from 'lucide-react';
 import api from '../api/client';
-import { formatDueLabel } from '../blanketPos/scheduleLabels';
+import { formatDueLabel, weekdayShort, isoWeekdayFromDate } from '../blanketPos/scheduleLabels';
+import { formatDisplayDate } from '../utils/dateFormat';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
 import { useProductionRealtime, useSocket } from '../socket/socketContext';
 import {
   PageHeader,
@@ -45,10 +47,103 @@ function invoiceLabel(inv) {
   return parts.join(' · ');
 }
 
-function invoiceWizardPath(lotId, shipQty) {
+function invoiceWizardPath(lotId, shipQty, scheduleId) {
   const qty = Number(shipQty);
   const q = Number.isFinite(qty) && qty > 0 ? `&quantity=${encodeURIComponent(String(qty))}` : '';
-  return `/sales-invoices/new?lotId=${lotId}${q}`;
+  const ds =
+    scheduleId != null && String(scheduleId)
+      ? `&delivery_schedule_id=${encodeURIComponent(String(scheduleId))}`
+      : '';
+  return `/sales-invoices/new?lotId=${lotId}${q}${ds}`;
+}
+
+function formatScheduleQty(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '—';
+  return Number.isInteger(v) ? String(v) : v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function scheduleOptionParts(opt) {
+  if (!opt) {
+    return { typeLabel: '—', title: '—', subtitle: '—', label: '—' };
+  }
+  const due = String(opt.due_date || '').slice(0, 10);
+  const dayShort = weekdayShort(isoWeekdayFromDate(due)) || 'Day';
+  const dateLabel = formatDisplayDate(due);
+  const qty = formatScheduleQty(opt.remaining_qty);
+  const typeLabel = opt.bucket === 'past_due' ? 'Past' : dayShort;
+  const title =
+    opt.bucket === 'past_due'
+      ? `${dayShort} · ${dateLabel} · Qty ${qty}`
+      : `${dateLabel} · Qty ${qty}`;
+  const ds = opt.schedule_number || 'DS';
+  const subtitle = [ds, opt.is_one_off ? 'One-off' : null].filter(Boolean).join(' · ');
+  const label = [typeLabel, title, subtitle].filter(Boolean).join(' · ');
+  return { typeLabel, title, subtitle, label };
+}
+
+function toSearchSelectOption(opt) {
+  const parts = scheduleOptionParts(opt);
+  return {
+    value: opt.id,
+    typeLabel: parts.typeLabel,
+    title: parts.title,
+    subtitle: parts.subtitle,
+    label: parts.label,
+  };
+}
+
+function ScheduleSelect({ lotOrGroup, disabled, onChange }) {
+  const options = lotOrGroup.schedule_options || [];
+  if (!options.length) return null;
+  const currentId =
+    lotOrGroup.delivery_schedule_id ||
+    lotOrGroup.qty_gate?.schedule_id ||
+    options[0]?.id ||
+    '';
+  const currentOpt = options.find((o) => o.id === currentId) || options[0];
+  const currentParts = scheduleOptionParts(currentOpt);
+  const canPick = !disabled && (lotOrGroup.schedule_choice_required || options.length > 1);
+
+  if (!canPick) {
+    return (
+      <div
+        className="global-search-result"
+        style={{ marginTop: 8, pointerEvents: 'none', cursor: 'default' }}
+      >
+        <span className="global-search-result-type">{currentParts.typeLabel}</span>
+        <span className="global-search-result-title">{currentParts.title}</span>
+        <span className="global-search-result-subtitle">{currentParts.subtitle}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      {lotOrGroup.schedule_choice_required ? (
+        <p className="muted" style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 600 }}>
+          Past due and upcoming schedules open — choose which this refers to
+        </p>
+      ) : (
+        <p className="muted" style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 600 }}>
+          Delivery schedule
+        </p>
+      )}
+      <FormSearchSelect
+        value={currentId}
+        onChange={(nextId) => {
+          if (nextId && nextId !== currentId) onChange(nextId);
+        }}
+        options={options.map(toSearchSelectOption)}
+        searchable
+        clearable={false}
+        disabled={disabled}
+        placeholder="Select delivery schedule…"
+        selectedLabel={currentParts.label}
+        emptyMessage="No open schedules"
+      />
+    </div>
+  );
 }
 
 function partitionDispatchQueue(lots) {
@@ -225,6 +320,26 @@ export default function ReadyForDispatchPage() {
     }
   }
 
+  async function pinDeliverySchedule(lotIds, scheduleId, busyKey) {
+    if (!scheduleId || !lotIds?.length) return;
+    setBusyId(busyKey);
+    setError(null);
+    try {
+      await Promise.all(
+        lotIds.map((id) =>
+          api.post(`/production/lots/${id}/delivery-schedule`, {
+            delivery_schedule_id: scheduleId,
+          })
+        )
+      );
+      await load({ silent: true });
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not update delivery schedule.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   function renderStandalone(lot) {
     const busy = busyId === lot.id;
     const inv = lot.sales_invoice;
@@ -235,6 +350,8 @@ export default function ReadyForDispatchPage() {
     const shortfallApproved = lot.shortfall_request?.status === 'approved';
     const needApprovalRequest = isShortfall && !shortfallPending && !shortfallApproved;
     const scheduleQty = lot.delivery_schedule_qty ?? gate?.schedule_qty ?? null;
+    const scheduleId = lot.delivery_schedule_id || gate?.schedule_id || null;
+    const canChangeSchedule = !inv && !shortfallPending && !shortfallApproved;
 
     return (
       <article key={lot.id} className="mes-task-card">
@@ -259,6 +376,7 @@ export default function ReadyForDispatchPage() {
             </h2>
             <p className="muted" style={{ margin: 0, fontSize: 13 }}>
               Qty <strong>{Number(lot.quantity || 0)}</strong>
+              {lot.schedule_number ? ` · ${lot.schedule_number}` : ''}
               {lot.schedule_due_date ? ` · Due ${formatDueLabel(lot.schedule_due_date)}` : ''}
               {lot.current_node_label ? ` · ${lot.current_node_label}` : ''}
             </p>
@@ -281,6 +399,11 @@ export default function ReadyForDispatchPage() {
               </span>
               <StatusBadge status={qtyGateTone(lot)}>{qtyGateLabel(lot)}</StatusBadge>
             </p>
+            <ScheduleSelect
+              lotOrGroup={lot}
+              disabled={busy || !canChangeSchedule}
+              onChange={(id) => pinDeliverySchedule([lot.id], id, lot.id)}
+            />
             <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
               {invoiceLabel(inv)}
             </p>
@@ -300,7 +423,8 @@ export default function ReadyForDispatchPage() {
                     lot.id,
                     lot.qty_gate?.mode === 'overage' || lot.qty_gate?.mode === 'match'
                       ? scheduleQty
-                      : lot.quantity
+                      : lot.quantity,
+                    scheduleId
                   )
                 )
               }
@@ -319,7 +443,8 @@ export default function ReadyForDispatchPage() {
                         lot.id,
                         lot.qty_gate?.mode === 'overage' || lot.qty_gate?.mode === 'match'
                           ? scheduleQty
-                          : lot.quantity
+                          : lot.quantity,
+                        scheduleId
                       )
                     )
                   : navigate(`/sales-invoices/${inv.invoice_id}`)
@@ -381,6 +506,8 @@ export default function ReadyForDispatchPage() {
     const shortfallPending = group.shortfall_request?.status === 'pending';
     const shortfallApproved = group.shortfall_request?.status === 'approved';
     const needApprovalRequest = isShortfall && !shortfallPending && !shortfallApproved;
+    const scheduleId = group.delivery_schedule_id || primary?.delivery_schedule_id || null;
+    const canChangeSchedule = !inv && !shortfallPending && !shortfallApproved;
 
     return (
       <article key={group.key} className="mes-task-card mes-dispatch-group">
@@ -426,6 +553,11 @@ export default function ReadyForDispatchPage() {
               </span>
               <StatusBadge status={groupQtyTone(group)}>{groupQtyLabel(group)}</StatusBadge>
             </p>
+            <ScheduleSelect
+              lotOrGroup={group}
+              disabled={busy || !canChangeSchedule}
+              onChange={(id) => pinDeliverySchedule(group.lot_ids, id, group.key)}
+            />
             <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
               {invoiceLabel(inv)}
             </p>
@@ -461,7 +593,9 @@ export default function ReadyForDispatchPage() {
               type="button"
               className="mes-btn mes-btn-primary"
               style={{ flex: 1, padding: '12px', fontSize: 14 }}
-              onClick={() => navigate(invoiceWizardPath(group.primary_lot_id, group.ship_qty))}
+              onClick={() =>
+                navigate(invoiceWizardPath(group.primary_lot_id, group.ship_qty, scheduleId))
+              }
             >
               Create invoice
             </button>
@@ -472,7 +606,7 @@ export default function ReadyForDispatchPage() {
               style={{ flex: 1, padding: '12px', fontSize: 14 }}
               onClick={() =>
                 inv.invoice_status === 'draft' || !inv.printed || !inv.packing_slip_printed
-                  ? navigate(invoiceWizardPath(group.primary_lot_id, group.ship_qty))
+                  ? navigate(invoiceWizardPath(group.primary_lot_id, group.ship_qty, scheduleId))
                   : navigate(`/sales-invoices/${inv.invoice_id}`)
               }
             >
@@ -512,7 +646,7 @@ export default function ReadyForDispatchPage() {
       <PageHeader
         eyebrow="Shop floor"
         title="Ready for Dispatch"
-        subtitle="Dispatch only when parked RFD qty meets the delivery schedule (or override is approved). Use the invoice wizard to issue, print the invoice, print the packing slip, then dispatch. Same-component lots on one schedule are grouped for merge & dispatch."
+        subtitle="Map parked qty to the current delivery schedule (choose past due vs upcoming when both are open). Dispatch only when RFD qty meets the schedule (or override is approved), after invoice and packing slip print confirmation."
         actions={
           <>
             <button
