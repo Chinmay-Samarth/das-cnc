@@ -11,14 +11,20 @@ const {
   updateDraft,
   issueInvoice,
   confirmPrinted,
+  confirmPackingSlipPrinted,
   cancelInvoice,
   recordPayment,
+  recordBulkPayments,
   retrySalesInvoiceTallySync,
+  retrySalesInvoiceReceiptTallySync,
   findActiveInvoiceForLot,
   resolveLotBillingContext,
   storeSalesInvoicePdf,
 } = require('../services/salesInvoiceEngine');
 const { isTallyEnabled, tallyCompany, tallyUrl } = require('../services/tallyClient');
+const { fetchBankLedgersFromTally } = require('../services/tallyBankLedgers');
+const { fetchCustomerOutstandingFromTally } = require('../services/tallyCustomerOutstanding');
+const { createClient } = require('@supabase/supabase-js');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -27,6 +33,10 @@ const upload = multer({
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
 
 function verifyEmployeeAuth(req, res, next) {
   try {
@@ -124,7 +134,10 @@ router.get(
 router.get(
   '/',
   wrap(async (req, res) => {
-    const invoices = await listInvoices({ status: req.query.status });
+    const invoices = await listInvoices({
+      status: req.query.status,
+      customerId: req.query.customer_id,
+    });
     return res.json({ sales_invoices: invoices });
   })
 );
@@ -136,6 +149,62 @@ router.get(
       tally_enabled: isTallyEnabled(),
       company: tallyCompany() || null,
       url: tallyUrl(),
+    });
+  })
+);
+
+router.get(
+  '/tally/bank-ledgers',
+  requireAdminOrSupervisor,
+  wrap(async (req, res) => {
+    if (!isTallyEnabled()) {
+      return res.status(422).json({ error: 'Tally is not enabled', bank_ledgers: [] });
+    }
+    try {
+      const bank_ledgers = await fetchBankLedgersFromTally({
+        force: String(req.query.force || '') === '1',
+      });
+      return res.json({ bank_ledgers });
+    } catch (err) {
+      return res.status(502).json({
+        error: err.message || 'Unable to load bank ledgers from Tally',
+        bank_ledgers: [],
+      });
+    }
+  })
+);
+
+router.get(
+  '/tally/customer-outstanding/:customerId',
+  requireAdminOrSupervisor,
+  wrap(async (req, res) => {
+    const { data: customer, error } = await supabase
+      .from('customers')
+      .select('id, name, ledger_name')
+      .eq('id', req.params.customerId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!customer) return res.status(404).json({ error: 'Customer not found' });
+
+    const ledgerName = String(customer.ledger_name || customer.name || '').trim();
+    const result = await fetchCustomerOutstandingFromTally(ledgerName);
+    return res.json({
+      customer_id: customer.id,
+      customer_name: customer.name,
+      ...result,
+      tally_enabled: isTallyEnabled(),
+    });
+  })
+);
+
+router.post(
+  '/bulk-payments',
+  requireAdminOrSupervisor,
+  wrap(async (req, res) => {
+    const result = await recordBulkPayments(actorId(req), req.body || {});
+    return res.json({
+      ...result,
+      tally_enabled: isTallyEnabled(),
     });
   })
 );
@@ -189,6 +258,15 @@ router.post(
 );
 
 router.post(
+  '/:id/confirm-packing-slip-printed',
+  requireAdminOrSupervisor,
+  wrap(async (req, res) => {
+    const invoice = await confirmPackingSlipPrinted(req.params.id, actorId(req));
+    return res.json({ sales_invoice: invoice });
+  })
+);
+
+router.post(
   '/:id/pdf',
   upload.single('pdf'),
   wrap(async (req, res) => {
@@ -230,6 +308,18 @@ router.post(
   requireAdminOrSupervisor,
   wrap(async (req, res) => {
     const invoice = await retrySalesInvoiceTallySync(req.params.id);
+    return res.json({
+      sales_invoice: invoice,
+      tally_enabled: isTallyEnabled(),
+    });
+  })
+);
+
+router.post(
+  '/:id/tally/receipt-sync',
+  requireAdminOrSupervisor,
+  wrap(async (req, res) => {
+    const invoice = await retrySalesInvoiceReceiptTallySync(req.params.id);
     return res.json({
       sales_invoice: invoice,
       tally_enabled: isTallyEnabled(),

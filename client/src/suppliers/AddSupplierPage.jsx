@@ -81,7 +81,7 @@ export default function AddSupplierPage() {
             />
           </label>
           <label htmlFor="tally_expense_ledger_type">
-            Expense ledger type
+            Product / service type
             <select
               id="tally_expense_ledger_type"
               name="tally_expense_ledger_type"
@@ -92,7 +92,9 @@ export default function AddSupplierPage() {
               <option value="">Select type</option>
               <option value="labour">Labour</option>
               <option value="labour_service">Labour Service</option>
+              <option value="consumable">Consumable</option>
               <option value="raw_material">Raw Material</option>
+              <option value="spares_and_tools">Spares and Tools</option>
             </select>
           </label>
           <label htmlFor="GSTIN">

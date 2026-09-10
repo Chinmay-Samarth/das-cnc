@@ -24,6 +24,7 @@ const CUSTOMER_FIELDS = [
   'account_type',
   'ifsc',
   'payment_terms',
+  'components_per_packet',
 ];
 
 function verifyEmployeeAuth(req, res, next) {
@@ -52,10 +53,22 @@ function cleanText(value) {
 function buildCustomerPayload(body, { partial = false } = {}) {
   const payload = {};
 
-  CUSTOMER_FIELDS.forEach((field) => {
-    if (body[field] === undefined) return;
+  for (const field of CUSTOMER_FIELDS) {
+    if (body[field] === undefined) continue;
+    if (field === 'components_per_packet') {
+      if (body[field] === null || body[field] === '') {
+        payload[field] = null;
+        continue;
+      }
+      const n = parseFloat(body[field]);
+      if (!Number.isFinite(n) || n <= 0) {
+        return { error: 'components_per_packet must be a positive number' };
+      }
+      payload[field] = n;
+      continue;
+    }
     payload[field] = cleanText(body[field]);
-  });
+  }
 
   if (payload.gstin) payload.gstin = payload.gstin.toUpperCase();
   if (payload.pan_no) payload.pan_no = payload.pan_no.toUpperCase();
@@ -88,6 +101,9 @@ function toCustomer(row) {
     account_type: row.account_type,
     ifsc: row.ifsc,
     payment_terms: row.payment_terms,
+    components_per_packet: row.components_per_packet != null
+      ? Number(row.components_per_packet)
+      : null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

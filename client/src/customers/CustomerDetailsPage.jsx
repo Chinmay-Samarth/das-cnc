@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Pencil } from 'lucide-react';
+import { Pencil, Banknote } from 'lucide-react';
 import api from '../api/client';
 import { formatDisplayDateTime } from '../utils/dateFormat';
 import { AlertBanner, FormActions, PageHeader } from '../components/mes';
+import { formatInr } from '../salesInvoices/downloadSalesInvoicePdf';
+import { openSalesPaymentDialog } from '../salesInvoices/salesPaymentDialog';
+import { appAlert } from '../components/dialog';
 
 const emptyFormData = {
   name: '',
@@ -19,6 +22,7 @@ const emptyFormData = {
   account_type: '',
   ifsc: '',
   payment_terms: '',
+  components_per_packet: '',
 };
 
 function DetailItem({ label, value }) {
@@ -40,6 +44,9 @@ export default function CustomerDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [outstanding, setOutstanding] = useState(null);
+  const [paying, setPaying] = useState(false);
+  const [tallyEnabled, setTallyEnabled] = useState(false);
 
   useEffect(() => {
     if (location.pathname.endsWith('/edit')) {
@@ -75,6 +82,10 @@ export default function CustomerDetailsPage() {
             account_type: loadedCustomer.account_type || '',
             ifsc: loadedCustomer.ifsc || '',
             payment_terms: loadedCustomer.payment_terms || '',
+            components_per_packet:
+              loadedCustomer.components_per_packet != null
+                ? String(loadedCustomer.components_per_packet)
+                : '',
           });
         }
       } catch (err) {
@@ -92,6 +103,70 @@ export default function CustomerDetailsPage() {
       mounted = false;
     };
   }, [id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadOutstanding() {
+      if (!id) return;
+      try {
+        const [outRes, tallyRes] = await Promise.all([
+          api.get(`/sales-invoices/tally/customer-outstanding/${id}`),
+          api.get('/sales-invoices/tally/status'),
+        ]);
+        if (!cancelled) {
+          setOutstanding(outRes.data);
+          setTallyEnabled(Boolean(tallyRes.data?.tally_enabled));
+        }
+      } catch {
+        if (!cancelled) setOutstanding(null);
+      }
+    }
+    loadOutstanding();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  const handlePayInvoices = async () => {
+    setPaying(true);
+    setError(null);
+    try {
+      const { data } = await api.get('/sales-invoices', {
+        params: { status: 'due', customer_id: id },
+      });
+      const invoices = (data.sales_invoices || []).filter(
+        (inv) => inv.customer_id === id
+      );
+      if (!invoices.length) {
+        await appAlert('No due sales invoices for this customer');
+        return;
+      }
+      const result = await openSalesPaymentDialog({
+        customerId: id,
+        customerName: customer?.name,
+        ledgerName: customer?.ledger_name,
+        invoices,
+        tallyEnabled,
+        mode: invoices.length > 1 ? 'bulk' : 'single',
+        selectInvoices: true,
+      });
+      if (!result) return;
+      await appAlert({ title: 'Payment recorded', tone: 'success' });
+      // Refresh outstanding
+      try {
+        const { data: out } = await api.get(
+          `/sales-invoices/tally/customer-outstanding/${id}`
+        );
+        setOutstanding(out);
+      } catch {
+        /* ignore */
+      }
+    } catch (err) {
+      await appAlert(err.response?.data?.error || 'Payment failed');
+    } finally {
+      setPaying(false);
+    }
+  };
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -130,10 +205,21 @@ export default function CustomerDetailsPage() {
         title={customer?.name || 'Customer'}
         subtitle={customer?.gstin || ''}
         actions={
-          <button type="button" className="neutral-button" onClick={() => setTab('edit')}>
-            <Pencil size={16} />
-            Edit
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="neutral-button"
+              onClick={handlePayInvoices}
+              disabled={paying || loading || !customer}
+            >
+              <Banknote size={16} />
+              {paying ? 'Paying…' : 'Pay invoices'}
+            </button>
+            <button type="button" className="neutral-button" onClick={() => setTab('edit')}>
+              <Pencil size={16} />
+              Edit
+            </button>
+          </div>
         }
       />
 
@@ -173,6 +259,14 @@ export default function CustomerDetailsPage() {
                     <DetailItem label="Account Type" value={customer.account_type} />
                     <DetailItem label="IFSC" value={customer.ifsc} />
                     <DetailItem label="Payment Terms" value={customer.payment_terms} />
+                    <DetailItem
+                      label="Components per packet"
+                      value={
+                        customer.components_per_packet != null
+                          ? String(customer.components_per_packet)
+                          : null
+                      }
+                    />
                     {customer.created_at ? (
                       <DetailItem label="Created At" value={formatDisplayDateTime(customer.created_at)} />
                     ) : null}
@@ -183,6 +277,20 @@ export default function CustomerDetailsPage() {
                 </div>
               </div>
               <aside className="detail-side-column">
+                {outstanding?.outstanding != null || outstanding?.error ? (
+                  <section className="tally-balance-card">
+                    <div className="section-header">
+                      <h2>Owes (Tally)</h2>
+                    </div>
+                    {outstanding.outstanding != null ? (
+                      <p className="tally-balance-amount">
+                        ₹{formatInr(outstanding.outstanding)}
+                      </p>
+                    ) : (
+                      <p className="tally-balance-error">{outstanding.error}</p>
+                    )}
+                  </section>
+                ) : null}
                 <section className="card employee-details-attendance">
                   <div
                     className="section-header"
@@ -360,6 +468,20 @@ export default function CustomerDetailsPage() {
                 name="payment_terms"
                 value={formData.payment_terms}
                 onChange={handleChange}
+                disabled={submitting}
+              />
+            </label>
+            <label htmlFor="components_per_packet">
+              Components per packet
+              <input
+                id="components_per_packet"
+                type="number"
+                name="components_per_packet"
+                min="1"
+                step="1"
+                value={formData.components_per_packet}
+                onChange={handleChange}
+                placeholder="e.g., 50"
                 disabled={submitting}
               />
             </label>

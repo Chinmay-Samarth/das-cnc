@@ -996,7 +996,7 @@ export default function CreateGIRNPage() {
               <div className="bpo-panel" style={{ marginBottom: 16 }}>
                 <h2>Invoice added</h2>
                 <p className="muted bpo-lead">
-                  Invoice {invoice.invoice_number || invoice.id} has been added to the Invoices tab.
+                  Invoice {invoice.invoice_number || invoice.id} has been added to the Purchase Invoices tab.
                 </p>
                 {invoice.file_url ? (
                   <a href={invoice.file_url} target="_blank" rel="noreferrer" className="neutral-button" style={{ display: 'inline-flex' }}>

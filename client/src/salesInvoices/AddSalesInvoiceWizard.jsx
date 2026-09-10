@@ -3,14 +3,17 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Check, Printer, Truck } from 'lucide-react';
 import api from '../api/client';
 import { PageHeader, AlertBanner } from '../components/mes';
-import { appAlert } from '../components/dialog';
 import { printSalesInvoicePdf, formatInr } from './downloadSalesInvoicePdf';
+import { printPackingSlipPdf } from './downloadPackingSlipPdf';
 
 const STEPS = [
   { id: 1, title: 'Lot & schedule', hint: 'Confirm what you are billing' },
   { id: 2, title: 'Customer & tax', hint: 'Place of supply and GST split' },
   { id: 3, title: 'Company', hint: 'Seller details on this invoice' },
-  { id: 4, title: 'Issue & print', hint: 'Number, print, confirm' },
+  { id: 4, title: 'Issue', hint: 'Allocate invoice number' },
+  { id: 5, title: 'Print invoice', hint: 'Print and confirm the invoice' },
+  { id: 6, title: 'Packing slip', hint: 'Print and confirm the slip' },
+  { id: 7, title: 'Dispatch', hint: 'Ship the lot' },
 ];
 
 const STATE_HINTS = [
@@ -23,6 +26,15 @@ const STATE_HINTS = [
 
 function sameState(a, b) {
   return String(a || '').padStart(2, '0').slice(0, 2) === String(b || '').padStart(2, '0').slice(0, 2);
+}
+
+function resumeStepForInvoice(inv) {
+  if (!inv) return 1;
+  if (inv.status === 'draft') return 4;
+  if (!inv.printed_at) return 5;
+  if (!inv.packing_slip_printed_at) return 6;
+  if (!inv.dispatched_at) return 7;
+  return 7;
 }
 
 export default function AddSalesInvoiceWizard() {
@@ -38,6 +50,7 @@ export default function AddSalesInvoiceWizard() {
   const [preview, setPreview] = useState(null);
   const [invoice, setInvoice] = useState(null);
   const [downloaded, setDownloaded] = useState(false);
+  const [packingDownloaded, setPackingDownloaded] = useState(false);
 
   const [quantity, setQuantity] = useState('');
   const [unitPrice, setUnitPrice] = useState('');
@@ -100,7 +113,9 @@ export default function AddSalesInvoiceWizard() {
         setUnitPrice(String(existing.unit_price));
         setPosCode(existing.place_of_supply_state_code || posCode);
         setNotes(existing.notes || '');
-        if (existing.status !== 'draft') setStep(4);
+        setDownloaded(!!existing.printed_at);
+        setPackingDownloaded(!!existing.packing_slip_printed_at);
+        setStep(resumeStepForInvoice(existing));
       }
     } catch (err) {
       setError(err.response?.data?.error || 'Unable to load lot billing context');
@@ -187,7 +202,7 @@ export default function AddSalesInvoiceWizard() {
       if (step === 3) {
         await ensureDraft();
       }
-      setStep((s) => Math.min(4, s + 1));
+      setStep((s) => Math.min(STEPS.length, s + 1));
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Unable to continue');
     } finally {
@@ -208,7 +223,7 @@ export default function AddSalesInvoiceWizard() {
         inv = data.sales_invoice;
         setInvoice(inv);
       }
-      await appAlert(`Issued ${inv.invoice_number}`);
+      setStep(5);
     } catch (err) {
       setError(err.response?.data?.error || 'Issue failed');
     } finally {
@@ -219,6 +234,7 @@ export default function AddSalesInvoiceWizard() {
   async function handlePrint() {
     if (!invoice) return;
     setBusy(true);
+    setError(null);
     try {
       const stored = await printSalesInvoicePdf(invoice);
       if (stored?.id) setInvoice(stored);
@@ -232,12 +248,43 @@ export default function AddSalesInvoiceWizard() {
 
   async function handleConfirmPrinted() {
     setBusy(true);
+    setError(null);
     try {
       const { data } = await api.post(`/sales-invoices/${invoice.id}/confirm-printed`);
       setInvoice(data.sales_invoice);
-      await appAlert('Print confirmed. You can dispatch the lot.');
+      setStep(6);
     } catch (err) {
       setError(err.response?.data?.error || 'Confirm print failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handlePrintPackingSlip() {
+    if (!invoice) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await printPackingSlipPdf(invoice);
+      setPackingDownloaded(true);
+    } catch (err) {
+      setError(err.message || 'Packing slip print failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleConfirmPackingSlip() {
+    setBusy(true);
+    setError(null);
+    try {
+      const { data } = await api.post(
+        `/sales-invoices/${invoice.id}/confirm-packing-slip-printed`
+      );
+      setInvoice(data.sales_invoice);
+      setStep(7);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Confirm packing slip failed');
     } finally {
       setBusy(false);
     }
@@ -246,15 +293,33 @@ export default function AddSalesInvoiceWizard() {
   async function handleDispatch() {
     if (!lotId) return;
     setBusy(true);
+    setError(null);
     try {
       await api.post(`/production/lots/${lotId}/dispatch`);
-      await appAlert('Lot dispatched');
       navigate('/production/dispatch');
     } catch (err) {
       setError(err.response?.data?.error || 'Dispatch failed');
     } finally {
       setBusy(false);
     }
+  }
+
+  function invoiceSummary() {
+    if (!invoice) return null;
+    return (
+      <div className="bpo-review" style={{ marginBottom: 16 }}>
+        <p style={{ margin: 0 }}>
+          <strong>{invoice.invoice_number || 'Draft'}</strong>
+          {' · '}
+          Status <strong>{invoice.status}</strong>
+        </p>
+        <p className="muted" style={{ margin: '4px 0 0' }}>
+          Total ₹{formatInr(invoice.total_amount)} ·{' '}
+          {invoice.tax_type === 'IGST' ? 'IGST' : 'CGST+SGST'}
+          {preview?.component_label ? ` · ${preview.component_label}` : ''}
+        </p>
+      </div>
+    );
   }
 
   if (loading) {
@@ -280,253 +345,364 @@ export default function AddSalesInvoiceWizard() {
             type="button"
             className={`bpo-step${step === s.id ? ' is-active' : ''}${step > s.id ? ' is-done' : ''}`}
             onClick={() => {
-              if (s.id < step || (invoice && s.id === 4)) setStep(s.id);
+              if (s.id < step) setStep(s.id);
             }}
+            disabled={s.id > step}
           >
             <span className="bpo-step-num">{step > s.id ? <Check size={14} /> : s.id}</span>
-            <span>
+            <span className="bpo-step-text">
               <strong>{s.title}</strong>
-              <em>{s.hint}</em>
+              <small>{s.hint}</small>
             </span>
           </button>
         ))}
       </nav>
 
-      {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
+      <section className="card bpo-setup-card">
+        {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
 
-      {step === 1 && preview ? (
-        <section className="bpo-panel mes-card">
-          <h2>Lot & contract line</h2>
-          <p className="muted">
-            Component: <strong>{preview.component_label || '—'}</strong>
-          </p>
-          <p className="muted">
-            Schedule: <strong>{preview.schedule?.schedule_number}</strong> · Due{' '}
-            {preview.schedule?.due_date}
-          </p>
-          <p className="muted">
-            Blanket: <strong>{preview.blanket?.blanket_number}</strong>
-          </p>
-          <label>
-            Quantity
-            <input
-              type="number"
-              min="0.001"
-              step="any"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-            />
-          </label>
-          <label>
-            Unit price (INR)
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={unitPrice}
-              onChange={(e) => setUnitPrice(e.target.value)}
-            />
-          </label>
-          <label>
-            Notes
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} />
-          </label>
-        </section>
-      ) : null}
-
-      {step === 2 && preview ? (
-        <section className="bpo-panel mes-card">
-          <h2>Customer & tax</h2>
-          <p>
-            <strong>{preview.customer?.name}</strong>
-          </p>
-          <p className="muted">GSTIN {preview.customer?.gstin || '— (enter POS state below)'}</p>
-          <label>
-            Place of supply (state code)
-            <input
-              value={posCode}
-              maxLength={2}
-              onChange={(e) => setPosCode(e.target.value.replace(/\D/g, '').slice(0, 2))}
-            />
-          </label>
-          <p className="muted" style={{ marginTop: 8 }}>
-            Common:{' '}
-            {STATE_HINTS.map((s) => (
-              <button
-                key={s.code}
-                type="button"
-                className="neutral-button"
-                style={{ marginRight: 6, marginBottom: 6, padding: '2px 8px', fontSize: 12 }}
-                onClick={() => setPosCode(s.code)}
-              >
-                {s.code} {s.name}
-              </button>
-            ))}
-          </p>
-          <div className="mes-card" style={{ padding: 12, marginTop: 12, background: '#f9fafb' }}>
-            <p style={{ margin: 0 }}>
-              Tax type:{' '}
-              <strong>
-                {taxPreview.tax_type === 'IGST' ? 'IGST 18%' : 'CGST 9% + SGST 9%'}
-              </strong>
+        {step === 1 && preview ? (
+          <div className="bpo-panel">
+            <h2>Lot & contract line</h2>
+            <p className="muted">
+              Component: <strong>{preview.component_label || '—'}</strong>
             </p>
-            <p className="muted" style={{ margin: '4px 0 0' }}>
-              Taxable ₹{formatInr(taxPreview.taxable)} · Total ₹{formatInr(taxPreview.total)}
+            <p className="muted">
+              Schedule: <strong>{preview.schedule?.schedule_number}</strong> · Due{' '}
+              {preview.schedule?.due_date}
             </p>
+            <p className="muted">
+              Blanket: <strong>{preview.blanket?.blanket_number}</strong>
+            </p>
+            <label>
+              Quantity
+              <input
+                type="number"
+                min="0.001"
+                step="any"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+              />
+            </label>
+            <label>
+              Unit price (INR)
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={unitPrice}
+                onChange={(e) => setUnitPrice(e.target.value)}
+              />
+            </label>
+            <label>
+              Notes
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} />
+            </label>
           </div>
-        </section>
-      ) : null}
+        ) : null}
 
-      {step === 3 ? (
-        <section className="bpo-panel mes-card">
-          <h2>Company details</h2>
-          <p className="muted">Shown on the invoice. Optionally save as default company settings.</p>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-              gap: 12,
-            }}
-          >
-            {[
-              ['legal_name', 'Legal name'],
-              ['trade_name', 'Trade name'],
-              ['gstin', 'GSTIN'],
-              ['state_code', 'State code'],
-              ['state', 'State'],
-              ['city', 'City'],
-              ['address_line1', 'Address line 1'],
-              ['address_line2', 'Address line 2'],
-              ['pan', 'PAN'],
-              ['phone', 'Phone'],
-              ['email', 'Email'],
-              ['bank_name', 'Bank'],
-              ['bank_account', 'Account no'],
-              ['ifsc', 'IFSC'],
-              ['invoice_prefix', 'Invoice prefix'],
-            ].map(([key, label]) => (
-              <label key={key}>
-                {label}
-                <input
-                  value={companyForm[key] || ''}
-                  onChange={(e) =>
-                    setCompanyForm((f) => ({
-                      ...f,
-                      [key]:
-                        key === 'state_code'
-                          ? e.target.value.replace(/\D/g, '').slice(0, 2)
-                          : e.target.value,
-                    }))
-                  }
-                />
-              </label>
-            ))}
-          </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
-            <input
-              type="checkbox"
-              checked={saveCompany}
-              onChange={(e) => setSaveCompany(e.target.checked)}
-            />
-            Save as default company settings
-          </label>
-        </section>
-      ) : null}
-
-      {step === 4 ? (
-        <section className="bpo-panel mes-card">
-          <h2>Issue & print</h2>
-          {invoice ? (
-            <>
-              <p>
-                Status: <strong>{invoice.status}</strong>
-                {invoice.invoice_number ? ` · ${invoice.invoice_number}` : ''}
+        {step === 2 && preview ? (
+          <div className="bpo-panel">
+            <h2>Customer & tax</h2>
+            <p>
+              <strong>{preview.customer?.name}</strong>
+            </p>
+            <p className="muted">GSTIN {preview.customer?.gstin || '— (enter POS state below)'}</p>
+            <label>
+              Place of supply (state code)
+              <input
+                value={posCode}
+                maxLength={2}
+                onChange={(e) => setPosCode(e.target.value.replace(/\D/g, '').slice(0, 2))}
+              />
+            </label>
+            <p className="muted" style={{ marginTop: 8 }}>
+              Common:{' '}
+              {STATE_HINTS.map((s) => (
+                <button
+                  key={s.code}
+                  type="button"
+                  className="neutral-button"
+                  style={{ marginRight: 6, marginBottom: 6, padding: '2px 8px', fontSize: 12 }}
+                  onClick={() => setPosCode(s.code)}
+                >
+                  {s.code} {s.name}
+                </button>
+              ))}
+            </p>
+            <div className="mes-card" style={{ padding: 12, marginTop: 12, background: '#f9fafb' }}>
+              <p style={{ margin: 0 }}>
+                Tax type:{' '}
+                <strong>
+                  {taxPreview.tax_type === 'IGST' ? 'IGST 18%' : 'CGST 9% + SGST 9%'}
+                </strong>
               </p>
+              <p className="muted" style={{ margin: '4px 0 0' }}>
+                Taxable ₹{formatInr(taxPreview.taxable)} · Total ₹{formatInr(taxPreview.total)}
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        {step === 3 ? (
+          <div className="bpo-panel">
+            <h2>Company details</h2>
+            <p className="muted">Shown on the invoice. Optionally save as default company settings.</p>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                gap: 12,
+              }}
+            >
+              {[
+                ['legal_name', 'Legal name'],
+                ['trade_name', 'Trade name'],
+                ['gstin', 'GSTIN'],
+                ['state_code', 'State code'],
+                ['state', 'State'],
+                ['city', 'City'],
+                ['address_line1', 'Address line 1'],
+                ['address_line2', 'Address line 2'],
+                ['pan', 'PAN'],
+                ['phone', 'Phone'],
+                ['email', 'Email'],
+                ['bank_name', 'Bank'],
+                ['bank_account', 'Account no'],
+                ['ifsc', 'IFSC'],
+                ['invoice_prefix', 'Invoice prefix'],
+              ].map(([key, label]) => (
+                <label key={key}>
+                  {label}
+                  <input
+                    value={companyForm[key] || ''}
+                    onChange={(e) =>
+                      setCompanyForm((f) => ({
+                        ...f,
+                        [key]:
+                          key === 'state_code'
+                            ? e.target.value.replace(/\D/g, '').slice(0, 2)
+                            : e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+              <input
+                type="checkbox"
+                checked={saveCompany}
+                onChange={(e) => setSaveCompany(e.target.checked)}
+              />
+              Save as default company settings
+            </label>
+          </div>
+        ) : null}
+
+        {step === 4 ? (
+          <div className="bpo-panel">
+            <h2>Issue invoice</h2>
+            <p className="muted">
+              Allocate a permanent invoice number and post the Sales voucher to Tally (when enabled).
+            </p>
+            {invoiceSummary()}
+            {!invoice ? (
+              <p className="muted">Complete previous steps to create a draft first.</p>
+            ) : invoice.status !== 'draft' ? (
+              <p className="muted">Already issued. Continue to print.</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {step === 5 ? (
+          <div className="bpo-panel">
+            <h2>Print invoice</h2>
+            <p className="muted">
+              Print the tax invoice, then confirm once the paper copy is ready.
+            </p>
+            {invoiceSummary()}
+            {invoice?.printed_at ? (
+              <p className="muted">Invoice print already confirmed.</p>
+            ) : (
               <p className="muted">
-                Total ₹{formatInr(invoice.total_amount)} ·{' '}
-                {invoice.tax_type === 'IGST' ? 'IGST' : 'CGST+SGST'}
+                {downloaded
+                  ? 'Print dialog opened — confirm when done.'
+                  : 'Use Print invoice, then Confirm printed.'}
               </p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
-                {invoice.status === 'draft' ? (
+            )}
+          </div>
+        ) : null}
+
+        {step === 6 ? (
+          <div className="bpo-panel">
+            <h2>Packing slip</h2>
+            <p className="muted">
+              Print the packing slip for the shipment, then confirm it was printed.
+            </p>
+            {invoiceSummary()}
+            {invoice?.packing_slip_printed_at ? (
+              <p className="muted">Packing slip already confirmed.</p>
+            ) : (
+              <p className="muted">
+                {packingDownloaded
+                  ? 'Print dialog opened — confirm when done.'
+                  : 'Use Print packing slip, then Confirm printed.'}
+              </p>
+            )}
+          </div>
+        ) : null}
+
+        {step === 7 ? (
+          <div className="bpo-panel">
+            <h2>Dispatch</h2>
+            <p className="muted">
+              Invoice and packing slip are confirmed. Dispatch the lot to finish shipping.
+            </p>
+            {invoiceSummary()}
+            {invoice?.dispatched_at ? (
+              <p className="muted">This lot is already dispatched.</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        <footer className="bpo-footer">
+          <button
+            type="button"
+            className="neutral-button"
+            disabled={step <= 1 || busy}
+            onClick={() => setStep((s) => Math.max(1, s - 1))}
+          >
+            Back
+          </button>
+
+          {step < 4 ? (
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!canNext() || busy}
+              onClick={goNext}
+            >
+              Continue
+            </button>
+          ) : null}
+
+          {step === 4 ? (
+            <button
+              type="button"
+              className="primary-button"
+              disabled={busy || !invoice}
+              onClick={
+                invoice && invoice.status !== 'draft'
+                  ? () => setStep(5)
+                  : handleIssue
+              }
+            >
+              {busy
+                ? 'Working…'
+                : invoice && invoice.status !== 'draft'
+                  ? 'Continue to print'
+                  : 'Issue invoice'}
+            </button>
+          ) : null}
+
+          {step === 5 ? (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {!invoice?.printed_at ? (
+                <>
+                  <button
+                    type="button"
+                    className="neutral-button"
+                    disabled={busy || !invoice}
+                    onClick={handlePrint}
+                  >
+                    <Printer size={15} />
+                    Print invoice
+                  </button>
                   <button
                     type="button"
                     className="primary-button"
-                    disabled={busy}
-                    onClick={handleIssue}
+                    disabled={busy || !downloaded}
+                    title={!downloaded ? 'Print the invoice first' : undefined}
+                    onClick={handleConfirmPrinted}
                   >
-                    Issue invoice (allocate number)
+                    Confirm printed
                   </button>
-                ) : null}
-                {['due', 'paid'].includes(invoice.status) ? (
-                  <>
-                    <button
-                      type="button"
-                      className="neutral-button"
-                      disabled={busy}
-                      onClick={handlePrint}
-                    >
-                      <Printer size={15} />
-                      Print invoice
-                    </button>
-                    {!invoice.printed_at ? (
-                      <button
-                        type="button"
-                        className="primary-button"
-                        disabled={busy || !downloaded}
-                        title={!downloaded ? 'Print the invoice first' : undefined}
-                        onClick={handleConfirmPrinted}
-                      >
-                        <Printer size={15} />
-                        Confirm printed
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="primary-button"
-                        disabled={busy}
-                        onClick={handleDispatch}
-                      >
-                        <Truck size={15} />
-                        Dispatch lot
-                      </button>
-                    )}
-                  </>
-                ) : null}
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={busy}
+                  onClick={() => setStep(6)}
+                >
+                  Continue
+                </button>
+              )}
+            </div>
+          ) : null}
+
+          {step === 6 ? (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {!invoice?.packing_slip_printed_at ? (
+                <>
+                  <button
+                    type="button"
+                    className="neutral-button"
+                    disabled={busy || !invoice}
+                    onClick={handlePrintPackingSlip}
+                  >
+                    <Printer size={15} />
+                    Print packing slip
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={busy || !packingDownloaded}
+                    title={!packingDownloaded ? 'Print the packing slip first' : undefined}
+                    onClick={handleConfirmPackingSlip}
+                  >
+                    Confirm printed
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={busy}
+                  onClick={() => setStep(7)}
+                >
+                  Continue
+                </button>
+              )}
+            </div>
+          ) : null}
+
+          {step === 7 ? (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {invoice?.id ? (
                 <button
                   type="button"
                   className="neutral-button"
-                  onClick={() => invoice?.id && navigate(`/sales-invoices/${invoice.id}`)}
+                  disabled={busy}
+                  onClick={() => navigate(`/sales-invoices/${invoice.id}`)}
                 >
-                  Open invoice detail
+                  Open invoice
                 </button>
-              </div>
-            </>
-          ) : (
-            <p className="muted">Complete previous steps to create a draft.</p>
-          )}
-        </section>
-      ) : null}
-
-      <footer className="bpo-footer">
-        <button
-          type="button"
-          className="neutral-button"
-          disabled={step <= 1 || busy}
-          onClick={() => setStep((s) => Math.max(1, s - 1))}
-        >
-          Back
-        </button>
-        {step < 4 ? (
-          <button
-            type="button"
-            className="primary-button"
-            disabled={!canNext() || busy}
-            onClick={goNext}
-          >
-            Continue
-          </button>
-        ) : null}
-      </footer>
+              ) : null}
+              <button
+                type="button"
+                className="primary-button"
+                disabled={busy || !!invoice?.dispatched_at}
+                onClick={handleDispatch}
+              >
+                <Truck size={15} />
+                {busy ? 'Dispatching…' : 'Dispatch lot'}
+              </button>
+            </div>
+          ) : null}
+        </footer>
+      </section>
     </main>
   );
 }

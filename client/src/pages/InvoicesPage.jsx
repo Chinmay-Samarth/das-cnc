@@ -26,6 +26,7 @@ function todayYmdIst() {
 
 function invoiceDisplayStatus(invoice) {
   const raw = invoice?.status || 'pending';
+  if (raw === 'cancelled' || invoice?.review_status === 'superseded') return 'cancelled';
   if (raw === 'needs_review' || invoice?.review_status === 'needs_review') return 'needs_review';
   if (raw === 'paid') return 'paid';
   if (raw === 'extracting' || raw === 'saving' || raw === 'error') return raw;
@@ -36,6 +37,7 @@ function invoiceDisplayStatus(invoice) {
 
 function statusLabel(status) {
   if (status === 'needs_review') return 'NEEDS REVIEW';
+  if (status === 'cancelled') return 'CANCELLED';
   if (status === 'due') return 'DUE';
   if (status === 'paid') return 'PAID';
   if (status === 'overdue') return 'OVERDUE';
@@ -57,6 +59,7 @@ function currentMonthRange() {
 
 function statusTone(status) {
   if (status === 'needs_review') return 'running';
+  if (status === 'cancelled') return 'pending';
   if (status === 'paid') return 'completed';
   if (status === 'overdue' || status === 'error') return 'overdue';
   if (status === 'extracting' || status === 'saving') return 'running';
@@ -126,6 +129,8 @@ export default function InvoicesPage() {
     const query = search.trim().toLowerCase();
     const matches = invoices.filter((invoice) => {
       const displayStatus = invoiceDisplayStatus(invoice);
+      // Hide superseded OCR drafts from the default list
+      if (displayStatus === 'cancelled' && statusFilter !== 'cancelled') return false;
       if (statusFilter !== 'all' && displayStatus !== statusFilter) return false;
       if (!query) return true;
       return [
@@ -235,7 +240,7 @@ export default function InvoicesPage() {
         <>
       <PageHeader
         eyebrow="Accounts payable"
-        title="Invoices"
+        title="Purchase Invoices"
         subtitle={`${filteredInvoices.length} invoice${filteredInvoices.length === 1 ? '' : 's'}`}
         actions={
           <>
@@ -369,6 +374,7 @@ export default function InvoicesPage() {
                     Total
                     <span className="sort-indicator">{sortMark('total_amount')}</span>
                   </th>
+                  <th>Advance</th>
                   <th onClick={() => handleSort('due_date')} style={{ cursor: 'pointer' }}>
                     Due date
                     <span className="sort-indicator">{sortMark('due_date')}</span>
@@ -398,6 +404,11 @@ export default function InvoicesPage() {
                     <td>{item.invoice_number || '—'}</td>
                     <td>{formatDisplayDate(item.invoice_date || item.created_at)}</td>
                     <td>₹{fmt(item.total_amount)}</td>
+                    <td>
+                      {Number(item.po_advance_amount) > 0
+                        ? `₹${fmt(item.po_advance_amount)}`
+                        : '—'}
+                    </td>
                     <td>{formatDisplayDate(item.due_date)}</td>
                     <td>
                       <StatusBadge status={statusTone(invoiceDisplayStatus(item))}>

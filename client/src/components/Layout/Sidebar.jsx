@@ -71,8 +71,9 @@ const NAV_SECTIONS = [
       { to: '/suppliers', label: 'Suppliers', icon: Package },
       { to: '/stock', label: 'Stock', icon: Warehouse },
       { to: '/girn', label: 'GIRN', icon: ClipboardList },
-      { to: '/invoices', label: 'Invoices', icon: Receipt },
+      { to: '/invoices', label: 'Purchase Invoices', icon: Receipt },
       { to: '/sales-invoices', label: 'Sales Invoices', icon: IndianRupee },
+      { to: '/sales-payments', label: 'Sales Payments', icon: Banknote },
     ],
   },
   {

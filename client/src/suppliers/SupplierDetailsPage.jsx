@@ -247,15 +247,19 @@ export default function SupplierDetailsPage() {
                       <DetailItem label="Supplier Name" value={supplier.name} />
                       <DetailItem label="Ledger name" value={supplier.ledger_name} />
                       <DetailItem
-                        label="Expense ledger type"
+                        label="Product / service type"
                         value={
                           supplier.tally_expense_ledger_type === 'labour'
                             ? 'Labour'
                             : supplier.tally_expense_ledger_type === 'labour_service'
                               ? 'Labour Service'
-                              : supplier.tally_expense_ledger_type === 'raw_material'
-                                ? 'Raw Material'
-                                : supplier.tally_expense_ledger_type
+                              : supplier.tally_expense_ledger_type === 'consumable'
+                                ? 'Consumable'
+                                : supplier.tally_expense_ledger_type === 'raw_material'
+                                  ? 'Raw Material'
+                                  : supplier.tally_expense_ledger_type === 'spares_and_tools'
+                                    ? 'Spares and Tools'
+                                    : supplier.tally_expense_ledger_type
                         }
                       />
                       <DetailItem label="GSTIN" value={supplier.GSTIN} />
@@ -450,7 +454,7 @@ export default function SupplierDetailsPage() {
             </label>
 
             <label htmlFor="tally_expense_ledger_type">
-              Expense ledger type
+              Product / service type
               <select
                 id="tally_expense_ledger_type"
                 name="tally_expense_ledger_type"
@@ -461,7 +465,9 @@ export default function SupplierDetailsPage() {
                 <option value="">Select type</option>
                 <option value="labour">Labour</option>
                 <option value="labour_service">Labour Service</option>
+                <option value="consumable">Consumable</option>
                 <option value="raw_material">Raw Material</option>
+                <option value="spares_and_tools">Spares and Tools</option>
               </select>
             </label>
 

@@ -37,6 +37,11 @@ function round2(value) {
   return Math.round(toNumber(value) * 100) / 100;
 }
 
+function cleanText(value) {
+  if (value == null) return '';
+  return String(value).trim();
+}
+
 function todayDateString() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -89,7 +94,7 @@ async function enrichPoHeader(row) {
     const { data } = await supabase
       .from('suppliers')
       .select(
-        'id, name, lead_time_days, credit_period_days, official_address, billing_address, GSTIN, payment_details, contact_person'
+        'id, name, ledger_name, lead_time_days, credit_period_days, official_address, billing_address, GSTIN, payment_details, contact_person, tally_expense_ledger_type'
       )
       .eq('id', supplierId)
       .maybeSingle();
@@ -101,7 +106,9 @@ async function enrichPoHeader(row) {
   const fulfillmentPct = totalQty > 0 ? round2((receivedQty / totalQty) * 100) : 0;
   return {
     ...row,
+    supplier,
     supplier_name: supplier?.name ?? null,
+    supplier_ledger_name: supplier?.ledger_name ?? null,
     supplier_address: supplier?.official_address || supplier?.billing_address || null,
     supplier_gstin: supplier?.GSTIN ?? null,
     supplier_payment_details: supplier?.payment_details ?? null,
@@ -863,6 +870,98 @@ async function markPurchaseOrderPaid(id, actorId) {
   return getPurchaseOrderById(id);
 }
 
+/**
+ * Record supplier advance on a PO and post Payment voucher to Tally.
+ * body: { advance_amount, paid_at, reference, bank_ledger }
+ */
+async function recordPurchaseOrderAdvance(id, actorId, body = {}) {
+  const po = await getPurchaseOrderById(id);
+  if (po.status === 'cancelled') {
+    throw httpError('Cannot record advance on a cancelled PO', 409);
+  }
+  if (po.status === 'paid') {
+    throw httpError('PO is already fully paid', 409);
+  }
+  if (Number(po.advance_amount) > 0 && po.tally_advance_sync_status === 'synced') {
+    throw httpError('Advance already recorded and synced for this PO', 409);
+  }
+
+  const amount = round2(body.advance_amount ?? body.amount);
+  if (!(amount > 0)) throw httpError('advance_amount must be > 0');
+
+  const reference = cleanText(body.reference || body.transaction_id || body.advance_reference);
+  if (!reference) throw httpError('reference is required');
+
+  const bankLedger = cleanText(body.bank_ledger || body.advance_bank_ledger);
+  const { isTallyEnabled } = require('./tallyClient');
+  if (isTallyEnabled() && !bankLedger) {
+    throw httpError('bank_ledger is required when Tally sync is enabled', 422);
+  }
+
+  const paidAt = body.paid_at ? new Date(body.paid_at) : new Date();
+  if (Number.isNaN(paidAt.getTime())) throw httpError('Invalid paid_at date');
+
+  const patch = {
+    advance_amount: amount,
+    advance_paid_at: paidAt.toISOString(),
+    advance_reference: reference,
+    advance_bank_ledger: bankLedger || null,
+    updated_at: new Date().toISOString(),
+  };
+  if (isTallyEnabled()) {
+    patch.tally_advance_sync_status = 'pending';
+    patch.tally_advance_sync_error = null;
+  }
+
+  const { error } = await supabase.from('purchase_orders').update(patch).eq('id', id);
+  if (error) throw error;
+
+  // Mirror onto linked invoice for display
+  if (po.invoice_id) {
+    await supabase
+      .from('invoices')
+      .update({
+        po_advance_amount: amount,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', po.invoice_id);
+  }
+
+  const updated = await getPurchaseOrderById(id);
+  const supplier = updated.supplier || updated.suppliers || null;
+
+  if (isTallyEnabled()) {
+    const { syncAdvancePaymentVoucher } = require('./tallyPaymentVoucher');
+    const syncResult = await syncAdvancePaymentVoucher(updated, supplier, {
+      bankLedger,
+      amount,
+      reference,
+    });
+    await supabase
+      .from('purchase_orders')
+      .update({
+        tally_advance_sync_status: syncResult.status,
+        tally_advance_sync_error: syncResult.error || null,
+        tally_advance_synced_at: syncResult.syncedAt || null,
+        tally_advance_voucher_number: syncResult.voucherNumber || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+    return getPurchaseOrderById(id);
+  }
+
+  await supabase
+    .from('purchase_orders')
+    .update({
+      tally_advance_sync_status: 'skipped',
+      tally_advance_sync_error: 'TALLY_ENABLED is not true',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+
+  return getPurchaseOrderById(id);
+}
+
 async function syncPoPaidFromInvoice(invoiceId) {
   const { data: pos } = await supabase
     .from('purchase_orders')
@@ -1152,6 +1251,7 @@ module.exports = {
   sendPurchaseOrder,
   markPurchaseOrderPaid,
   markPurchaseOrderDelivered,
+  recordPurchaseOrderAdvance,
   storePurchaseOrderPdf,
   buildDemandSummary,
   syncPoPaidFromInvoice,
@@ -1162,4 +1262,5 @@ module.exports = {
   linkPoInvoiceFromGirn,
   rollupReceivedQtyFromGirn,
   buildCampaignLineCandidates,
+  recordPurchaseOrderAdvance,
 };

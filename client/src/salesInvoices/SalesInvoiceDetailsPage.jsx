@@ -6,6 +6,7 @@ import {
   Banknote,
   Ban,
   Truck,
+  Package,
 } from 'lucide-react';
 import { pdf } from '@react-pdf/renderer';
 import api from '../api/client';
@@ -14,6 +15,11 @@ import { appAlert, appConfirm, appPrompt } from '../components/dialog';
 import InvoicePdfViewer from '../components/Invoices/InvoicePdfViewer';
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 import { printSalesInvoicePdf, regenerateSalesInvoicePdf, formatInr } from './downloadSalesInvoicePdf';
+import {
+  printPackingSlipPdf,
+  downloadPackingSlipPdf,
+} from './downloadPackingSlipPdf';
+import { openSalesPaymentDialog } from './salesPaymentDialog';
 import SalesInvoicePdfDocument from './SalesInvoicePdfDocument';
 
 function tone(status) {
@@ -31,6 +37,7 @@ export default function SalesInvoiceDetailsPage() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
+  const [packingDownloaded, setPackingDownloaded] = useState(false);
   const [pdfFile, setPdfFile] = useState(null);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [tallyEnabled, setTallyEnabled] = useState(false);
@@ -134,7 +141,7 @@ export default function SalesInvoiceDetailsPage() {
     try {
       const { data } = await api.post(`/sales-invoices/${id}/confirm-printed`);
       setInvoice(data.sales_invoice);
-      await appAlert('Print confirmed. Lot can now be dispatched.');
+      await appAlert('Invoice print confirmed. Print and confirm the packing slip next.');
     } catch (err) {
       await appAlert(err.response?.data?.error || 'Could not confirm print');
     } finally {
@@ -142,39 +149,69 @@ export default function SalesInvoiceDetailsPage() {
     }
   }
 
-  async function handleRecordPayment() {
-    if (tallyEnabled) {
-      const ledgerName = String(
-        invoice?.customer?.ledger_name || ''
-      ).trim();
-      if (!ledgerName) {
-        await appAlert(
-          'Set ledger name on the customer before recording payment (Tally sync is enabled).'
-        );
-        return;
-      }
-    }
-
-    const txn = await appPrompt('Transaction / UTR / cheque reference', '');
-    if (txn == null) return;
-    if (!String(txn).trim()) {
-      await appAlert('Transaction ID is required');
-      return;
-    }
+  async function handlePrintPackingSlip() {
+    if (!invoice) return;
     setBusy(true);
     try {
-      const { data } = await api.post(`/sales-invoices/${id}/payments`, {
-        transaction_id: String(txn).trim(),
-        amount: invoice.total_amount,
-      });
+      await printPackingSlipPdf(invoice);
+      setPackingDownloaded(true);
+    } catch (err) {
+      await appAlert(err.message || 'Packing slip print failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDownloadPackingSlip() {
+    if (!invoice) return;
+    setBusy(true);
+    try {
+      await downloadPackingSlipPdf(invoice);
+      setPackingDownloaded(true);
+    } catch (err) {
+      await appAlert(err.message || 'Packing slip download failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleConfirmPackingSlip() {
+    setBusy(true);
+    try {
+      const { data } = await api.post(
+        `/sales-invoices/${id}/confirm-packing-slip-printed`
+      );
       setInvoice(data.sales_invoice);
+      await appAlert('Packing slip confirmed. Lot can now be dispatched.');
+    } catch (err) {
+      await appAlert(err.response?.data?.error || 'Could not confirm packing slip');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRecordPayment() {
+    setBusy(true);
+    try {
+      const data = await openSalesPaymentDialog({
+        customerId: invoice.customer_id,
+        customerName: invoice.customer_name || invoice.customer_snapshot?.name,
+        ledgerName: invoice.customer?.ledger_name || invoice.customer_snapshot?.ledger_name,
+        invoices: [invoice],
+        tallyEnabled,
+        mode: 'single',
+      });
+      if (!data) return;
+      if (data.sales_invoice) setInvoice(data.sales_invoice);
       setTallyEnabled(Boolean(data.tally_enabled));
-      const syncStatus = data.sales_invoice?.tally_sync_status;
+      const syncStatus = data.sales_invoice?.tally_receipt_sync_status;
       if (syncStatus === 'synced') {
-        setActionMessage('Payment recorded · synced to Tally');
+        setActionMessage('Payment recorded · Receipt synced to Tally');
       } else if (syncStatus === 'failed') {
         setActionMessage(
-          `Payment recorded · Tally sync failed: ${data.sales_invoice?.tally_sync_error || 'unknown error'}`
+          `Payment recorded · Receipt sync failed: ${
+            data.sales_invoice?.tally_receipt_sync_error || 'unknown error'
+          }`
         );
       } else {
         setActionMessage('Payment recorded');
@@ -194,7 +231,7 @@ export default function SalesInvoiceDetailsPage() {
       setTallyEnabled(Boolean(data.tally_enabled));
       const syncStatus = data.sales_invoice?.tally_sync_status;
       if (syncStatus === 'synced') {
-        setActionMessage('Synced to Tally');
+        setActionMessage('Sales voucher synced to Tally');
       } else if (syncStatus === 'skipped') {
         await appAlert(
           data.sales_invoice?.tally_sync_error || 'Tally sync skipped'
@@ -204,6 +241,31 @@ export default function SalesInvoiceDetailsPage() {
       }
     } catch (err) {
       await appAlert(err.response?.data?.error || 'Unable to sync to Tally');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRetryReceiptSync() {
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/sales-invoices/${id}/tally/receipt-sync`);
+      setInvoice(data.sales_invoice);
+      setTallyEnabled(Boolean(data.tally_enabled));
+      const syncStatus = data.sales_invoice?.tally_receipt_sync_status;
+      if (syncStatus === 'synced') {
+        setActionMessage('Receipt voucher synced to Tally');
+      } else if (syncStatus === 'skipped') {
+        await appAlert(
+          data.sales_invoice?.tally_receipt_sync_error || 'Receipt sync skipped'
+        );
+      } else {
+        await appAlert(
+          data.sales_invoice?.tally_receipt_sync_error || 'Receipt sync failed'
+        );
+      }
+    } catch (err) {
+      await appAlert(err.response?.data?.error || 'Unable to sync Receipt to Tally');
     } finally {
       setBusy(false);
     }
@@ -252,6 +314,19 @@ export default function SalesInvoiceDetailsPage() {
   const canCancel = invoice.status === 'due' || invoice.status === 'draft';
   const canConfirmPrint =
     ['due', 'paid'].includes(invoice.status) && !invoice.printed_at && downloaded;
+  const canConfirmPacking =
+    ['due', 'paid'].includes(invoice.status) &&
+    !!invoice.printed_at &&
+    !invoice.packing_slip_printed_at &&
+    packingDownloaded;
+  const canRetrySalesTally =
+    tallyEnabled &&
+    ['due', 'paid'].includes(invoice.status) &&
+    invoice.tally_sync_status !== 'synced';
+  const canRetryReceiptTally =
+    tallyEnabled &&
+    invoice.status === 'paid' &&
+    invoice.tally_receipt_sync_status !== 'synced';
 
   return (
     <main className="mes-shell">
@@ -292,7 +367,7 @@ export default function SalesInvoiceDetailsPage() {
           <RefreshCw size={15} />
           Regenerate invoice
         </button>
-        {['due', 'paid'].includes(invoice.status) && !invoice.printed_at ? (
+        {canConfirmPrint ? (
           <button
             type="button"
             className="mes-btn mes-btn-primary"
@@ -301,8 +376,38 @@ export default function SalesInvoiceDetailsPage() {
             title={!downloaded ? 'Print the invoice first' : undefined}
           >
             <Printer size={15} />
-            Confirm printed
+            Confirm invoice printed
           </button>
+        ) : null}
+        {['due', 'paid'].includes(invoice.status) && invoice.printed_at ? (
+          <>
+            <button
+              type="button"
+              className="mes-btn mes-btn-secondary"
+              disabled={busy}
+              onClick={
+                invoice.packing_slip_printed_at
+                  ? handleDownloadPackingSlip
+                  : handlePrintPackingSlip
+              }
+            >
+              <Package size={15} />
+              {invoice.packing_slip_printed_at
+                ? 'Download packing slip'
+                : 'Print packing slip'}
+            </button>
+            {canConfirmPacking ? (
+              <button
+                type="button"
+                className="mes-btn mes-btn-primary"
+                disabled={busy}
+                onClick={handleConfirmPackingSlip}
+              >
+                <Package size={15} />
+                Confirm packing slip
+              </button>
+            ) : null}
+          </>
         ) : null}
         {canPay ? (
           <button
@@ -315,9 +420,7 @@ export default function SalesInvoiceDetailsPage() {
             Record payment
           </button>
         ) : null}
-        {invoice.status === 'paid' &&
-        tallyEnabled &&
-        invoice.tally_sync_status !== 'synced' ? (
+        {canRetrySalesTally ? (
           <button
             type="button"
             className="mes-btn mes-btn-secondary"
@@ -325,7 +428,18 @@ export default function SalesInvoiceDetailsPage() {
             onClick={handleRetryTallySync}
           >
             <RefreshCw size={15} />
-            Retry Tally sync
+            Retry Sales Tally
+          </button>
+        ) : null}
+        {canRetryReceiptTally ? (
+          <button
+            type="button"
+            className="mes-btn mes-btn-secondary"
+            disabled={busy}
+            onClick={handleRetryReceiptSync}
+          >
+            <RefreshCw size={15} />
+            Retry Receipt Tally
           </button>
         ) : null}
         {canCancel ? (
@@ -339,7 +453,10 @@ export default function SalesInvoiceDetailsPage() {
             Cancel
           </button>
         ) : null}
-        {invoice.printed_at && invoice.lot_id && !invoice.dispatched_at ? (
+        {invoice.printed_at &&
+        invoice.packing_slip_printed_at &&
+        invoice.lot_id &&
+        !invoice.dispatched_at ? (
           <button
             type="button"
             className="mes-btn mes-btn-secondary"
@@ -422,7 +539,19 @@ export default function SalesInvoiceDetailsPage() {
             <tbody>
               {lines.map((line, i) => (
                 <tr key={i}>
-                  <td>{line.description}</td>
+                  <td>
+                    <div>{line.description}</div>
+                    {line.drawing_number ? (
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        {line.drawing_number}
+                      </div>
+                    ) : null}
+                    {line.package ? (
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        Package: {line.package}
+                      </div>
+                    ) : null}
+                  </td>
                   <td>
                     {line.quantity}
                     {line.uom ? ` ${line.uom}` : ''}
@@ -470,8 +599,25 @@ export default function SalesInvoiceDetailsPage() {
             </p>
           </div>
           <div>
+            <p className="mes-eyebrow">Packing slip</p>
+            <p style={{ margin: 0 }}>
+              {invoice.packing_slip_printed_at
+                ? formatDisplayDateTime(invoice.packing_slip_printed_at)
+                : 'Not yet'}
+            </p>
+            <p className="muted" style={{ margin: 0 }}>
+              by{' '}
+              {invoice.packing_slip_printed_by_employee?.full_name ||
+                invoice.packing_slip_printed_by_employee?.employee_code ||
+                '—'}
+            </p>
+          </div>
+          <div>
             <p className="mes-eyebrow">Transaction ID</p>
             <p style={{ margin: 0 }}>{invoice.payment_transaction_id || '—'}</p>
+            <p className="muted" style={{ margin: 0 }}>
+              Bank: {invoice.payment_bank_ledger || '—'}
+            </p>
           </div>
           <div>
             <p className="mes-eyebrow">Payment recorded by</p>
@@ -491,7 +637,7 @@ export default function SalesInvoiceDetailsPage() {
             </p>
           </div>
           <div>
-            <p className="mes-eyebrow">Tally sync</p>
+            <p className="mes-eyebrow">Sales Tally</p>
             <p style={{ margin: 0 }}>
               {invoice.tally_sync_status
                 ? String(invoice.tally_sync_status).toUpperCase()
@@ -510,6 +656,24 @@ export default function SalesInvoiceDetailsPage() {
             {invoice.tally_sync_error ? (
               <p className="muted" style={{ margin: 0, color: '#b91c1c' }}>
                 {invoice.tally_sync_error}
+              </p>
+            ) : null}
+          </div>
+          <div>
+            <p className="mes-eyebrow">Receipt Tally</p>
+            <p style={{ margin: 0 }}>
+              {invoice.tally_receipt_sync_status
+                ? String(invoice.tally_receipt_sync_status).toUpperCase()
+                : invoice.status === 'paid'
+                  ? 'Not synced yet'
+                  : '—'}
+              {invoice.tally_receipt_voucher_number
+                ? ` · ${invoice.tally_receipt_voucher_number}`
+                : ''}
+            </p>
+            {invoice.tally_receipt_sync_error ? (
+              <p className="muted" style={{ margin: 0, color: '#b91c1c' }}>
+                {invoice.tally_receipt_sync_error}
               </p>
             ) : null}
           </div>

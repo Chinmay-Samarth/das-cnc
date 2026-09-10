@@ -17,6 +17,7 @@ const initialFormData = {
   account_type: '',
   ifsc: '',
   payment_terms: '',
+  components_per_packet: '',
 };
 
 export default function AddCustomerPage() {
@@ -102,6 +103,20 @@ export default function AddCustomerPage() {
           <label htmlFor="payment_terms">
             Payment terms
             <input id="payment_terms" type="text" name="payment_terms" value={formData.payment_terms} onChange={handleChange} placeholder="Terms or payment notes" disabled={submitting} />
+          </label>
+          <label htmlFor="components_per_packet">
+            Components per packet
+            <input
+              id="components_per_packet"
+              type="number"
+              name="components_per_packet"
+              min="1"
+              step="1"
+              value={formData.components_per_packet}
+              onChange={handleChange}
+              placeholder="e.g., 50"
+              disabled={submitting}
+            />
           </label>
           <p className="form-page-section-title form-span-2">Bank details</p>
           <label htmlFor="bank_name">

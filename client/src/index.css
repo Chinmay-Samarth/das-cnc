@@ -674,6 +674,42 @@ button:hover:not(:disabled) {
 
 .detail-side-column{
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tally-balance-card{
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+
+.tally-balance-card .section-header h2{
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #1d4ed8;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.tally-balance-amount{
+  margin: 10px 0 0;
+  font-size: 28px;
+  font-weight: 800;
+  color: #1d4ed8;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.tally-balance-error{
+  margin: 10px 0 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: #b91c1c;
 }
 
 
@@ -2969,6 +3005,10 @@ button:hover:not(:disabled) {
   animation: app-dialog-rise 0.2s ease-out;
 }
 
+.app-dialog.app-dialog-wide {
+  width: min(560px, 100%);
+}
+
 .app-dialog-icon {
   display: flex;
   align-items: center;
@@ -3037,6 +3077,106 @@ button:hover:not(:disabled) {
 .app-dialog-textarea {
   resize: vertical;
   min-height: 96px;
+}
+
+.app-dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.app-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.app-dialog-field-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted, #64748b);
+}
+
+.app-dialog-checklist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.app-dialog-checklist-toggle {
+  border: none;
+  background: transparent;
+  color: var(--blue-text, #1d4ed8);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.app-dialog-checklist-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.app-dialog-checklist {
+  max-height: 220px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding: 6px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.app-dialog-checklist-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.app-dialog-checklist-item:hover {
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.app-dialog-checklist-item input {
+  margin: 0;
+}
+
+.app-dialog-checklist-label {
+  font-size: 0.86rem;
+  color: var(--text-primary);
+  line-height: 1.35;
+  min-width: 0;
+}
+
+.app-dialog-checklist-amount {
+  font-size: 0.84rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.app-dialog-checklist-empty,
+.app-dialog-checklist-total {
+  margin: 6px 0 0;
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+}
+
+.app-dialog-checklist-total strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
 }
 
 .app-dialog-actions {

@@ -126,6 +126,20 @@ const styles = StyleSheet.create({
     color: '#111111',
     textAlign: 'right',
   },
+  invoiceNoLabel: {
+    fontSize: 12,
+    fontFamily: 'Helvetica-Bold',
+    color: '#dc2626',
+    paddingRight: 8,
+    textAlign: 'right',
+  },
+  invoiceNoValue: {
+    fontSize: 13,
+    fontFamily: 'Helvetica-Bold',
+    color: '#dc2626',
+    textAlign: 'right',
+    minWidth: 72,
+  },
   metaTable: {
     marginTop: 6,
     width: 168,
@@ -189,7 +203,7 @@ const styles = StyleSheet.create({
   th: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#111111',
+    backgroundColor: '#1e4d7b',
     paddingVertical: 7,
   },
   thText: {
@@ -217,7 +231,8 @@ const styles = StyleSheet.create({
   },
   tdSub: {
     fontSize: 8.5,
-    color: '#999999',
+    color: '#555555',
+    marginTop: 2,
   },
   tableRule: {
     borderBottomWidth: 1,
@@ -311,6 +326,10 @@ const styles = StyleSheet.create({
   signs: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    borderTopWidth: 1.5,
+    borderTopColor: '#111111',
+    paddingTop: 14,
+    marginTop: 4,
   },
   signCol: {
     flex: 1,
@@ -527,7 +546,12 @@ export function SalesInvoicePdfDocument({ invoice }) {
           <View style={styles.headerRight}>
             <Text style={styles.title}>TAX INVOICE</Text>
             <View style={styles.metaTable}>
-              <MetaRow label="Invoice no" value={invoice?.invoice_number || '(Draft)'} bold />
+              <View style={styles.metaRow}>
+                <Text style={styles.invoiceNoLabel}>Invoice No.</Text>
+                <Text style={styles.invoiceNoValue}>
+                  {invoice?.invoice_number || '(Draft)'}
+                </Text>
+              </View>
               <MetaRow label="Invoice date" value={formatPdfDate(invoice?.issued_at) || '—'} />
               <MetaRow
                 label="Vendor code"
@@ -564,7 +588,7 @@ export function SalesInvoicePdfDocument({ invoice }) {
             <Text style={[styles.thText, styles.cPo]}>PO ref</Text>
             <Text style={[styles.thText, styles.cHsn]}>HSN</Text>
             <Text style={[styles.thText, styles.cDesc]}>Description</Text>
-            <Text style={[styles.thText, styles.cPkg]}>Package</Text>
+            <Text style={[styles.thText, styles.cPkg]}>Package Description</Text>
             <Text style={[styles.thText, styles.cQty]}>Qty</Text>
             <Text style={[styles.thText, styles.cRate]}>Rate</Text>
             <Text style={[styles.thText, styles.cAmt]}>Amount</Text>
@@ -584,9 +608,14 @@ export function SalesInvoicePdfDocument({ invoice }) {
                   {poDate ? <Text style={styles.tdSub}>{poDate}</Text> : null}
                 </View>
                 <Text style={[styles.td, styles.cHsn]}>{line.empty ? '—' : line.hsn || '—'}</Text>
-                <Text style={[styles.td, styles.cDesc]}>
-                  {line.empty ? '—' : line.description || 'Item'}
-                </Text>
+                <View style={styles.cDesc}>
+                  <Text style={styles.td}>
+                    {line.empty ? '—' : line.description || 'Item'}
+                  </Text>
+                  {!line.empty && line.drawing_number ? (
+                    <Text style={styles.tdSub}>{line.drawing_number}</Text>
+                  ) : null}
+                </View>
                 <Text style={[styles.td, styles.cPkg]}>{line.empty ? '—' : line.package || '—'}</Text>
                 <Text style={[styles.td, styles.cQty]}>{line.empty ? '—' : qtyLabel(line)}</Text>
                 <Text style={[styles.td, styles.cRate]}>

@@ -6,7 +6,7 @@ import DispatchShortfallTab from './DispatchShortfallTab';
 import GirnApprovalsTab from './GirnApprovalsTab';
 
 const TABS = [
-  { key: 'dispatch', label: 'Dispatch shortfall' },
+  { key: 'dispatch', label: 'Dispatch override' },
   { key: 'girn', label: 'GIRN' },
 ];
 
@@ -33,7 +33,7 @@ export default function ApprovalsPage() {
     if (activeTab === 'girn') {
       return 'Review GIRNs after item inspections pass. Approve to post stock or reject to block receipt.';
     }
-    return 'Approve shipping less than the delivery schedule quantity. Remaining demand stays open.';
+    return 'Approve early / shortfall dispatch when parked RFD qty is below the delivery schedule. Remaining demand stays open.';
   }, [activeTab]);
 
   if (!isReviewer) {

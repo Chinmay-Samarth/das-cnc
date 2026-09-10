@@ -59,7 +59,7 @@ export default function DispatchShortfallTab({ initialStatus = 'pending' }) {
 
   async function handleApprove(row) {
     const ok = await appConfirm({
-      title: 'Approve shortfall dispatch?',
+      title: 'Approve override / shortfall dispatch?',
       message: `Lot ${row.lot_number || '—'}: ship ${Number(row.lot_qty)} against schedule ${Number(
         row.schedule_qty
       )}. Remaining schedule demand stays open for future lots.`,
@@ -69,7 +69,7 @@ export default function DispatchShortfallTab({ initialStatus = 'pending' }) {
     setBusyId(row.id);
     try {
       await api.post(`/dispatch-shortfall-approvals/${row.id}/approve`);
-      await appAlert({ title: 'Shortfall approved', tone: 'success' });
+      await appAlert({ title: 'Override / shortfall approved', tone: 'success' });
       await load();
     } catch (err) {
       await appAlert({

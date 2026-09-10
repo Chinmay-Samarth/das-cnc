@@ -53,6 +53,7 @@ import ApprovalsPage, { DispatchApprovalsRedirect } from './approvals/ApprovalsP
 import SalesInvoicesPage from './salesInvoices/SalesInvoicesPage';
 import SalesInvoiceDetailsPage from './salesInvoices/SalesInvoiceDetailsPage';
 import AddSalesInvoiceWizard from './salesInvoices/AddSalesInvoiceWizard';
+import SalesPaymentsPage from './salesInvoices/SalesPaymentsPage';
 import CompanySettingsPage from './salesInvoices/CompanySettingsPage';
 import NotFoundPage from './pages/NotFoundPage';
 import PurchaseOrderDetailPage from './procurement/PurchaseOrderDetailPage';
@@ -201,6 +202,7 @@ export default function App() {
               <Route path="/sales-invoices/new" element={<AddSalesInvoiceWizard />} />
               <Route path="/sales-invoices/settings" element={<CompanySettingsPage />} />
               <Route path="/sales-invoices/:id" element={<SalesInvoiceDetailsPage />} />
+              <Route path="/sales-payments" element={<SalesPaymentsPage />} />
               <Route path="/customers" element={<CustomersPage />} />
               <Route path="/customers/:id" element={<CustomerDetailsPage />} />
               <Route path="/customers/add" element={<AddCustomerPage />} />

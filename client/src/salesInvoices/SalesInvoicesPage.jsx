@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { FileText, Plus, RefreshCw, Settings } from 'lucide-react';
+import { FileText, Plus, RefreshCw, Settings, Banknote } from 'lucide-react';
 import api from '../api/client';
 import { PageHeader, EmptyState, StatusBadge } from '../components/mes';
 import { formatDisplayDate } from '../utils/dateFormat';
 import { formatInr } from './downloadSalesInvoicePdf';
+import { openSalesPaymentDialog } from './salesPaymentDialog';
+import { appAlert } from '../components/dialog';
 
 const TABS = [
   { id: 'due', label: 'Due' },
@@ -29,13 +31,19 @@ export default function SalesInvoicesPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [tallyEnabled, setTallyEnabled] = useState(false);
+  const [paying, setPaying] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const { data } = await api.get('/sales-invoices', { params: { status: tab } });
-      setRows(data.sales_invoices || []);
+      const [invRes, tallyRes] = await Promise.all([
+        api.get('/sales-invoices', { params: { status: tab } }),
+        api.get('/sales-invoices/tally/status'),
+      ]);
+      setRows(invRes.data.sales_invoices || []);
+      setTallyEnabled(Boolean(tallyRes.data?.tally_enabled));
     } catch (err) {
       setError(err.response?.data?.error || 'Unable to load sales invoices');
       setRows([]);
@@ -47,6 +55,78 @@ export default function SalesInvoicesPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  async function handleBulkPay() {
+    setPaying(true);
+    try {
+      const due = rows.filter((r) => r.status === 'due');
+      if (!due.length) {
+        await appAlert('No due invoices on this tab to pay');
+        return;
+      }
+      // Prefer opening the shared dialog when all due rows share one customer
+      const customerIds = [...new Set(due.map((r) => r.customer_id).filter(Boolean))];
+      if (customerIds.length === 1 && tab === 'due') {
+        let ledgerName = '';
+        let customerName = due[0].customer_name;
+        try {
+          const { data } = await api.get(`/customers/${customerIds[0]}`);
+          ledgerName = data.customer?.ledger_name || '';
+          customerName = data.customer?.name || customerName;
+        } catch {
+          /* ignore */
+        }
+        const data = await openSalesPaymentDialog({
+          customerId: customerIds[0],
+          customerName,
+          ledgerName,
+          invoices: due,
+          tallyEnabled,
+          mode: due.length > 1 ? 'bulk' : 'single',
+        });
+        if (!data) return;
+        await appAlert({ title: 'Payment recorded', tone: 'success' });
+        await load();
+        return;
+      }
+      navigate('/sales-payments');
+    } catch (err) {
+      await appAlert(err.response?.data?.error || 'Payment failed');
+    } finally {
+      setPaying(false);
+    }
+  }
+
+  async function handlePayInvoice(inv, event) {
+    event.stopPropagation();
+    setPaying(true);
+    try {
+      let ledgerName = '';
+      if (inv.customer_id) {
+        try {
+          const { data } = await api.get(`/customers/${inv.customer_id}`);
+          ledgerName = data.customer?.ledger_name || '';
+        } catch {
+          /* ignore */
+        }
+      }
+      const data = await openSalesPaymentDialog({
+        customerId: inv.customer_id,
+        customerName: inv.customer_name,
+        ledgerName,
+        invoices: [inv],
+        tallyEnabled,
+        mode: 'single',
+      });
+      if (!data) return;
+      await appAlert({ title: 'Payment recorded', tone: 'success' });
+      await load();
+    } catch (err) {
+      await appAlert(err.response?.data?.error || 'Payment failed');
+    } finally {
+      setPaying(false);
+    }
+  }
 
   const subtitle = useMemo(() => {
     if (tab === 'due') return 'Issued invoices awaiting payment';
@@ -69,6 +149,15 @@ export default function SalesInvoicesPage() {
             >
               <Settings size={15} />
               Company
+            </button>
+            <button
+              type="button"
+              className="mes-btn mes-btn-secondary"
+              onClick={handleBulkPay}
+              disabled={paying}
+            >
+              <Banknote size={15} />
+              Bulk pay
             </button>
             <button
               type="button"
@@ -139,6 +228,12 @@ export default function SalesInvoicesPage() {
                     ₹{formatInr(inv.total_amount)}
                     {inv.due_date ? ` · Due ${formatDisplayDate(inv.due_date)}` : ''}
                     {inv.printed_at ? ' · Printed' : ''}
+                    {inv.packing_slip_printed_at ? ' · Packing slip' : ''}
+                    {inv.dispatched_at ? ' · Dispatched' : ''}
+                    {inv.tally_sync_status ? ` · Sales ${inv.tally_sync_status}` : ''}
+                    {inv.tally_receipt_sync_status
+                      ? ` · Receipt ${inv.tally_receipt_sync_status}`
+                      : ''}
                     {inv.payment_transaction_id
                       ? ` · Txn ${inv.payment_transaction_id}`
                       : ''}
@@ -148,7 +243,7 @@ export default function SalesInvoicesPage() {
                   {String(inv.status || '').toUpperCase()}
                 </StatusBadge>
               </div>
-              <div style={{ marginTop: 10 }}>
+              <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <Link
                   to={`/sales-invoices/${inv.id}`}
                   className="mes-btn mes-btn-secondary"
@@ -156,6 +251,17 @@ export default function SalesInvoicesPage() {
                 >
                   Open
                 </Link>
+                {inv.status === 'due' ? (
+                  <button
+                    type="button"
+                    className="mes-btn mes-btn-primary"
+                    disabled={paying}
+                    onClick={(e) => handlePayInvoice(inv, e)}
+                  >
+                    <Banknote size={14} />
+                    Pay
+                  </button>
+                ) : null}
               </div>
             </article>
           ))}

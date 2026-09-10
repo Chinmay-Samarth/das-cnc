@@ -12,8 +12,9 @@
 // =============================================================================
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, X } from 'lucide-react'
+import { Plus, X, Check } from 'lucide-react'
 import api from '../api/client'   // your existing axios instance
+import { PageHeader, AlertBanner } from '../components/mes'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -410,11 +411,29 @@ function RepeatableSection({ section, rows, onRowChange, onAddRow, onRemoveRow, 
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function MasterForm({ slug, recordId, onSave, onCancel }) {
+function formatReviewValue(field, value, existingUrl) {
+  if (value instanceof File) return value.name
+  if (Array.isArray(value) && value[0] instanceof File) {
+    return `${value.length} file(s)`
+  }
+  if (field.field_type === 'file' || field.field_type === 'multi_file') {
+    if (existingUrl) {
+      if (Array.isArray(existingUrl)) return `${existingUrl.length} existing file(s)`
+      return 'Existing file'
+    }
+    return '—'
+  }
+  if (value == null || value === '') return '—'
+  return String(value)
+}
+
+export default function MasterForm({ slug, recordId, onSave, onCancel, variant }) {
   const isEdit = Boolean(recordId)
+  const isWizard = variant === 'wizard' && !isEdit
 
   const [schema, setSchema] = useState(null)   // { master, sections }
   const [activeTab, setActiveTab] = useState(0)
+  const [step, setStep] = useState(1)
   const [flat, setFlat] = useState({})     // { section_slug: { field_slug: value } }
   const [repeatable, setRepeatable] = useState({})     // { section_slug: [ rowObj ] }
   const [fileMap, setFileMap] = useState({})     // { section_slug: { field_slug: File } }
@@ -547,32 +566,92 @@ export default function MasterForm({ slug, recordId, onSave, onCancel }) {
   }, [])
 
   // ── Validation ──────────────────────────────────────────────────────────────
-  function validate() {
+  function validateSection(section) {
     const errs = {}
-    for (const section of schema.sections) {
-      if (section.is_repeatable) continue
-      for (const field of section.fields) {
-        if (!field.is_required) continue
-        const val = flat[section.slug]?.[field.slug]
-        if (!val || (typeof val === 'string' && !val.trim())) {
+    if (!section || section.is_repeatable) return errs
+    for (const field of section.fields) {
+      if (!field.is_required) continue
+      const val = flat[section.slug]?.[field.slug]
+      const hasExisting =
+        existingFiles[section.slug]?.[field.slug] != null
+      if (field.field_type === 'file' || field.field_type === 'multi_file') {
+        if (!val && !hasExisting) {
           errs[`${section.slug}__${field.slug}`] = `${field.label} is required`
         }
+        continue
+      }
+      if (!val || (typeof val === 'string' && !val.trim())) {
+        errs[`${section.slug}__${field.slug}`] = `${field.label} is required`
       }
     }
     return errs
   }
 
+  function validate() {
+    const errs = {}
+    for (const section of schema.sections) {
+      Object.assign(errs, validateSection(section))
+    }
+    return errs
+  }
+
+  function wizardSteps() {
+    if (!schema) return []
+    const sectionSteps = schema.sections.map((section, idx) => ({
+      id: idx + 1,
+      title: section.name,
+      hint: section.is_repeatable ? 'Add one or more rows' : 'Fill required fields',
+      sectionIndex: idx,
+      isReview: false,
+    }))
+    return [
+      ...sectionSteps,
+      {
+        id: sectionSteps.length + 1,
+        title: 'Review',
+        hint: 'Confirm before creating',
+        sectionIndex: null,
+        isReview: true,
+      },
+    ]
+  }
+
+  function canWizardNext() {
+    const steps = wizardSteps()
+    const current = steps.find((s) => s.id === step)
+    if (!current || current.isReview) return true
+    const section = schema.sections[current.sectionIndex]
+    return Object.keys(validateSection(section)).length === 0
+  }
+
+  function goWizardNext() {
+    const steps = wizardSteps()
+    const current = steps.find((s) => s.id === step)
+    if (!current || current.isReview) return
+    const section = schema.sections[current.sectionIndex]
+    const errs = validateSection(section)
+    if (Object.keys(errs).length) {
+      setErrors(errs)
+      return
+    }
+    setErrors({})
+    setStep((s) => Math.min(steps.length, s + 1))
+  }
+
   // ── Submit ──────────────────────────────────────────────────────────────────
   async function handleSubmit(e) {
-    e.preventDefault()
+    e?.preventDefault?.()
     const errs = validate()
     if (Object.keys(errs).length) {
       setErrors(errs)
-      // jump to first tab with an error
+      // jump to first tab/step with an error
       const errKey = Object.keys(errs)[0]
       const errSectionSlug = errKey.split('__')[0]
       const tabIdx = schema.sections.findIndex(s => s.slug === errSectionSlug)
-      if (tabIdx >= 0) setActiveTab(tabIdx)
+      if (tabIdx >= 0) {
+        setActiveTab(tabIdx)
+        if (isWizard) setStep(tabIdx + 1)
+      }
       return
     }
     setErrors({})
@@ -632,13 +711,13 @@ export default function MasterForm({ slug, recordId, onSave, onCancel }) {
         await api.put(`/masters/${slug}/records/${recordId}`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         })
+        onSave?.(recordId)
       } else {
-        await api.post(`/masters/${slug}/records`, formData, {
+        const { data } = await api.post(`/masters/${slug}/records`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         })
+        onSave?.(data?.id)
       }
-
-      onSave?.()
     } catch (err) {
       console.error(err)
       setErrors({ _form: err?.response?.data?.error || 'Failed to save. Try again.' })
@@ -660,6 +739,195 @@ export default function MasterForm({ slug, recordId, onSave, onCancel }) {
   if (!schema) return <div className="mf-error">Failed to load form schema.</div>
 
   const { master, sections } = schema
+
+  function renderSectionBody(section) {
+    if (!section) return null
+    if (section.is_repeatable) {
+      return (
+        <RepeatableSection
+          section={section}
+          rows={repeatable[section.slug] || []}
+          onRowChange={handleRowChange}
+          onAddRow={handleAddRow}
+          onRemoveRow={handleRemoveRow}
+          disabled={saving}
+          existingFiles={existingFiles[section.slug]}
+        />
+      )
+    }
+    return (
+      <>
+        <FlatSection
+          section={section}
+          values={flat[section.slug]}
+          onChange={handleFlatChange}
+          disabled={saving}
+          existingFiles={existingFiles[section.slug]}
+        />
+        {section.fields.map(f => {
+          const err = errors[`${section.slug}__${f.slug}`]
+          return err
+            ? <p key={f.id} className="mf-field-error">{err}</p>
+            : null
+        })}
+      </>
+    )
+  }
+
+  if (isWizard) {
+    const steps = wizardSteps()
+    const current = steps.find((s) => s.id === step) || steps[0]
+    const currentSection =
+      current?.sectionIndex != null ? sections[current.sectionIndex] : null
+    const isReview = !!current?.isReview
+
+    return (
+      <main className="mes-shell bpo-setup-page">
+        <PageHeader title={`New ${master.name}`} />
+
+        <nav className="bpo-steps" aria-label="Create steps">
+          {steps.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={`bpo-step${step === s.id ? ' is-active' : ''}${step > s.id ? ' is-done' : ''}`}
+              onClick={() => {
+                if (s.id < step) setStep(s.id)
+                else if (s.id === step + 1 && canWizardNext()) goWizardNext()
+              }}
+              disabled={s.id > step + 1 || (s.id > step && !canWizardNext())}
+            >
+              <span className="bpo-step-num">
+                {step > s.id ? <Check size={14} strokeWidth={3} /> : s.id}
+              </span>
+              <span className="bpo-step-text">
+                <strong>{s.title}</strong>
+                <small>{s.hint}</small>
+              </span>
+            </button>
+          ))}
+        </nav>
+
+        <section className="card bpo-setup-card">
+          {errors._form ? (
+            <AlertBanner tone="danger">{errors._form}</AlertBanner>
+          ) : null}
+
+          {!isReview && currentSection ? (
+            <div className="bpo-panel">
+              <h2 style={{ marginTop: 0 }}>{currentSection.name}</h2>
+              <p className="muted" style={{ marginTop: 0 }}>
+                {currentSection.is_repeatable
+                  ? 'Add rows as needed, then continue.'
+                  : 'Complete the fields below to continue.'}
+              </p>
+              {renderSectionBody(currentSection)}
+            </div>
+          ) : null}
+
+          {isReview ? (
+            <div className="bpo-panel mf-review">
+              <h2 style={{ marginTop: 0 }}>Review</h2>
+              <p className="muted" style={{ marginTop: 0 }}>
+                Confirm the details, then create this {master.name.toLowerCase()}.
+              </p>
+              {sections.map((section) => (
+                <div key={section.id} className="mf-review-block">
+                  <h3>{section.name}</h3>
+                  {section.is_repeatable ? (
+                    (repeatable[section.slug] || []).length === 0 ? (
+                      <p className="muted">No rows added</p>
+                    ) : (
+                      (repeatable[section.slug] || []).map((row, rowIdx) => (
+                        <div key={rowIdx} className="mf-review-row">
+                          <p className="mf-review-row-title">
+                            {section.name.replace(/s$/i, '') || section.name} {rowIdx + 1}
+                          </p>
+                          <dl className="mf-review-grid">
+                            {section.fields.map((field) => (
+                              <div key={field.id}>
+                                <dt>{field.label}</dt>
+                                <dd>
+                                  {formatReviewValue(
+                                    field,
+                                    row[field.slug],
+                                    existingFiles[section.slug]?.[rowIdx]?.[field.slug]
+                                  )}
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
+                        </div>
+                      ))
+                    )
+                  ) : (
+                    <dl className="mf-review-grid">
+                      {section.fields.map((field) => (
+                        <div key={field.id}>
+                          <dt>{field.label}</dt>
+                          <dd>
+                            {formatReviewValue(
+                              field,
+                              flat[section.slug]?.[field.slug],
+                              existingFiles[section.slug]?.[field.slug]
+                            )}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="bpo-footer">
+            {step <= 1 ? (
+              <button
+                type="button"
+                className="cancel-button"
+                onClick={onCancel}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="neutral-button"
+                disabled={saving}
+                onClick={() => setStep((s) => Math.max(1, s - 1))}
+              >
+                Back
+              </button>
+            )}
+            {!isReview ? (
+              <button
+                type="button"
+                className="primary-button"
+                disabled={saving || !canWizardNext()}
+                onClick={goWizardNext}
+              >
+                Continue
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="primary-button"
+                disabled={saving}
+                onClick={handleSubmit}
+              >
+                {saving
+                  ? <><i className="ti ti-loader-2 mf-spin" /> Creating…</>
+                  : `Create ${master.name}`
+                }
+              </button>
+            )}
+          </div>
+        </section>
+      </main>
+    )
+  }
 
   return (
     <div className="mf-page-root app-shell">
@@ -725,33 +993,7 @@ export default function MasterForm({ slug, recordId, onSave, onCancel }) {
 
           {sections.map((section, idx) => (
             <div key={section.id} role="tabpanel" hidden={activeTab !== idx}>
-              {section.is_repeatable ? (
-                <RepeatableSection
-                  section={section}
-                  rows={repeatable[section.slug] || []}
-                  onRowChange={handleRowChange}
-                  onAddRow={handleAddRow}
-                  onRemoveRow={handleRemoveRow}
-                  disabled={saving}
-                  existingFiles={existingFiles[section.slug]}
-                />
-              ) : (
-                <>
-                  <FlatSection
-                    section={section}
-                    values={flat[section.slug]}
-                    onChange={handleFlatChange}
-                    disabled={saving}
-                    existingFiles={existingFiles[section.slug]}
-                  />
-                  {section.fields.map(f => {
-                    const err = errors[`${section.slug}__${f.slug}`]
-                    return err
-                      ? <p key={f.id} className="mf-field-error">{err}</p>
-                      : null
-                  })}
-                </>
-              )}
+              {renderSectionBody(section)}
             </div>
           ))}
         </div>

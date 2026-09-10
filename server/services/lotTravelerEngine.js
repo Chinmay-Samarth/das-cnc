@@ -976,7 +976,12 @@ async function listReadyForDispatch() {
 
   const out = enriched.map((lot) => {
     const inv = invMap[lot.id] || null;
-    const printOk = !!(inv && inv.printed && ['due', 'paid'].includes(inv.invoice_status));
+    const printOk = !!(
+      inv &&
+      inv.printed &&
+      inv.packing_slip_printed &&
+      ['due', 'paid'].includes(inv.invoice_status)
+    );
     const ctx = scheduleMap[lot.id];
     const gate = buildQtyGate(
       lot,
@@ -1042,7 +1047,12 @@ function attachMergeGroups(lots) {
     const withPrinted = bucket.lots
       .filter((l) => {
         const inv = l.sales_invoice;
-        return inv && inv.printed && ['due', 'paid'].includes(inv.invoice_status);
+        return (
+          inv &&
+          inv.printed &&
+          inv.packing_slip_printed &&
+          ['due', 'paid'].includes(inv.invoice_status)
+        );
       })
       .sort(byCreatedAt);
     const issued = bucket.lots.filter((l) => {
@@ -1057,6 +1067,7 @@ function attachMergeGroups(lots) {
       issued.length === 1 &&
       issued[0].id === primary.id &&
       !!primaryInv?.printed &&
+      !!primaryInv?.packing_slip_printed &&
       ['due', 'paid'].includes(primaryInv.invoice_status) &&
       Math.abs(toNumber(primaryInv.quantity) - shipQty) <= 0.0001 &&
       qtyOk;
@@ -1310,7 +1321,12 @@ async function mergeLotsForDispatch(lotIds, actorEmployeeId) {
   const withPrinted = lots
     .filter((l) => {
       const inv = invMap[l.id];
-      return inv && inv.printed && ['due', 'paid'].includes(inv.invoice_status);
+      return (
+        inv &&
+        inv.printed &&
+        inv.packing_slip_printed &&
+        ['due', 'paid'].includes(inv.invoice_status)
+      );
     })
     .sort(byCreatedAt);
   const issued = lots.filter((l) => {
@@ -1329,10 +1345,11 @@ async function mergeLotsForDispatch(lotIds, actorEmployeeId) {
   if (
     !primaryInv ||
     !primaryInv.printed ||
+    !primaryInv.packing_slip_printed ||
     !['due', 'paid'].includes(primaryInv.invoice_status)
   ) {
     throw httpError(
-      'Create, issue, and confirm print of a sales invoice for the schedule qty before merge & dispatch',
+      'Create, issue, and confirm print of the sales invoice and packing slip for the schedule qty before merge & dispatch',
       409
     );
   }

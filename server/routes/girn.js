@@ -368,6 +368,53 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
 
     const girnNumber = await generateGirnNumber();
 
+    // Pre-check Tally Purchase readiness + supplier vs GIRN type match
+    if (invoice_id || resolvedSupplierId) {
+      try {
+        const { getInvoice } = require('../services/invoiceOcrEngine');
+        const { assertReadyForTallySync } = require('../services/tallyPurchaseVoucher');
+        const { isTallyEnabled } = require('../services/tallyClient');
+        const {
+          compareSupplierAndGirnTypes,
+          expenseTypeLabel,
+        } = require('../config/tallyLedgers');
+
+        let supplierType = null;
+        const { data: supplierRow } = await supabase
+          .from('suppliers')
+          .select('id, ledger_name, tally_expense_ledger_type, name')
+          .eq('id', resolvedSupplierId)
+          .maybeSingle();
+        supplierType = supplierRow?.tally_expense_ledger_type || null;
+
+        const typeCheck = compareSupplierAndGirnTypes(supplierType, resolvedItems);
+        if (!typeCheck.ok) {
+          return res.status(422).json({
+            error: typeCheck.message,
+            supplier_type: typeCheck.supplierType,
+            supplier_type_label: expenseTypeLabel(typeCheck.supplierType),
+            girn_types: typeCheck.girnTypes,
+            girn_type_labels: typeCheck.girnTypes.map(expenseTypeLabel),
+          });
+        }
+
+        if (invoice_id && isTallyEnabled()) {
+          const inv = await getInvoice(invoice_id);
+          if (inv) {
+            const block = assertReadyForTallySync(inv, inv.suppliers || supplierRow || null);
+            if (block) {
+              return res.status(422).json({ error: block });
+            }
+          }
+        }
+      } catch (preErr) {
+        if (preErr.status === 422) {
+          return res.status(422).json({ error: preErr.message });
+        }
+        console.error('Tally / type pre-check failed:', preErr.message);
+      }
+    }
+
     const grandTotal = resolvedItems.reduce((sum, item) => {
       return sum + (parseFloat(item.total_amount) || 0);
     }, 0);
@@ -491,6 +538,23 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       emitInventoryUpdated({ action: 'girn_approved', girnId: newGirn.id });
     }
 
+    let tallyPurchase = null;
+    if (invoice_id) {
+      try {
+        const { syncPurchaseVoucherOnGirnRegister } = require('../services/girnTallyPurchaseSync');
+        tallyPurchase = await syncPurchaseVoucherOnGirnRegister(invoice_id);
+      } catch (tallyErr) {
+        console.error('GIRN Tally Purchase sync failed:', tallyErr.message);
+        if (tallyErr.status === 422) {
+          return res.status(422).json({
+            error: tallyErr.message,
+            girn: { ...newGirn, status: initialStatus },
+          });
+        }
+        tallyPurchase = { error: tallyErr.message };
+      }
+    }
+
     return res.status(201).json({
       message: isOutsourceReturn
         ? 'GIRN registered and outsource shipment received'
@@ -499,6 +563,7 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
           : 'GIRN created successfully',
       girn: { ...newGirn, status: initialStatus },
       outsource_receive: outsourceReceive,
+      tally_purchase: tallyPurchase,
     });
   } catch (err) {
     console.error('GIRN create error:', err);

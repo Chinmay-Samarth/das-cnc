@@ -16,7 +16,7 @@ import {
   Minimize2,
 } from "lucide-react";
 import api from "../../api/client";
-import { appAlert, appPrompt } from "../../components/dialog";
+import { appAlert, appPrompt, appForm } from "../../components/dialog";
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -172,8 +172,6 @@ export default function InvoiceDetails() {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [paying, setPaying] = useState(false);
   const [tallyEnabled, setTallyEnabled] = useState(false);
-  const [expenseType, setExpenseType] = useState('');
-  const [savingExpenseType, setSavingExpenseType] = useState(false);
   const [syncingTally, setSyncingTally] = useState(false);
 
   const onDocLoad = useCallback(({ numPages }) => setNumPages(numPages), []);
@@ -229,11 +227,6 @@ export default function InvoiceDetails() {
         const data = invoiceRes.data.invoice;
         setInvoice(data);
         setTallyEnabled(Boolean(invoiceRes.data.tally_enabled));
-        setExpenseType(
-          data.tally_expense_ledger_type ||
-            data.suppliers?.tally_expense_ledger_type ||
-            ''
-        );
         setLineItems(data.line_items ?? []);
 
         const storedTaxes = Array.isArray(data.tax_items) ? data.tax_items : [];
@@ -331,44 +324,28 @@ export default function InvoiceDetails() {
     };
   };
 
-  const handleExpenseTypeChange = async (value) => {
-    setExpenseType(value);
-    if (!id) return;
-    setSavingExpenseType(true);
-    try {
-      const { data } = await api.patch(`/invoices/${id}/tally`, {
-        tally_expense_ledger_type: value || null,
-      });
-      setInvoice(data.invoice);
-      setTallyEnabled(Boolean(data.tally_enabled));
-    } catch (err) {
-      await appAlert(err.response?.data?.error || 'Unable to save expense ledger type');
-      setExpenseType(
-        invoice?.tally_expense_ledger_type ||
-          invoice?.suppliers?.tally_expense_ledger_type ||
-          ''
-      );
-    } finally {
-      setSavingExpenseType(false);
-    }
-  };
-
-  const handleRetryTallySync = async () => {
+  const handleRetryTallySync = async (kind = 'payment') => {
     setSyncingTally(true);
     try {
-      const { data } = await api.post(`/invoices/${id}/tally/sync`);
+      const { data } = await api.post(`/invoices/${id}/tally/sync`, { kind });
       setInvoice(data.invoice);
       setTallyEnabled(Boolean(data.tally_enabled));
-      const syncStatus = data.invoice?.tally_sync_status;
-      if (syncStatus === 'synced') {
-        setActionMessage('Synced to Tally');
-      } else if (syncStatus === 'skipped') {
-        await appAlert(
-          data.invoice?.tally_sync_error ||
-            'Tally sync is disabled. Set TALLY_ENABLED=true and TALLY_COMPANY in server .env, then restart the API.'
+      const statusKey =
+        kind === 'purchase'
+          ? data.invoice?.tally_sync_status
+          : data.invoice?.tally_payment_sync_status;
+      const errKey =
+        kind === 'purchase'
+          ? data.invoice?.tally_sync_error
+          : data.invoice?.tally_payment_sync_error;
+      if (statusKey === 'synced') {
+        setActionMessage(
+          kind === 'purchase' ? 'Purchase voucher synced to Tally' : 'Payment voucher synced to Tally'
         );
+      } else if (statusKey === 'skipped') {
+        await appAlert(errKey || 'Tally sync skipped');
       } else {
-        await appAlert(data.invoice?.tally_sync_error || 'Tally sync failed');
+        await appAlert(errKey || 'Tally sync failed');
       }
     } catch (err) {
       await appAlert(err.response?.data?.error || 'Unable to sync to Tally');
@@ -387,74 +364,86 @@ export default function InvoiceDetails() {
         );
         return;
       }
-      if (!String(expenseType || '').trim()) {
-        await appAlert(
-          'Select expense ledger type (Labour / Labour Service / Raw Material) before recording payment.'
-        );
+    }
+
+    const advance = Number(invoice?.po_advance_amount) || 0;
+    const total = Number(invoice?.total_amount) || 0;
+    const remaining = Math.max(Math.round((total - advance) * 100) / 100, 0);
+
+    let bankOptions = [];
+    if (tallyEnabled) {
+      try {
+        const { data } = await api.get('/invoices/tally/bank-ledgers');
+        bankOptions = data.bank_ledgers || [];
+        if (!bankOptions.length) {
+          await appAlert(
+            data.error ||
+              'No bank ledgers found in Tally. Ensure Bank Accounts exist and Tally is running.'
+          );
+          return;
+        }
+      } catch (err) {
+        await appAlert(err.response?.data?.error || 'Unable to load bank ledgers from Tally');
         return;
       }
     }
 
-    const paidAt = await appPrompt({
-      title: 'Payment date',
-      message: 'Date when payment was recorded',
-      inputType: 'date',
-      defaultValue: toISODateString(new Date()),
-      confirmLabel: 'Next',
-    });
-    if (paidAt == null) return;
-    if (!String(paidAt).trim()) {
-      await appAlert('Payment date is required');
-      return;
+    const fields = [
+      {
+        name: 'paid_at',
+        label: 'Payment date',
+        type: 'date',
+        required: true,
+        defaultValue: toISODateString(new Date()),
+      },
+      {
+        name: 'reference',
+        label: 'Reference (UTR / cheque)',
+        type: 'text',
+        required: true,
+        placeholder: 'Transaction reference',
+      },
+    ];
+    if (tallyEnabled) {
+      fields.push({
+        name: 'bank_ledger',
+        label: 'Bank ledger',
+        type: 'select',
+        required: true,
+        options: bankOptions,
+        placeholder: 'Select bank…',
+      });
     }
 
-    const txn = await appPrompt({
-      title: 'Payment reference',
-      message: 'UTR / cheque / transaction reference (REF)',
-      defaultValue: '',
-      confirmLabel: 'Next',
-    });
-    if (txn == null) return;
-    if (!String(txn).trim()) {
-      await appAlert('Reference is required');
-      return;
-    }
-
-    const deductionRaw = await appPrompt({
-      title: 'Deduction',
-      message: 'Optional deduction amount (0 if none)',
-      defaultValue: '0',
-      confirmLabel: 'Next',
-    });
-    if (deductionRaw == null) return;
-
-    const remarks = await appPrompt({
-      title: 'Remarks',
-      message: 'Optional payment remarks',
-      defaultValue: '',
+    const values = await appForm({
+      title: 'Record payment',
+      message: `Amount due after advance: ₹${remaining.toLocaleString('en-IN', {
+        minimumFractionDigits: 2,
+      })}${advance > 0 ? ` (advance ₹${advance.toLocaleString('en-IN', { minimumFractionDigits: 2 })})` : ''}`,
       confirmLabel: 'Record payment',
+      fields,
     });
-    if (remarks == null) return;
+    if (values == null) return;
 
     setPaying(true);
     try {
       const { data } = await api.post(`/invoices/${id}/payments`, {
-        paid_at: String(paidAt).trim(),
-        transaction_id: String(txn).trim(),
-        deduction: Number(deductionRaw) || 0,
-        remarks: String(remarks).trim() || undefined,
-        tally_expense_ledger_type: expenseType || undefined,
+        paid_at: String(values.paid_at).trim(),
+        transaction_id: String(values.reference).trim(),
+        bank_ledger: values.bank_ledger ? String(values.bank_ledger).trim() : undefined,
       });
       setInvoice(data.invoice);
       setLineItems(data.invoice?.line_items ?? []);
       setTallyEnabled(Boolean(data.tally_enabled));
-      const syncStatus = data.invoice?.tally_sync_status;
+      const syncStatus = data.invoice?.tally_payment_sync_status;
       if (syncStatus === 'synced') {
-        setActionMessage('Payment recorded · synced to Tally');
+        setActionMessage('Payment recorded · Payment voucher synced to Tally');
       } else if (syncStatus === 'failed') {
         setActionMessage(
-          `Payment recorded · Tally sync failed: ${data.invoice?.tally_sync_error || 'unknown error'}`
+          `Payment recorded · Tally payment sync failed: ${data.invoice?.tally_payment_sync_error || 'unknown error'}`
         );
+      } else if (syncStatus === 'skipped' && remaining <= 0) {
+        setActionMessage('Payment recorded · fully covered by advance');
       } else {
         setActionMessage('Payment recorded');
       }
@@ -552,14 +541,26 @@ export default function InvoiceDetails() {
               {paying ? 'Recording…' : 'Record payment'}
             </button>
           ) : null}
-          {invoice.status === 'paid' ? (
+          {invoice.status === 'paid' &&
+          tallyEnabled &&
+          invoice.tally_payment_sync_status !== 'synced' ? (
             <button
               type="button"
               style={styles.downloadBtn}
               disabled={syncingTally}
-              onClick={handleRetryTallySync}
+              onClick={() => handleRetryTallySync('payment')}
             >
-              {syncingTally ? 'Syncing…' : 'Sync to Tally'}
+              {syncingTally ? 'Syncing…' : 'Retry Payment sync'}
+            </button>
+          ) : null}
+          {tallyEnabled && invoice.tally_sync_status !== 'synced' ? (
+            <button
+              type="button"
+              style={styles.downloadBtn}
+              disabled={syncingTally}
+              onClick={() => handleRetryTallySync('purchase')}
+            >
+              {syncingTally ? 'Syncing…' : 'Retry Purchase sync'}
             </button>
           ) : null}
           <a href={invoice.file_url} download style={styles.downloadBtn}>
@@ -598,18 +599,20 @@ export default function InvoiceDetails() {
             <span style={styles.sectionTitle}>Payment</span>
             <div style={styles.taxRows}>
               <div style={styles.summaryLine}>
-                <span style={styles.summaryLabel}>Expense ledger</span>
-                <select
-                  value={expenseType}
-                  disabled={!canPay || savingExpenseType || paying}
-                  onChange={(e) => handleExpenseTypeChange(e.target.value)}
-                  style={styles.expenseSelect}
-                >
-                  <option value="">Select type</option>
-                  <option value="labour">Labour</option>
-                  <option value="labour_service">Labour Service</option>
-                  <option value="raw_material">Raw Material</option>
-                </select>
+                <span style={styles.summaryLabel}>Supplier type</span>
+                <span style={styles.summaryValue}>
+                  {supplier.tally_expense_ledger_type === 'labour'
+                    ? 'Labour'
+                    : supplier.tally_expense_ledger_type === 'labour_service'
+                      ? 'Labour Service'
+                      : supplier.tally_expense_ledger_type === 'consumable'
+                        ? 'Consumable'
+                        : supplier.tally_expense_ledger_type === 'raw_material'
+                          ? 'Raw Material'
+                          : supplier.tally_expense_ledger_type === 'spares_and_tools'
+                            ? 'Spares and Tools'
+                            : supplier.tally_expense_ledger_type || '—'}
+                </span>
               </div>
               <div style={styles.summaryLine}>
                 <span style={styles.summaryLabel}>Due date</span>
@@ -630,51 +633,74 @@ export default function InvoiceDetails() {
                 <span style={styles.summaryValue}>{invoice.payment_reference || '—'}</span>
               </div>
               <div style={styles.summaryLine}>
-                <span style={styles.summaryLabel}>Deduction</span>
+                <span style={styles.summaryLabel}>PO advance</span>
                 <span style={styles.summaryValue}>
-                  {invoice.payment_deduction != null ? `₹${fmtMoney(invoice.payment_deduction)}` : '—'}
+                  {Number(invoice.po_advance_amount) > 0
+                    ? `₹${fmtMoney(invoice.po_advance_amount)}`
+                    : '—'}
                 </span>
               </div>
               <div style={styles.summaryLine}>
-                <span style={styles.summaryLabel}>Remarks</span>
-                <span style={styles.summaryValue}>{invoice.payment_remarks || '—'}</span>
+                <span style={styles.summaryLabel}>Amount due</span>
+                <span style={styles.summaryValue}>
+                  ₹
+                  {fmtMoney(
+                    invoice.amount_due_after_advance != null
+                      ? invoice.amount_due_after_advance
+                      : Math.max(
+                          (Number(invoice.total_amount) || 0) -
+                            (Number(invoice.po_advance_amount) || 0),
+                          0
+                        )
+                  )}
+                </span>
               </div>
-              {invoice.tally_sync_status ? (
-                <>
-                  <div style={styles.summaryLine}>
-                    <span style={styles.summaryLabel}>Tally sync</span>
-                    <span style={styles.summaryValue}>
-                      {String(invoice.tally_sync_status).toUpperCase()}
-                      {invoice.tally_voucher_number
-                        ? ` · ${invoice.tally_voucher_number}`
-                        : ''}
-                    </span>
-                  </div>
-                  {!tallyEnabled ? (
-                    <div style={styles.summaryLine}>
-                      <span style={styles.summaryLabel}>Tally</span>
-                      <span style={{ ...styles.summaryValue, color: '#b45309' }}>
-                        Disabled (set TALLY_ENABLED=true)
-                      </span>
-                    </div>
-                  ) : null}
-                  {invoice.tally_sync_error ? (
-                    <div style={styles.summaryLine}>
-                      <span style={styles.summaryLabel}>Tally error</span>
-                      <span style={{ ...styles.summaryValue, color: '#b91c1c' }}>
-                        {invoice.tally_sync_error}
-                      </span>
-                    </div>
-                  ) : null}
-                </>
-              ) : (
+              <div style={styles.summaryLine}>
+                <span style={styles.summaryLabel}>Bank ledger</span>
+                <span style={styles.summaryValue}>{invoice.payment_bank_ledger || '—'}</span>
+              </div>
+              <div style={styles.summaryLine}>
+                <span style={styles.summaryLabel}>Purchase Tally</span>
+                <span style={styles.summaryValue}>
+                  {invoice.tally_sync_status
+                    ? String(invoice.tally_sync_status).toUpperCase()
+                    : tallyEnabled
+                      ? 'Not synced'
+                      : 'Disabled'}
+                  {invoice.tally_voucher_number ? ` · ${invoice.tally_voucher_number}` : ''}
+                </span>
+              </div>
+              {invoice.tally_sync_error ? (
                 <div style={styles.summaryLine}>
-                  <span style={styles.summaryLabel}>Tally sync</span>
-                  <span style={styles.summaryValue}>
-                    {tallyEnabled ? 'Not synced yet' : 'Disabled'}
+                  <span style={styles.summaryLabel}>Purchase error</span>
+                  <span style={{ ...styles.summaryValue, color: '#b91c1c' }}>
+                    {invoice.tally_sync_error}
                   </span>
                 </div>
-              )}
+              ) : null}
+              <div style={styles.summaryLine}>
+                <span style={styles.summaryLabel}>Payment Tally</span>
+                <span style={styles.summaryValue}>
+                  {invoice.tally_payment_sync_status
+                    ? String(invoice.tally_payment_sync_status).toUpperCase()
+                    : invoice.status === 'paid'
+                      ? tallyEnabled
+                        ? 'Not synced'
+                        : 'Disabled'
+                      : '—'}
+                  {invoice.tally_payment_voucher_number
+                    ? ` · ${invoice.tally_payment_voucher_number}`
+                    : ''}
+                </span>
+              </div>
+              {invoice.tally_payment_sync_error ? (
+                <div style={styles.summaryLine}>
+                  <span style={styles.summaryLabel}>Payment error</span>
+                  <span style={{ ...styles.summaryValue, color: '#b91c1c' }}>
+                    {invoice.tally_payment_sync_error}
+                  </span>
+                </div>
+              ) : null}
             </div>
           </section>
 

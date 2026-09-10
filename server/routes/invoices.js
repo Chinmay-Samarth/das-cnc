@@ -5,9 +5,15 @@ const { getInvoice, startInvoiceOCR } = require('../services/invoiceOcrEngine');
 const {
   recordVendorInvoicePayment,
   updateInvoiceTallyFields,
-  retryVendorInvoiceTallySync,
+  retryVendorInvoicePurchaseSync,
+  retryVendorInvoicePaymentSync,
+  resolvePoAdvanceForInvoice,
 } = require('../services/invoicePaymentEngine');
 const { isTallyEnabled, tallyCompany, tallyUrl } = require('../services/tallyClient');
+const { fetchBankLedgersFromTally } = require('../services/tallyBankLedgers');
+const {
+  syncPurchaseVoucherOnGirnRegister,
+} = require('../services/girnTallyPurchaseSync');
 const {
   parseInvoiceDateRange,
   listInvoicesByDateRange,
@@ -92,6 +98,34 @@ router.get('/export', verifyEmployeeAuth, async (req, res) => {
   }
 });
 
+router.get('/tally/status', verifyEmployeeAuth, async (req, res) => {
+  return res.json({
+    tally_enabled: isTallyEnabled(),
+    tally_company_configured: Boolean(tallyCompany()),
+    tally_company: tallyCompany() || null,
+    tally_url: tallyUrl(),
+  });
+});
+
+router.get('/tally/bank-ledgers', verifyEmployeeAuth, async (req, res) => {
+  try {
+    if (!isTallyEnabled()) {
+      return res.json({ bank_ledgers: [], tally_enabled: false });
+    }
+    const bank_ledgers = await fetchBankLedgersFromTally({
+      force: req.query.refresh === '1',
+    });
+    return res.json({ bank_ledgers, tally_enabled: true });
+  } catch (err) {
+    console.error('Bank ledgers fetch error:', err);
+    return res.status(err.code === 'TALLY_UNREACHABLE' ? 503 : 502).json({
+      error: err.message || 'Unable to load bank ledgers from Tally',
+      bank_ledgers: [],
+      tally_enabled: true,
+    });
+  }
+});
+
 router.post('/:id/payments', verifyEmployeeAuth, async (req, res) => {
   try {
     const invoice = await recordVendorInvoicePayment(
@@ -118,12 +152,17 @@ router.patch('/:id/tally', verifyEmployeeAuth, async (req, res) => {
 
 router.post('/:id/tally/sync', verifyEmployeeAuth, async (req, res) => {
   try {
-    const invoice = await retryVendorInvoiceTallySync(req.params.id);
+    const kind = String(req.body?.kind || req.query.kind || 'payment').toLowerCase();
+    const invoice =
+      kind === 'purchase'
+        ? await retryVendorInvoicePurchaseSync(req.params.id)
+        : await retryVendorInvoicePaymentSync(req.params.id);
     return res.json({
       invoice,
       tally_enabled: isTallyEnabled(),
       tally_company_configured: Boolean(tallyCompany()),
       tally_url: tallyUrl(),
+      sync_kind: kind === 'purchase' ? 'purchase' : 'payment',
     });
   } catch (err) {
     console.error('Invoice tally sync retry error:', err);
@@ -131,13 +170,19 @@ router.post('/:id/tally/sync', verifyEmployeeAuth, async (req, res) => {
   }
 });
 
-router.get('/tally/status', verifyEmployeeAuth, async (req, res) => {
-  return res.json({
-    tally_enabled: isTallyEnabled(),
-    tally_company_configured: Boolean(tallyCompany()),
-    tally_company: tallyCompany() || null,
-    tally_url: tallyUrl(),
-  });
+router.post('/:id/tally/purchase-sync', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const result = await syncPurchaseVoucherOnGirnRegister(req.params.id);
+    const invoice = result.invoice || (await getInvoice(req.params.id));
+    return res.json({
+      invoice,
+      tally_enabled: isTallyEnabled(),
+      result,
+    });
+  } catch (err) {
+    console.error('Invoice purchase sync error:', err);
+    return sendServiceError(res, err);
+  }
 });
 
 router.get('/:id/review', verifyEmployeeAuth, async (req, res) => {
@@ -177,8 +222,25 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
     const needs_review =
       invoice.review_status === 'needs_review' || invoice.status === 'needs_review';
 
+    let poAdvance = Number(invoice.po_advance_amount) || 0;
+    try {
+      const resolved = await resolvePoAdvanceForInvoice(invoiceId);
+      if (resolved.advance_amount > 0) poAdvance = resolved.advance_amount;
+    } catch (_) {
+      /* ignore */
+    }
+    const total = Number(invoice.total_amount) || 0;
+    const amount_due_after_advance = Math.max(
+      Math.round((total - poAdvance) * 100) / 100,
+      0
+    );
+
     return res.json({
-      invoice,
+      invoice: {
+        ...invoice,
+        po_advance_amount: poAdvance || invoice.po_advance_amount || 0,
+        amount_due_after_advance,
+      },
       needs_review,
       ocr_confidence_level: invoice.ocr_confidence_level,
       warning_count: Array.isArray(invoice.ocr_warnings) ? invoice.ocr_warnings.length : 0,

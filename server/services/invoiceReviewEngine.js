@@ -318,11 +318,13 @@ async function confirmReview(invoiceId, body, actorId) {
     0
   );
 
+  const invoiceNumber = body.invoice_number ?? invoice.invoice_number;
+
   const updatePayload = {
     supplier_id: supplierId,
     line_items: normalizedLines,
     tax_items: taxItems,
-    invoice_number: body.invoice_number ?? invoice.invoice_number,
+    invoice_number: invoiceNumber,
     invoice_date: body.invoice_date ?? invoice.invoice_date,
     due_date: body.due_date ?? invoice.due_date,
     total_amount: body.total_amount ?? invoice.total_amount,
@@ -334,6 +336,7 @@ async function confirmReview(invoiceId, body, actorId) {
         : taxItems.length
           ? taxAmountFromItems
           : invoice.tax_amount,
+    // Clear OCR review state — status must not remain needs_review
     status: 'pending',
     review_status: 'confirmed',
     reviewed_at: now,
@@ -345,9 +348,39 @@ async function confirmReview(invoiceId, body, actorId) {
   const { error } = await supabase.from('invoices').update(updatePayload).eq('id', invoiceId);
   if (error) throw error;
 
+  // Drop abandoned OCR drafts of the same supplier invoice so Purchase Invoices
+  // does not keep showing a stale "Needs review" row after confirm.
+  await supersedeAbandonedReviewDrafts({
+    keepInvoiceId: invoiceId,
+    invoiceNumber,
+    now,
+  });
+
   await upsertAliases(supplierId, normalizedLines, actorId);
 
   return getInvoice(invoiceId);
+}
+
+async function supersedeAbandonedReviewDrafts({ keepInvoiceId, invoiceNumber, now }) {
+  const number = String(invoiceNumber || '').trim();
+  if (!number || !keepInvoiceId) return;
+
+  // Match by invoice number only — abandoned drafts may lack supplier_id until review
+  const { error } = await supabase
+    .from('invoices')
+    .update({
+      status: 'cancelled',
+      review_status: 'superseded',
+      ocr_warnings: [],
+      updated_at: now || new Date().toISOString(),
+    })
+    .neq('id', keepInvoiceId)
+    .eq('invoice_number', number)
+    .in('status', ['needs_review', 'extracting', 'saving']);
+
+  if (error) {
+    console.warn('Unable to supersede abandoned invoice review drafts:', error.message);
+  }
 }
 
 async function finalizeOcrReview(invoiceId, doc, invoiceDraft) {

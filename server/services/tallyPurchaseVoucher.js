@@ -65,10 +65,11 @@ function taxLineAmount(tax, baseAmount) {
 }
 
 function resolveExpenseType(invoice, supplier) {
-  const fromInvoice = String(invoice?.tally_expense_ledger_type || '').trim();
-  if (isValidExpenseType(fromInvoice)) return fromInvoice;
+  // Supplier is source of truth (one type per supplier)
   const fromSupplier = String(supplier?.tally_expense_ledger_type || '').trim();
   if (isValidExpenseType(fromSupplier)) return fromSupplier;
+  const fromInvoice = String(invoice?.tally_expense_ledger_type || '').trim();
+  if (isValidExpenseType(fromInvoice)) return fromInvoice;
   return null;
 }
 
@@ -325,7 +326,7 @@ function assertReadyForTallySync(invoice, supplier) {
     return 'Set ledger name on the supplier before recording payment (Tally sync is enabled)';
   }
   if (!resolveExpenseType(invoice, supplier)) {
-    return 'Set expense ledger type (labour / labour service / raw material) on the supplier or this invoice before recording payment';
+    return 'Set expense ledger type (Labour / Labour Service / Consumable / Raw Material / Spares and Tools) on the supplier before syncing';
   }
   if (!String(invoice?.invoice_number || '').trim()) {
     return 'Invoice number is required before Tally sync';

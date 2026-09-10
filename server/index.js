@@ -9,6 +9,7 @@ const { syncBiometricData } = require('./services/biometricSync');
 const { evaluateAttendanceAlerts } = require('./services/attendanceAlertEngine');
 const { evaluateTomorrowDeliveryStockAlerts } = require('./services/inventoryAlertEngine');
 const { evaluateSalesInvoiceOverdueAlerts } = require('./services/salesInvoiceAlertEngine');
+const { evaluatePurchaseInvoiceOverdueAlerts } = require('./services/purchaseInvoiceAlertEngine');
 const { evaluateProductionAlerts } = require('./services/productionAlertEngine');
 const { evaluateReorderAlerts } = require('./services/reorderAlertEngine');
 const { evaluatePredictiveReorder } = require('./services/predictiveReorderEngine');
@@ -162,6 +163,11 @@ cron.schedule('*/20 * * * *', async () => {
   } catch (err) {
     console.error('Sales invoice overdue alert evaluation failed:', err);
   }
+  try {
+    await evaluatePurchaseInvoiceOverdueAlerts();
+  } catch (err) {
+    console.error('Purchase invoice overdue alert evaluation failed:', err);
+  }
 }, {
   timezone: process.env.TIMEZONE || 'Asia/Kolkata'
 });
@@ -184,6 +190,8 @@ setTimeout(() => {
   evaluateSalesInvoiceOverdueAlerts()
     // .then((result) => console.log('Initial sales invoice overdue alerts:', result.created))
     .catch((err) => console.error('Initial sales invoice overdue alert evaluation failed:', err));
+  evaluatePurchaseInvoiceOverdueAlerts()
+    .catch((err) => console.error('Initial purchase invoice overdue alert evaluation failed:', err));
 }, 8000);
 const PORT = process.env.PORT || 3001;
 const server = http.createServer(app);

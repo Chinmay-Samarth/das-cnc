@@ -16,7 +16,7 @@ function tallyCompany() {
 /**
  * POST XML to Tally HTTP server. Parses created / error markers from the response body.
  */
-async function postTallyXml(xml) {
+async function postTallyXml(xml, { requireMutation = true } = {}) {
   const url = tallyUrl();
   const timeout = Number(process.env.TALLY_TIMEOUT_MS) || 30000;
 
@@ -61,7 +61,7 @@ async function postTallyXml(xml) {
     throw error;
   }
 
-  if (created < 1 && altered < 1) {
+  if (requireMutation && created < 1 && altered < 1) {
     // Some Tally builds omit counters but still succeed; treat empty success carefully
     if (/<RESPONSE>/i.test(body) && !/<CREATED>/i.test(body)) {
       return { ok: true, created: 0, altered: 0, body };
@@ -69,6 +69,11 @@ async function postTallyXml(xml) {
   }
 
   return { ok: true, created, altered, body };
+}
+
+/** Export / collection requests — do not require CREATED/ALTERED. */
+async function exportTallyXml(xml) {
+  return postTallyXml(xml, { requireMutation: false });
 }
 
 function extractTag(xml, tag) {
@@ -82,4 +87,5 @@ module.exports = {
   tallyUrl,
   tallyCompany,
   postTallyXml,
+  exportTallyXml,
 };

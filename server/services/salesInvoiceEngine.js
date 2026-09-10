@@ -9,6 +9,10 @@ const {
   assertReadyForSalesTallySync,
   syncSalesVoucherForInvoice,
 } = require('./tallySalesVoucher');
+const {
+  syncReceiptVoucherForInvoice,
+  syncReceiptVoucherForInvoices,
+} = require('./tallyReceiptVoucher');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -18,6 +22,14 @@ const supabase = createClient(
 /** Prefer Component Name; also accept Regex Name if present on the master. */
 const COMPONENT_ITEM_NAME_SLUGS = ['component_name', 'regex_name'];
 const COMPONENT_ITEM_NAME_LABEL_RE = /^(component\s*name|regex\s*name)$/i;
+const DRAWING_NUMBER_SLUGS = [
+  'drawing_number',
+  'drawing_no',
+  'drg_no',
+  'drg_number',
+  'drawing',
+];
+const DRAWING_NUMBER_LABEL_RE = /^(drawing(\s*(no\.?|number))?|drg\.?\s*no\.?)$/i;
 
 const GST_RATE = 18;
 const HALF_RATE = 9;
@@ -253,6 +265,7 @@ function customerSnapshot(customer) {
   return {
     id: customer.id,
     name: customer.name,
+    ledger_name: customer.ledger_name || null,
     official_address: customer.official_address,
     billing_address: customer.billing_address,
     gstin: customer.gstin,
@@ -260,8 +273,89 @@ function customerSnapshot(customer) {
     contact_person: customer.contact_person,
     contact_phone: customer.contact_phone,
     payment_terms: customer.payment_terms,
+    components_per_packet: customer.components_per_packet != null
+      ? toNumber(customer.components_per_packet)
+      : null,
     state_code: stateCodeFromGstin(customer.gstin),
   };
+}
+
+function buildPackageLabel(componentsPerPacket, quantity) {
+  const size = toNumber(componentsPerPacket);
+  const qty = toNumber(quantity);
+  if (!(size > 0)) {
+    throw httpError(
+      'Set components per packet on the customer before creating a sales invoice',
+      422
+    );
+  }
+  if (!(qty > 0)) throw httpError('quantity must be > 0');
+  const packets = Math.ceil(qty / size);
+  return `${size} × ${packets}`;
+}
+
+/**
+ * Combined RFD qty for same component + schedule (merge-group support).
+ * Includes the primary lot.
+ */
+async function combinedRfdQtyForSchedule(lot, scheduleId) {
+  const masterId = lot?.master_record_id;
+  const primaryQty = toNumber(lot?.quantity);
+  if (!masterId || !isValidUUID(scheduleId)) return primaryQty;
+
+  const { data: siblings, error } = await supabase
+    .from('production_lots')
+    .select('id, quantity, production_card_id, campaign_id')
+    .eq('status', 'ready_for_dispatch')
+    .eq('master_record_id', masterId);
+  if (error) throw error;
+
+  const lots = siblings || [];
+  if (!lots.length) return primaryQty;
+
+  const cardIds = [...new Set(lots.map((l) => l.production_card_id).filter(Boolean))];
+  let cardScheduleById = {};
+  if (cardIds.length) {
+    const { data: cards, error: cErr } = await supabase
+      .from('production_cards')
+      .select('id, delivery_schedule_id')
+      .in('id', cardIds);
+    if (cErr) throw cErr;
+    cardScheduleById = Object.fromEntries(
+      (cards || []).map((c) => [c.id, c.delivery_schedule_id])
+    );
+  }
+
+  const campaignIds = [
+    ...new Set(lots.map((l) => l.campaign_id).filter(Boolean)),
+  ];
+  const coveredCampaigns = new Set();
+  if (campaignIds.length) {
+    const { data: cov, error: covErr } = await supabase
+      .from('campaign_schedule_coverage')
+      .select('campaign_id')
+      .in('campaign_id', campaignIds)
+      .eq('delivery_schedule_id', scheduleId);
+    if (covErr) throw covErr;
+    for (const row of cov || []) coveredCampaigns.add(row.campaign_id);
+  }
+
+  let combined = 0;
+  for (const l of lots) {
+    const pinned = l.production_card_id
+      ? cardScheduleById[l.production_card_id]
+      : null;
+    const matches =
+      l.id === lot.id ||
+      pinned === scheduleId ||
+      (l.campaign_id && coveredCampaigns.has(l.campaign_id) && !pinned);
+    if (!matches) continue;
+    if (pinned && pinned !== scheduleId && l.id !== lot.id) continue;
+    combined += toNumber(l.quantity);
+  }
+
+  if (!(combined > 0)) combined = primaryQty;
+  return Math.round(combined * 10000) / 10000;
 }
 
 /**
@@ -553,10 +647,9 @@ async function resolveLotBillingContext(lotId) {
 }
 
 /**
- * Item name for sales / Tally: Component Name (or Regex Name), not v_master_lookup.label
- * (lookup uses first required text field, which is Component ID).
+ * Resolve a master-record field value by preferred slugs then label regex.
  */
-async function resolveComponentItemName(masterRecordId) {
+async function resolveMasterFieldValue(masterRecordId, { slugs = [], labelRe = null } = {}) {
   if (!masterRecordId || !isValidUUID(masterRecordId)) return null;
 
   const { data: record, error: recErr } = await supabase
@@ -577,16 +670,14 @@ async function resolveComponentItemName(masterRecordId) {
   const bySlug = Object.fromEntries(fields.map((f) => [String(f.field_slug || ''), f]));
 
   let fieldId = null;
-  for (const slug of COMPONENT_ITEM_NAME_SLUGS) {
+  for (const slug of slugs) {
     if (bySlug[slug]?.field_id) {
       fieldId = bySlug[slug].field_id;
       break;
     }
   }
-  if (!fieldId) {
-    const byLabel = fields.find((f) =>
-      COMPONENT_ITEM_NAME_LABEL_RE.test(String(f.field_label || '').trim())
-    );
+  if (!fieldId && labelRe) {
+    const byLabel = fields.find((f) => labelRe.test(String(f.field_label || '').trim()));
     fieldId = byLabel?.field_id || null;
   }
   if (!fieldId) return null;
@@ -602,6 +693,24 @@ async function resolveComponentItemName(masterRecordId) {
   return cleanText(valueRow?.value);
 }
 
+/**
+ * Item name for sales / Tally: Component Name (or Regex Name), not v_master_lookup.label
+ * (lookup uses first required text field, which is Component ID).
+ */
+async function resolveComponentItemName(masterRecordId) {
+  return resolveMasterFieldValue(masterRecordId, {
+    slugs: COMPONENT_ITEM_NAME_SLUGS,
+    labelRe: COMPONENT_ITEM_NAME_LABEL_RE,
+  });
+}
+
+async function resolveDrawingNumber(masterRecordId) {
+  return resolveMasterFieldValue(masterRecordId, {
+    slugs: DRAWING_NUMBER_SLUGS,
+    labelRe: DRAWING_NUMBER_LABEL_RE,
+  });
+}
+
 function buildLineItems({
   componentLabel,
   quantity,
@@ -613,11 +722,13 @@ function buildLineItems({
   poDate,
   hsn,
   packageLabel,
+  drawingNumber,
 }) {
   return [
     {
       line_no: 1,
       description: componentLabel || 'Component',
+      drawing_number: drawingNumber || null,
       hsn: hsn || null,
       po_ref: poRef || null,
       po_date: poDate || null,
@@ -645,6 +756,7 @@ async function getInvoiceById(id) {
   const [
     paymentsRes,
     printedByRes,
+    packingSlipByRes,
     issuedByRes,
     paidByRes,
     cancelledByRes,
@@ -662,6 +774,13 @@ async function getInvoiceById(id) {
           .from('employees')
           .select('id, full_name, employee_code')
           .eq('id', data.printed_by)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    data.packing_slip_printed_by
+      ? supabase
+          .from('employees')
+          .select('id, full_name, employee_code')
+          .eq('id', data.packing_slip_printed_by)
           .maybeSingle()
       : Promise.resolve({ data: null }),
     data.issued_by
@@ -688,7 +807,7 @@ async function getInvoiceById(id) {
     data.customer_id
       ? supabase
           .from('customers')
-          .select('id, name, gstin, ledger_name')
+          .select('id, name, gstin, ledger_name, components_per_packet')
           .eq('id', data.customer_id)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -736,6 +855,7 @@ async function getInvoiceById(id) {
     blanket_number: blanketRes.data?.blanket_number || null,
     blanket_created_at: blanketRes.data?.created_at || null,
     printed_by_employee: printedByRes.data || null,
+    packing_slip_printed_by_employee: packingSlipByRes.data || null,
     issued_by_employee: issuedByRes.data || null,
     payment_recorded_by_employee: paidByRes.data || null,
     cancelled_by_employee: cancelledByRes.data || null,
@@ -764,11 +884,15 @@ async function persistSalesTallySyncResult(id, result) {
   }
 }
 
-async function listInvoices({ status } = {}) {
+async function listInvoices({ status, customerId } = {}) {
   let query = supabase
     .from('sales_invoices')
     .select('*')
     .order('created_at', { ascending: false });
+
+  if (customerId && isValidUUID(customerId)) {
+    query = query.eq('customer_id', customerId);
+  }
 
   if (status) {
     const statuses = String(status)
@@ -813,7 +937,9 @@ async function findActiveInvoiceForLot(lotId) {
   if (!isValidUUID(lotId)) return null;
   const { data, error } = await supabase
     .from('sales_invoices')
-    .select('id, status, printed_at, invoice_number, quantity')
+    .select(
+      'id, status, printed_at, packing_slip_printed_at, invoice_number, quantity'
+    )
     .eq('lot_id', lotId)
     .in('status', ['draft', 'due', 'paid'])
     .maybeSingle();
@@ -832,13 +958,68 @@ async function createDraftFromLot(lotId, actorId, body = {}) {
 
   const ctx = await resolveLotBillingContext(lotId);
   const company = await getCompanySettings();
-  const qty =
-    body.quantity != null ? toNumber(body.quantity) : toNumber(ctx.lot.quantity);
+  const remaining = toNumber(ctx.remaining_qty);
+  const lotQty = toNumber(ctx.lot.quantity);
+  if (!(remaining > 0.0001)) {
+    throw httpError('No remaining delivery schedule quantity to invoice', 422);
+  }
+
+  const requested =
+    body.quantity != null ? toNumber(body.quantity) : null;
+
+  const combinedRfd = await combinedRfdQtyForSchedule(ctx.lot, ctx.schedule.id);
+  const demandMet = combinedRfd + 0.0001 >= remaining;
+  const shipQty = Math.min(combinedRfd, remaining);
+
+  let qty;
+  if (demandMet) {
+    // Parked RFD (this lot alone or merge group) meets DS — invoice exactly remaining
+    qty = remaining;
+    if (requested != null) {
+      if (Math.abs(requested - remaining) > 0.0001 && Math.abs(requested - shipQty) > 0.0001) {
+        throw httpError(
+          `When schedule demand is met, invoice the full remaining qty (${remaining})`,
+          422
+        );
+      }
+      qty = Math.abs(requested - shipQty) <= 0.0001 ? shipQty : remaining;
+    }
+  } else {
+    // Shortfall / early: need override approval
+    const { getApprovedForLot } = require('./dispatchShortfallEngine');
+    const approval = await getApprovedForLot(lotId);
+    if (!approval) {
+      throw httpError(
+        `Parked RFD qty (${combinedRfd}) is below remaining delivery schedule qty (${remaining}). Wait until RFD meets the schedule, or get override / shortfall approval first.`,
+        409
+      );
+    }
+    qty = requested != null ? requested : lotQty;
+    if (qty > combinedRfd + 0.0001) {
+      throw httpError(
+        `Invoice quantity cannot exceed combined RFD qty (${combinedRfd})`,
+        422
+      );
+    }
+    if (qty > remaining + 0.0001) {
+      throw httpError(
+        `Invoice quantity cannot exceed remaining delivery schedule qty (${remaining})`,
+        422
+      );
+    }
+  }
+
   if (!(qty > 0)) throw httpError('quantity must be > 0');
 
   const unitPrice =
     body.unit_price != null ? toNumber(body.unit_price) : toNumber(ctx.line.unit_price);
   if (!(unitPrice >= 0)) throw httpError('unit_price is invalid');
+
+  const packageLabel = buildPackageLabel(
+    ctx.customer.components_per_packet,
+    qty
+  );
+  const drawingNumber = await resolveDrawingNumber(ctx.line.master_record_id);
 
   const override = body.company_override && typeof body.company_override === 'object'
     ? body.company_override
@@ -884,6 +1065,8 @@ async function createDraftFromLot(lotId, actorId, body = {}) {
     poRef: ctx.blanket.blanket_number,
     poDate: ctx.blanket.created_at || null,
     hsn: ctx.line.hsn || null,
+    packageLabel,
+    drawingNumber,
   });
 
   const { data, error } = await supabase
@@ -952,6 +1135,48 @@ async function updateDraft(id, patch) {
   });
 
   const prevLine = inv.line_items?.[0] || {};
+  const packetSize =
+    inv.customer_snapshot?.components_per_packet ??
+    inv.customer?.components_per_packet;
+  const packageLabel = buildPackageLabel(packetSize, qty);
+
+  if (inv.delivery_schedule_id) {
+    const { data: sched } = await supabase
+      .from('delivery_schedules')
+      .select('id, quantity')
+      .eq('id', inv.delivery_schedule_id)
+      .maybeSingle();
+    if (sched) {
+      const rem = await remainingQtyForSchedule(sched.id, sched.quantity);
+      if (qty > rem + 0.0001) {
+        throw httpError(
+          `Invoice quantity cannot exceed remaining delivery schedule qty (${rem})`,
+          422
+        );
+      }
+      if (inv.lot_id && qty + 0.0001 < rem) {
+        const { data: lotRow } = await supabase
+          .from('production_lots')
+          .select('*')
+          .eq('id', inv.lot_id)
+          .maybeSingle();
+        if (lotRow) {
+          const combined = await combinedRfdQtyForSchedule(lotRow, sched.id);
+          if (combined + 0.0001 < rem) {
+            const { getApprovedForLot } = require('./dispatchShortfallEngine');
+            const approval = await getApprovedForLot(inv.lot_id);
+            if (!approval) {
+              throw httpError(
+                `Parked RFD qty (${combined}) is below remaining delivery schedule qty (${rem}). Wait until RFD meets the schedule, or get override / shortfall approval first.`,
+                409
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+
   const lineItems = buildLineItems({
     componentLabel: prevLine.description,
     quantity: qty,
@@ -965,7 +1190,8 @@ async function updateDraft(id, patch) {
     poRef: prevLine.po_ref || inv.blanket_number,
     poDate: prevLine.po_date || inv.blanket_created_at,
     hsn: prevLine.hsn || null,
-    packageLabel: prevLine.package || null,
+    packageLabel,
+    drawingNumber: prevLine.drawing_number || null,
   });
 
   const update = {
@@ -1016,24 +1242,59 @@ async function issueInvoice(id, actorId) {
   // Freeze company snapshot from current settings + override at issue time
   const frozenCompany = companySnapshot(company, inv.company_override);
 
+  const issuePatch = {
+    status: 'due',
+    invoice_number: invoiceNumber,
+    issued_at: issuedAt,
+    issued_by: actorId || null,
+    due_date: dueDate,
+    company_snapshot: frozenCompany,
+    updated_at: issuedAt,
+  };
+
+  if (isTallyEnabled()) {
+    issuePatch.tally_sync_status = 'pending';
+    issuePatch.tally_sync_error = null;
+  }
+
   const { data, error } = await supabase
     .from('sales_invoices')
-    .update({
-      status: 'due',
-      invoice_number: invoiceNumber,
-      issued_at: issuedAt,
-      issued_by: actorId || null,
-      due_date: dueDate,
-      company_snapshot: frozenCompany,
-      updated_at: issuedAt,
-    })
+    .update(issuePatch)
     .eq('id', id)
     .eq('status', 'draft')
     .select('*')
     .single();
   if (error) throw error;
   if (!data) throw httpError('Invoice could not be issued (status changed)', 409);
-  return getInvoiceById(data.id);
+
+  const issued = await getInvoiceById(data.id);
+  const invoiceForTally = await attachComponentItemName(issued);
+  const customer = invoiceForTally.customer || null;
+
+  if (isTallyEnabled()) {
+    const block = assertReadyForSalesTallySync(invoiceForTally, customer);
+    if (block) {
+      await persistSalesTallySyncResult(id, {
+        status: 'failed',
+        error: block,
+        voucherNumber: null,
+        syncedAt: null,
+      });
+      return getInvoiceById(id);
+    }
+    const syncResult = await syncSalesVoucherForInvoice(invoiceForTally, customer);
+    await persistSalesTallySyncResult(id, syncResult);
+    return getInvoiceById(id);
+  }
+
+  await persistSalesTallySyncResult(id, {
+    status: 'skipped',
+    error: 'TALLY_ENABLED is not true — set TALLY_ENABLED=true and restart the API',
+    voucherNumber: null,
+    syncedAt: null,
+  });
+
+  return getInvoiceById(id);
 }
 
 async function confirmPrinted(id, actorId) {
@@ -1051,6 +1312,33 @@ async function confirmPrinted(id, actorId) {
     .update({
       printed_at: now,
       printed_by: actorId || null,
+      updated_at: now,
+    })
+    .eq('id', id)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return getInvoiceById(data.id);
+}
+
+async function confirmPackingSlipPrinted(id, actorId) {
+  const inv = await getInvoiceById(id);
+  if (!['due', 'paid'].includes(inv.status)) {
+    throw httpError('Issue the invoice before confirming packing slip print', 409);
+  }
+  if (!inv.printed_at) {
+    throw httpError('Confirm invoice print before packing slip', 409);
+  }
+  if (inv.packing_slip_printed_at) {
+    return inv;
+  }
+
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('sales_invoices')
+    .update({
+      packing_slip_printed_at: now,
+      packing_slip_printed_by: actorId || null,
       updated_at: now,
     })
     .eq('id', id)
@@ -1108,6 +1396,23 @@ async function cancelInvoice(id, actorId, reason) {
   return getInvoiceById(data.id);
 }
 
+async function persistReceiptTallySyncResult(id, result) {
+  const { error } = await supabase
+    .from('sales_invoices')
+    .update({
+      tally_receipt_sync_status: result.status,
+      tally_receipt_sync_error: result.error || null,
+      tally_receipt_synced_at: result.syncedAt || null,
+      tally_receipt_voucher_number: result.voucherNumber || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+
+  if (error) {
+    console.error('Unable to persist sales receipt Tally sync status:', error.message);
+  }
+}
+
 async function recordPayment(id, actorId, body = {}) {
   const inv = await getInvoiceById(id);
   if (inv.status === 'cancelled') {
@@ -1121,13 +1426,23 @@ async function recordPayment(id, actorId, body = {}) {
   }
 
   const customer = inv.customer || null;
-  const tallyBlockReason = assertReadyForSalesTallySync(inv, customer);
-  if (tallyBlockReason) {
-    throw httpError(tallyBlockReason, 422);
+  if (isTallyEnabled()) {
+    const ledgerName = String(customer?.ledger_name || '').trim();
+    if (!ledgerName) {
+      throw httpError(
+        'Set ledger name on the customer before recording payment (Tally sync is enabled)',
+        422
+      );
+    }
   }
 
   const txnId = cleanText(body.transaction_id);
   if (!txnId) throw httpError('transaction_id is required');
+
+  const bankLedger = cleanText(body.bank_ledger);
+  if (isTallyEnabled() && !bankLedger) {
+    throw httpError('bank_ledger is required when Tally sync is enabled', 422);
+  }
 
   const amount =
     body.amount != null ? round2(body.amount) : round2(inv.total_amount);
@@ -1156,12 +1471,13 @@ async function recordPayment(id, actorId, body = {}) {
     paid_at: paidAt,
     payment_transaction_id: txnId,
     payment_recorded_by: actorId || null,
+    payment_bank_ledger: bankLedger || null,
     updated_at: new Date().toISOString(),
   };
 
   if (isTallyEnabled()) {
-    paidPatch.tally_sync_status = 'pending';
-    paidPatch.tally_sync_error = null;
+    paidPatch.tally_receipt_sync_status = 'pending';
+    paidPatch.tally_receipt_sync_error = null;
   }
 
   const { data, error } = await supabase
@@ -1173,18 +1489,22 @@ async function recordPayment(id, actorId, body = {}) {
   if (error) throw error;
 
   const paidInvoice = await getInvoiceById(data.id);
-  const invoiceForTally = await attachComponentItemName(paidInvoice);
 
   if (isTallyEnabled()) {
-    const syncResult = await syncSalesVoucherForInvoice(
-      invoiceForTally,
-      invoiceForTally.customer || customer
+    const syncResult = await syncReceiptVoucherForInvoice(
+      paidInvoice,
+      paidInvoice.customer || customer,
+      {
+        bankLedger,
+        amount,
+        reference: txnId,
+      }
     );
-    await persistSalesTallySyncResult(id, syncResult);
+    await persistReceiptTallySyncResult(id, syncResult);
     return getInvoiceById(id);
   }
 
-  await persistSalesTallySyncResult(id, {
+  await persistReceiptTallySyncResult(id, {
     status: 'skipped',
     error: 'TALLY_ENABLED is not true — set TALLY_ENABLED=true and restart the API',
     voucherNumber: null,
@@ -1194,10 +1514,129 @@ async function recordPayment(id, actorId, body = {}) {
   return getInvoiceById(id);
 }
 
+/**
+ * Settle multiple due invoices for one customer in a single receipt.
+ * Amount must equal the sum of selected invoice totals (v1 full settle).
+ */
+async function recordBulkPayments(actorId, body = {}) {
+  const customerId = body.customer_id;
+  if (!isValidUUID(customerId)) throw httpError('customer_id is required');
+
+  const invoiceIds = [...new Set((body.invoice_ids || []).filter(isValidUUID))];
+  if (!invoiceIds.length) throw httpError('invoice_ids is required');
+
+  const txnId = cleanText(body.transaction_id);
+  if (!txnId) throw httpError('transaction_id is required');
+
+  const bankLedger = cleanText(body.bank_ledger);
+  if (isTallyEnabled() && !bankLedger) {
+    throw httpError('bank_ledger is required when Tally sync is enabled', 422);
+  }
+
+  const { data: customer, error: custErr } = await supabase
+    .from('customers')
+    .select('*')
+    .eq('id', customerId)
+    .maybeSingle();
+  if (custErr) throw custErr;
+  if (!customer) throw httpError('Customer not found', 404);
+
+  if (isTallyEnabled() && !String(customer.ledger_name || '').trim()) {
+    throw httpError(
+      'Set ledger name on the customer before recording payment (Tally sync is enabled)',
+      422
+    );
+  }
+
+  const { data: rows, error } = await supabase
+    .from('sales_invoices')
+    .select('*')
+    .in('id', invoiceIds)
+    .eq('customer_id', customerId)
+    .eq('status', 'due');
+  if (error) throw error;
+
+  const invoices = rows || [];
+  if (invoices.length !== invoiceIds.length) {
+    throw httpError('All invoices must be due and belong to the customer', 422);
+  }
+
+  const sum = round2(invoices.reduce((s, inv) => s + toNumber(inv.total_amount), 0));
+  const amount = body.amount != null ? round2(body.amount) : sum;
+  if (Math.abs(amount - sum) > 0.01) {
+    throw httpError(
+      `Bulk payment amount must equal selected invoices total (${sum})`,
+      422
+    );
+  }
+
+  const paidAt = body.paid_at ? new Date(body.paid_at).toISOString() : new Date().toISOString();
+  const now = new Date().toISOString();
+
+  for (const inv of invoices) {
+    const { error: payErr } = await supabase.from('sales_invoice_payments').insert({
+      sales_invoice_id: inv.id,
+      amount: round2(inv.total_amount),
+      transaction_id: txnId,
+      paid_at: paidAt,
+      recorded_by: actorId || null,
+      notes: cleanText(body.notes) || 'Bulk payment',
+    });
+    if (payErr) throw payErr;
+
+    const patch = {
+      status: 'paid',
+      paid_at: paidAt,
+      payment_transaction_id: txnId,
+      payment_recorded_by: actorId || null,
+      payment_bank_ledger: bankLedger || null,
+      updated_at: now,
+    };
+    if (isTallyEnabled()) {
+      patch.tally_receipt_sync_status = 'pending';
+      patch.tally_receipt_sync_error = null;
+    }
+    const { error: upErr } = await supabase
+      .from('sales_invoices')
+      .update(patch)
+      .eq('id', inv.id);
+    if (upErr) throw upErr;
+  }
+
+  let receiptResult = {
+    status: 'skipped',
+    error: 'TALLY_ENABLED is not true — set TALLY_ENABLED=true and restart the API',
+    voucherNumber: null,
+    syncedAt: null,
+  };
+
+  if (isTallyEnabled()) {
+    receiptResult = await syncReceiptVoucherForInvoices(invoices, customer, {
+      bankLedger,
+      amount,
+      reference: txnId,
+    });
+  }
+
+  for (const inv of invoices) {
+    await persistReceiptTallySyncResult(inv.id, receiptResult);
+  }
+
+  const paid = [];
+  for (const inv of invoices) {
+    paid.push(await getInvoiceById(inv.id));
+  }
+
+  return {
+    sales_invoices: paid,
+    receipt_sync: receiptResult,
+  };
+}
+
 async function retrySalesInvoiceTallySync(id) {
   const inv = await getInvoiceById(id);
-  if (inv.status !== 'paid') {
-    throw httpError('Only paid sales invoices can be synced to Tally', 409);
+  if (!['due', 'paid'].includes(inv.status)) {
+    throw httpError('Only issued (due/paid) sales invoices can sync Sales voucher to Tally', 409);
   }
 
   const customer = inv.customer || null;
@@ -1229,6 +1668,46 @@ async function retrySalesInvoiceTallySync(id) {
     customer
   );
   await persistSalesTallySyncResult(id, syncResult);
+  return getInvoiceById(id);
+}
+
+async function retrySalesInvoiceReceiptTallySync(id) {
+  const inv = await getInvoiceById(id);
+  if (inv.status !== 'paid') {
+    throw httpError('Only paid sales invoices can sync Receipt voucher to Tally', 409);
+  }
+
+  const customer = inv.customer || null;
+  const bankLedger = String(inv.payment_bank_ledger || '').trim();
+  if (!bankLedger) {
+    throw httpError('payment_bank_ledger is missing — re-record payment with a bank ledger', 422);
+  }
+
+  if (!isTallyEnabled()) {
+    await persistReceiptTallySyncResult(id, {
+      status: 'skipped',
+      error: 'TALLY_ENABLED is not true — set TALLY_ENABLED=true and restart the API',
+      voucherNumber: null,
+      syncedAt: null,
+    });
+    return getInvoiceById(id);
+  }
+
+  await supabase
+    .from('sales_invoices')
+    .update({
+      tally_receipt_sync_status: 'pending',
+      tally_receipt_sync_error: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+
+  const syncResult = await syncReceiptVoucherForInvoice(inv, customer, {
+    bankLedger,
+    amount: inv.total_amount,
+    reference: inv.payment_transaction_id,
+  });
+  await persistReceiptTallySyncResult(id, syncResult);
   return getInvoiceById(id);
 }
 
@@ -1280,7 +1759,7 @@ async function assertLotPrintGate(lotId) {
   const inv = await findActiveInvoiceForLot(lotId);
   if (!inv || inv.status === 'draft') {
     throw httpError(
-      'Create and issue a sales invoice, then confirm it is printed before dispatch',
+      'Create and issue a sales invoice, then confirm invoice and packing slip print before dispatch',
       409
     );
   }
@@ -1289,6 +1768,9 @@ async function assertLotPrintGate(lotId) {
   }
   if (!inv.printed_at) {
     throw httpError('Confirm invoice print before dispatch', 409);
+  }
+  if (!inv.packing_slip_printed_at) {
+    throw httpError('Confirm packing slip print before dispatch', 409);
   }
   return inv;
 }
@@ -1336,7 +1818,9 @@ async function invoiceSummariesForLots(lotIds) {
   if (!ids.length) return {};
   const { data, error } = await supabase
     .from('sales_invoices')
-    .select('id, lot_id, status, printed_at, invoice_number, quantity')
+    .select(
+      'id, lot_id, status, printed_at, packing_slip_printed_at, invoice_number, quantity'
+    )
     .in('lot_id', ids)
     .in('status', ['draft', 'due', 'paid']);
   if (error) throw error;
@@ -1347,6 +1831,7 @@ async function invoiceSummariesForLots(lotIds) {
       invoice_status: row.status,
       invoice_number: row.invoice_number,
       printed: !!row.printed_at,
+      packing_slip_printed: !!row.packing_slip_printed_at,
       quantity: toNumber(row.quantity),
     };
   }
@@ -1380,9 +1865,12 @@ module.exports = {
   updateDraft,
   issueInvoice,
   confirmPrinted,
+  confirmPackingSlipPrinted,
   cancelInvoice,
   recordPayment,
+  recordBulkPayments,
   retrySalesInvoiceTallySync,
+  retrySalesInvoiceReceiptTallySync,
   markDispatched,
   assertLotPrintGate,
   findActiveInvoiceForLot,
@@ -1397,4 +1885,5 @@ module.exports = {
   remainingQtyForSchedule,
   pickOpenCampaignScheduleId,
   resolveScheduleRemainingForLots,
+  buildPackageLabel,
 };

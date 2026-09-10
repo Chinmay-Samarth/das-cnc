@@ -42,7 +42,7 @@ function normalizeExpenseType(value) {
   const raw = cleanText(value);
   if (raw == null) return null;
   if (!isValidExpenseType(raw)) {
-    return { error: 'tally_expense_ledger_type must be labour, labour_service, or raw_material' };
+    return { error: 'tally_expense_ledger_type must be labour, labour_service, consumable, raw_material, or spares_and_tools' };
   }
   return { value: raw };
 }

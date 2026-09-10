@@ -16,11 +16,11 @@ function qtyGateLabel(lot) {
   const gate = lot.qty_gate;
   const req = lot.shortfall_request;
   if (!gate || gate.mode === 'no_schedule') return 'No delivery schedule';
-  if (gate.mode === 'match') return 'Match';
+  if (gate.mode === 'match') return 'DS qty met';
   if (gate.mode === 'overage') return 'Will split + retain';
-  if (req?.status === 'pending') return 'Shortfall — pending approval';
-  if (req?.status === 'approved') return 'Shortfall — approved';
-  return 'Shortfall — approval needed';
+  if (req?.status === 'pending') return 'Override / shortfall — pending';
+  if (req?.status === 'approved') return 'Override / shortfall — approved';
+  return 'Waiting for DS qty';
 }
 
 function qtyGateTone(lot) {
@@ -37,8 +37,12 @@ function qtyGateTone(lot) {
 function invoiceLabel(inv) {
   if (!inv) return 'Invoice: not created';
   if (inv.invoice_status === 'draft') return 'Invoice: draft (issue required)';
-  if (inv.printed) return `Invoice: ${inv.invoice_number || inv.invoice_status} · printed`;
-  return `Invoice: ${inv.invoice_number || inv.invoice_status} · print confirmation needed`;
+  const parts = [`Invoice: ${inv.invoice_number || inv.invoice_status}`];
+  if (!inv.printed) parts.push('print confirmation needed');
+  else parts.push('printed');
+  if (!inv.packing_slip_printed) parts.push('packing slip needed');
+  else parts.push('packing slip printed');
+  return parts.join(' · ');
 }
 
 function invoiceWizardPath(lotId, shipQty) {
@@ -66,10 +70,12 @@ function partitionDispatchQueue(lots) {
 
 function groupQtyLabel(group) {
   const req = group.shortfall_request;
-  if (group.meets_demand) return 'Meets demand';
-  if (req?.status === 'pending') return 'Shortfall — pending approval';
-  if (req?.status === 'approved') return 'Shortfall — approved';
-  return 'Shortfall — approval needed';
+  if (group.meets_demand) {
+    return `Parked ${Number(group.combined_qty)} / DS ${Number(group.schedule_qty)}`;
+  }
+  if (req?.status === 'pending') return 'Override / shortfall — pending';
+  if (req?.status === 'approved') return 'Override / shortfall — approved';
+  return `Waiting for DS qty (${Number(group.combined_qty)} / ${Number(group.schedule_qty)})`;
 }
 
 function groupQtyTone(group) {
@@ -101,16 +107,16 @@ function mergeDispatchTitle(group, primaryInv) {
   ) {
     return `Invoice qty must equal ship qty (${Number(group.ship_qty)})`;
   }
-  if (!primaryInv || primaryInv.invoice_status === 'draft' || !primaryInv.printed) {
+  if (!primaryInv || primaryInv.invoice_status === 'draft' || !primaryInv.printed || !primaryInv.packing_slip_printed) {
     return group.meets_demand
-      ? 'Create, issue, and confirm print of an invoice for the schedule qty first'
-      : 'Create, issue, and confirm print of an invoice for the combined qty first';
+      ? 'Create, issue, confirm invoice print and packing slip for the schedule qty first'
+      : 'Create, issue, confirm invoice print and packing slip for the combined qty first';
   }
   if (!group.meets_demand && group.shortfall_request?.status === 'pending') {
-    return 'Waiting for admin shortfall approval';
+    return 'Waiting for admin override / shortfall approval';
   }
   if (!group.meets_demand && group.shortfall_request?.status !== 'approved') {
-    return 'Request admin approval for shortfall before merge & dispatch';
+    return 'Request admin approval for override / shortfall before merge & dispatch';
   }
   return 'Not ready to merge & dispatch';
 }
@@ -185,8 +191,8 @@ export default function ReadyForDispatchPage() {
       ? Number(group.schedule_qty || 0)
       : Number(lot.delivery_schedule_qty ?? lot.qty_gate?.schedule_qty ?? 0);
     const reason = await appPrompt({
-      title: 'Request shortfall approval',
-      message: `${group ? 'Combined' : 'Lot'} qty ${qty} is less than schedule qty ${remaining}. Explain why this short dispatch should be allowed.`,
+      title: 'Request override / shortfall approval',
+      message: `${group ? 'Combined' : 'Lot'} qty ${qty} is less than schedule qty ${remaining}. Explain why early / short dispatch should be allowed.`,
       placeholder: 'Reason…',
       confirmLabel: 'Submit',
     });
@@ -194,7 +200,7 @@ export default function ReadyForDispatchPage() {
     if (!String(reason).trim()) {
       await appAlert({
         title: 'Reason required',
-        message: 'Enter a reason for the shortfall request.',
+        message: 'Enter a reason for the override / shortfall request.',
         tone: 'danger',
       });
       return;
@@ -271,7 +277,7 @@ export default function ReadyForDispatchPage() {
                 Remaining{' '}
                 <strong>{scheduleQty != null ? Number(scheduleQty) : '—'}</strong>
                 {' · '}
-                Lot qty <strong>{Number(lot.quantity || 0)}</strong>
+                Parked <strong>{Number(lot.quantity || 0)}</strong>
               </span>
               <StatusBadge status={qtyGateTone(lot)}>{qtyGateLabel(lot)}</StatusBadge>
             </p>
@@ -292,7 +298,9 @@ export default function ReadyForDispatchPage() {
                 navigate(
                   invoiceWizardPath(
                     lot.id,
-                    lot.qty_gate?.mode === 'overage' ? scheduleQty : lot.quantity
+                    lot.qty_gate?.mode === 'overage' || lot.qty_gate?.mode === 'match'
+                      ? scheduleQty
+                      : lot.quantity
                   )
                 )
               }
@@ -305,18 +313,20 @@ export default function ReadyForDispatchPage() {
               className="mes-btn mes-btn-secondary"
               style={{ flex: 1, padding: '12px', fontSize: 14 }}
               onClick={() =>
-                inv.invoice_status === 'draft' || !inv.printed
+                inv.invoice_status === 'draft' || !inv.printed || !inv.packing_slip_printed
                   ? navigate(
                       invoiceWizardPath(
                         lot.id,
-                        lot.qty_gate?.mode === 'overage' ? scheduleQty : lot.quantity
+                        lot.qty_gate?.mode === 'overage' || lot.qty_gate?.mode === 'match'
+                          ? scheduleQty
+                          : lot.quantity
                       )
                     )
                   : navigate(`/sales-invoices/${inv.invoice_id}`)
               }
             >
-              {!inv.printed || inv.invoice_status === 'draft'
-                ? 'Open invoice wizard'
+              {!inv.printed || !inv.packing_slip_printed || inv.invoice_status === 'draft'
+                ? 'Continue wizard'
                 : 'View invoice'}
             </button>
           )}
@@ -328,7 +338,7 @@ export default function ReadyForDispatchPage() {
               disabled={busy}
               onClick={() => requestShortfallApproval(lot)}
             >
-              {busy ? 'Submitting…' : 'Request approval'}
+              {busy ? 'Submitting…' : 'Request override'}
             </button>
           ) : null}
           <button
@@ -342,12 +352,16 @@ export default function ReadyForDispatchPage() {
                   ? 'Will ship schedule qty and retain the rest as a new lot'
                   : undefined
                 : shortfallPending
-                  ? 'Waiting for admin shortfall approval'
+                  ? 'Waiting for admin override / shortfall approval'
                   : isShortfall && !shortfallApproved
-                    ? 'Request admin approval for shortfall before dispatch'
+                    ? 'Wait until parked qty meets DS, or request override approval'
                     : gate?.mode === 'no_schedule'
                       ? 'Lot has no delivery schedule'
-                      : 'Confirm invoice print before dispatch'
+                      : !inv?.printed
+                        ? 'Confirm invoice print before dispatch'
+                        : !inv?.packing_slip_printed
+                          ? 'Confirm packing slip print before dispatch'
+                          : 'Not ready to dispatch'
             }
             onClick={() => dispatchOne(lot.id)}
           >
@@ -457,13 +471,13 @@ export default function ReadyForDispatchPage() {
               className="mes-btn mes-btn-secondary"
               style={{ flex: 1, padding: '12px', fontSize: 14 }}
               onClick={() =>
-                inv.invoice_status === 'draft' || !inv.printed
+                inv.invoice_status === 'draft' || !inv.printed || !inv.packing_slip_printed
                   ? navigate(invoiceWizardPath(group.primary_lot_id, group.ship_qty))
                   : navigate(`/sales-invoices/${inv.invoice_id}`)
               }
             >
-              {!inv.printed || inv.invoice_status === 'draft'
-                ? 'Open invoice wizard'
+              {!inv.printed || !inv.packing_slip_printed || inv.invoice_status === 'draft'
+                ? 'Continue wizard'
                 : 'View invoice'}
             </button>
           )}
@@ -475,7 +489,7 @@ export default function ReadyForDispatchPage() {
               disabled={busy}
               onClick={() => requestShortfallApproval(primary, group)}
             >
-              {busy ? 'Submitting…' : 'Request approval'}
+              {busy ? 'Submitting…' : 'Request override'}
             </button>
           ) : null}
           <button
@@ -498,7 +512,7 @@ export default function ReadyForDispatchPage() {
       <PageHeader
         eyebrow="Shop floor"
         title="Ready for Dispatch"
-        subtitle="Invoice must be issued and confirmed printed before a lot can ship. Same-component lots on one delivery schedule are grouped for merge & dispatch, even when combined qty is still short."
+        subtitle="Dispatch only when parked RFD qty meets the delivery schedule (or override is approved). Use the invoice wizard to issue, print the invoice, print the packing slip, then dispatch. Same-component lots on one schedule are grouped for merge & dispatch."
         actions={
           <>
             <button

@@ -12,6 +12,7 @@ const {
   sendPurchaseOrder,
   markPurchaseOrderPaid,
   markPurchaseOrderDelivered,
+  recordPurchaseOrderAdvance,
   storePurchaseOrderPdf,
   buildDemandSummary,
   cancelPurchaseOrder,
@@ -19,6 +20,8 @@ const {
   linkInvoiceToPo,
   buildGirnDraftFromPo,
 } = require('../services/purchaseOrderEngine');
+const { isTallyEnabled } = require('../services/tallyClient');
+const { fetchBankLedgersFromTally } = require('../services/tallyBankLedgers');
 const { loadCommercialSourcesForRecords } = require('../services/masterFieldEngine');
 const {
   runThreeWayMatch,
@@ -95,6 +98,27 @@ router.get(
     const masterSlug = req.query.master_slug === 'tool' ? 'tool' : 'raw-material';
     const sources = await loadCommercialSourcesForRecords(ids, masterSlug);
     return res.json({ sources });
+  })
+);
+
+router.get(
+  '/tally/bank-ledgers',
+  wrap(async (req, res) => {
+    if (!isTallyEnabled()) {
+      return res.json({ bank_ledgers: [], tally_enabled: false });
+    }
+    try {
+      const bank_ledgers = await fetchBankLedgersFromTally({
+        force: req.query.refresh === '1',
+      });
+      return res.json({ bank_ledgers, tally_enabled: true });
+    } catch (err) {
+      return res.status(err.code === 'TALLY_UNREACHABLE' ? 503 : 502).json({
+        error: err.message || 'Unable to load bank ledgers from Tally',
+        bank_ledgers: [],
+        tally_enabled: true,
+      });
+    }
   })
 );
 
@@ -195,6 +219,22 @@ router.post(
     }
     const purchase_order = await markPurchaseOrderPaid(req.params.id, req.user?.sub);
     return res.json({ purchase_order });
+  })
+);
+
+router.post(
+  '/:id/advance',
+  requireAdminOrSupervisor,
+  wrap(async (req, res) => {
+    const purchase_order = await recordPurchaseOrderAdvance(
+      req.params.id,
+      req.user?.sub,
+      req.body || {}
+    );
+    return res.json({
+      purchase_order,
+      tally_enabled: isTallyEnabled(),
+    });
   })
 );
 

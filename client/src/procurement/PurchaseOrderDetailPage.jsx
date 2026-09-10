@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { pdf } from '@react-pdf/renderer';
 import api from '../api/client';
-import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
+import { appAlert, appConfirm, appForm } from '../components/dialog';
+import { formatDisplayDate, formatDisplayDateTime, toISODateString } from '../utils/dateFormat';
 import { PageHeader, StatusBadge, AlertBanner, ProgressRing } from '../components/mes';
-import { appAlert, appConfirm } from '../components/dialog';
 import InvoicePdfViewer from '../components/Invoices/InvoicePdfViewer';
 import PurchaseOrderPdfDocument from './PurchaseOrderPdfDocument';
 import {
@@ -142,6 +142,90 @@ export default function PurchaseOrderDetailPage() {
     }
   }
 
+  async function handleRecordAdvance() {
+    if (!po) return;
+    if (Number(po.advance_amount) > 0 && po.tally_advance_sync_status === 'synced') {
+      await appAlert('Advance already recorded for this PO.');
+      return;
+    }
+
+    let bankOptions = [];
+    let tallyOn = false;
+    try {
+      const { data } = await api.get('/purchase-orders/tally/bank-ledgers');
+      tallyOn = Boolean(data.tally_enabled);
+      bankOptions = data.bank_ledgers || [];
+      if (tallyOn && !bankOptions.length) {
+        await appAlert(
+          data.error || 'No bank ledgers found in Tally under Bank Accounts / Bank OD A/c.'
+        );
+        return;
+      }
+    } catch (err) {
+      await appAlert(err.response?.data?.error || 'Unable to load bank ledgers from Tally');
+      return;
+    }
+
+    if (tallyOn) {
+      const ledgerName = String(po.supplier?.ledger_name || po.supplier_ledger_name || '').trim();
+      if (!ledgerName) {
+        await appAlert('Set ledger name on the supplier before recording an advance.');
+        return;
+      }
+    }
+
+    const fields = [
+      {
+        name: 'advance_amount',
+        label: 'Advance amount (₹)',
+        type: 'number',
+        required: true,
+        defaultValue: po.advance_amount > 0 ? String(po.advance_amount) : '',
+      },
+      {
+        name: 'paid_at',
+        label: 'Payment date',
+        type: 'date',
+        required: true,
+        defaultValue: toISODateString(new Date()),
+      },
+      {
+        name: 'reference',
+        label: 'Reference (UTR / cheque)',
+        type: 'text',
+        required: true,
+      },
+    ];
+    if (tallyOn) {
+      fields.push({
+        name: 'bank_ledger',
+        label: 'Bank ledger',
+        type: 'select',
+        required: true,
+        options: bankOptions,
+        placeholder: 'Select bank…',
+      });
+    }
+
+    const values = await appForm({
+      title: 'Record PO advance',
+      message: `Supplier: ${po.supplier_name || '—'} · PO total ₹${formatInr(po.total_amount)}`,
+      confirmLabel: 'Record advance',
+      fields,
+    });
+    if (values == null) return;
+
+    await runAction('Record advance', async () => {
+      const { data } = await api.post(`/purchase-orders/${id}/advance`, {
+        advance_amount: Number(values.advance_amount),
+        paid_at: values.paid_at,
+        reference: values.reference,
+        bank_ledger: values.bank_ledger || undefined,
+      });
+      if (data.purchase_order) setPo(data.purchase_order);
+    });
+  }
+
   async function handlePrint() {
     if (!po) return;
     setBusy(true);
@@ -251,6 +335,17 @@ export default function PurchaseOrderDetailPage() {
                 Mark delivered
               </button>
             ) : null}
+            {po.status !== 'cancelled' && po.status !== 'paid' ? (
+              <button
+                type="button"
+                className="neutral-button"
+                disabled={busy || (Number(po.advance_amount) > 0 && po.tally_advance_sync_status === 'synced')}
+                onClick={handleRecordAdvance}
+              >
+                <Banknote size={16} />
+                {Number(po.advance_amount) > 0 ? 'Update advance' : 'Record advance'}
+              </button>
+            ) : null}
             {isDue || isDelivered ? (
               <button
                 type="button"
@@ -320,6 +415,15 @@ export default function PurchaseOrderDetailPage() {
           <div>
             <span className="muted">Total</span>
             <div>{formatInr(po.total_amount)}</div>
+          </div>
+          <div>
+            <span className="muted">Advance paid</span>
+            <div>
+              {Number(po.advance_amount) > 0 ? formatInr(po.advance_amount) : '—'}
+              {po.tally_advance_sync_status
+                ? ` · ${String(po.tally_advance_sync_status).toUpperCase()}`
+                : ''}
+            </div>
           </div>
           <div>
             <span className="muted">Expected delivery</span>
