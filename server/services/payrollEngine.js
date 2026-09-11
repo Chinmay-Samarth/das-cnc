@@ -21,6 +21,8 @@ const supabase = createClient(
 );
 
 const PRESENT_FAMILY = new Set(['PRESENT', 'COMPLETED', 'LATE', 'HALF_DAY']);
+/** A full working day is 8.5 hours; anything beyond it on the same day is overtime. */
+const FULL_DAY_MINUTES = 8.5 * 60;
 const EDITABLE_INPUT_KEYS = [
   'days_worked',
   'paid_leave',
@@ -235,12 +237,24 @@ function countDaysWorked(records) {
   return presentDates.size;
 }
 
+/**
+ * Overtime = minutes worked beyond 8.5 hours on a single calendar day.
+ * Recomputed from minutes_worked because stored overtime_minutes on older rows
+ * was measured against the shift duration instead of the 8.5 hour day.
+ */
 function sumOvertimeHours(records) {
-  let minutes = 0;
+  const minutesByDate = new Map();
   for (const r of records || []) {
-    minutes += toNumber(r.overtime_minutes, 0);
+    const date = String(r.shift_date || '').slice(0, 10);
+    if (!date) continue;
+    minutesByDate.set(date, (minutesByDate.get(date) || 0) + toNumber(r.minutes_worked, 0));
   }
-  return Math.round((minutes / 60) * 10) / 10;
+
+  let overtimeMinutes = 0;
+  for (const dayMinutes of minutesByDate.values()) {
+    overtimeMinutes += Math.max(0, dayMinutes - FULL_DAY_MINUTES);
+  }
+  return Math.round((overtimeMinutes / 60) * 10) / 10;
 }
 
 function overlapDaysInclusive(aStart, aEnd, bStart, bEnd) {
@@ -266,7 +280,7 @@ async function loadAttendanceByEmployee(employeeIds, start, end) {
       const to = from + pageSize - 1;
       const { data, error } = await supabase
         .from('attendance_records')
-        .select('employee_id, shift_date, status, overtime_minutes')
+        .select('employee_id, shift_date, status, minutes_worked')
         .in('employee_id', chunk)
         .gte('shift_date', start)
         .lte('shift_date', end)
@@ -400,8 +414,47 @@ async function listLinesForRun(runId) {
 
 async function getPayroll(year, month) {
   const { run, bounds } = await getOrCreateRun(year, month);
-  const lines = await listLinesForRun(run.id);
+  let lines = await listLinesForRun(run.id);
+  // Draft months always show live OT from attendance so hours appear without a
+  // separate Refresh after the overtime rule changed.
+  if (run.status !== 'locked' && lines.length) {
+    lines = await attachLiveOvertimeHours(lines, bounds);
+  }
   return { run, lines, bounds };
+}
+
+/**
+ * Fill overtime_hours / rate / pay from attendance for each payroll line,
+ * keyed strictly by employee_id. Manual overrides are left alone.
+ */
+async function attachLiveOvertimeHours(lines, bounds) {
+  const employeeIds = [...new Set(lines.map((l) => l.employee_id).filter(Boolean))];
+  const attendanceMap = await loadAttendanceByEmployee(
+    employeeIds,
+    bounds.start,
+    bounds.end
+  );
+
+  return lines.map((line) => {
+    const overrides = parseOverrides(line.manual_overrides);
+    const next = { ...line };
+
+    if (!overrides.includes('overtime_hours')) {
+      next.overtime_hours = sumOvertimeHours(attendanceMap[line.employee_id]);
+    }
+
+    if (!overrides.includes('overtime_hourly_rate')) {
+      const fromBasic = overtimeHourlyRateFromBasic(next.basic);
+      if (fromBasic > 0) next.overtime_hourly_rate = fromBasic;
+    }
+
+    if (!overrides.includes('overtime_pay')) {
+      next.overtime_pay =
+        toNumber(next.overtime_hours, 0) * toNumber(next.overtime_hourly_rate, 0);
+    }
+
+    return next;
+  });
 }
 
 async function generatePayroll(year, month, { preserveOverrides = true } = {}) {

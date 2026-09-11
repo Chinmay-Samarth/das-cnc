@@ -19,6 +19,8 @@ const supabase = createClient(
 
 const LATE_GRACE_MINUTES = 10;
 const HALF_DAY_THRESHOLD_MINUTES = 240;
+/** Overtime starts past 8.5 hours worked in a day, regardless of shift duration. */
+const FULL_DAY_MINUTES = 8.5 * 60;
 const PRE_SHIFT_GRACE_MINUTES = 90;
 const POST_SHIFT_GRACE_MINUTES = 240;
 /** Day shifts often punch out after Men/Women DB end — allow outs until 22:00. */
@@ -596,7 +598,7 @@ async function applyCheckOut({ employee, shift, shift_date, punchTime, biometric
 
   const minutesWorked = Math.max(0, rawMinutes - breakMinutes);
   const expectedMinutes = Number(shift.duration_hours || 0) * 60;
-  const overtimeMinutes = Math.max(0, minutesWorked - expectedMinutes);
+  const overtimeMinutes = Math.max(0, minutesWorked - FULL_DAY_MINUTES);
   const earlyMinutes = Math.max(0, expectedMinutes - minutesWorked);
 
   let status;
