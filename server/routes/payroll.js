@@ -70,7 +70,13 @@ router.get(
   wrap(async (_req, res) => {
     const versions = await listFormulaVersions();
     const current = await getLatestFormulaVersion();
-    res.json({ versions, current, defaults: DEFAULT_FORMULAS });
+    const mergedCurrent = current
+      ? {
+          ...current,
+          formulas: { ...DEFAULT_FORMULAS, ...(current.formulas || {}) },
+        }
+      : null;
+    res.json({ versions, current: mergedCurrent, defaults: DEFAULT_FORMULAS });
   })
 );
 

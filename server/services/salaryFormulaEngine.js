@@ -8,6 +8,7 @@ const INPUT_KEYS = [
   'days_worked',
   'paid_leave',
   'earned_leave',
+  'overtime_hours',
   'basic',
   'incentive_paid',
   'production_allowance',
@@ -16,7 +17,9 @@ const INPUT_KEYS = [
 const OUTPUT_KEYS = [
   'basic_earned',
   'allowance',
+  'inc_plus_prod_all',
   'allowance_plus_pa',
+  'overtime_pay',
   'total_earned',
   'esi',
   'pf',
@@ -31,8 +34,11 @@ const DEFAULT_FORMULAS = {
   basic_earned:
     'IF(basic > 0, basic / wage_period * (days_worked + paid_leave + earned_leave), 0)',
   allowance: 'basic_earned * 0.15',
+  inc_plus_prod_all: 'incentive_paid + production_allowance',
   allowance_plus_pa: 'allowance + production_allowance',
-  total_earned: 'basic_earned + allowance + production_allowance + incentive_paid',
+  overtime_pay: '0',
+  total_earned:
+    'basic_earned + allowance + production_allowance + incentive_paid + overtime_pay',
   esi: 'total_earned * 0.75 / 100',
   pf: 'IF((basic_earned + allowance) <= 15000, (basic_earned + allowance) * 0.12, 15000 * 0.12)',
   pt: 'IF(total_earned > 25000, 200, 0)',
@@ -261,8 +267,12 @@ function normalizeFormulas(formulas) {
   return merged;
 }
 
-function computeLine(inputs, formulas) {
+function computeLine(inputs, formulas, options = {}) {
   const normalized = normalizeFormulas(formulas);
+  const overrideSet = new Set(
+    Array.isArray(options.overrides) ? options.overrides : []
+  );
+  const overrideValues = options.values || inputs || {};
   const vars = {};
   for (const key of INPUT_KEYS) {
     vars[key] = toNumber(inputs[key], 0);
@@ -276,7 +286,9 @@ function computeLine(inputs, formulas) {
   for (const key of COMPUTE_ORDER) {
     let value = 0;
     try {
-      if (key === 'basic_earned' && vars.wage_period <= 0) {
+      if (overrideSet.has(key)) {
+        value = toNumber(overrideValues[key], 0);
+      } else if (key === 'basic_earned' && vars.wage_period <= 0) {
         value = 0;
       } else {
         value = evaluateFormula(normalized[key], vars);

@@ -14,18 +14,41 @@ import {
 } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 
-const EDITABLE_KEYS = [
+const ATTENDANCE_EDITABLE_KEYS = [
   'days_worked',
   'paid_leave',
   'earned_leave',
-  'incentive_paid',
-  'production_allowance',
+  'overtime_hours',
+];
+
+const SALARY_COLUMNS = [
+  { key: 'basic', label: 'Basic', title: 'Basic salary' },
+  { key: 'basic_earned', label: 'Basic Earned', title: 'Basic earned' },
+  { key: 'allowance', label: 'Allowance', title: 'Allowance' },
+  { key: 'incentive_paid', label: 'Incentive Paid', title: 'Incentive paid' },
+  { key: 'production_allowance', label: 'Production Allowance', title: 'Production allowance' },
+  { key: 'inc_plus_prod_all', label: 'Inc+ Prod All', title: 'Incentive + Production Allowance' },
+  { key: 'allowance_plus_pa', label: 'Allowance + Production Allowance', title: 'Allowance + Production Allowance' },
+  { key: 'overtime_pay', label: 'Overtime Pay', title: 'Overtime pay' },
+  { key: 'total_earned', label: 'Total Earned', title: 'Total earned' },
+  { key: 'esi', label: 'ESI', title: 'ESI' },
+  { key: 'pf', label: 'PF', title: 'PF' },
+  { key: 'pt', label: 'PT', title: 'PT' },
+  { key: 'total_deductions', label: 'Total', title: 'Total deductions' },
+  { key: 'net_paid', label: 'Net Paid', title: 'Net paid' },
+];
+
+const EDITABLE_KEYS = [
+  ...ATTENDANCE_EDITABLE_KEYS,
+  ...SALARY_COLUMNS.map((col) => col.key),
 ];
 
 const FORMULA_KEYS = [
   'basic_earned',
   'allowance',
+  'inc_plus_prod_all',
   'allowance_plus_pa',
+  'overtime_pay',
   'total_earned',
   'esi',
   'pf',
@@ -37,14 +60,27 @@ const FORMULA_KEYS = [
 const FORMULA_LABELS = {
   basic_earned: 'Basic Earned',
   allowance: 'Allowance',
+  inc_plus_prod_all: 'Inc+ Prod All',
   allowance_plus_pa: 'Allowance + Production Allowance',
+  overtime_pay: 'Overtime Pay',
   total_earned: 'Total Earned',
   esi: 'ESI',
   pf: 'PF',
   pt: 'PT',
-  total_deductions: 'Total deductions',
+  total_deductions: 'Total',
   net_paid: 'Net Paid',
 };
+
+function formulaFieldLabel(key) {
+  if (FORMULA_LABELS[key]) return FORMULA_LABELS[key];
+  return String(key || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function overrideList(line) {
+  return Array.isArray(line?.manual_overrides) ? line.manual_overrides : [];
+}
 
 function currentYm() {
   const now = new Date();
@@ -318,7 +354,10 @@ export default function PayrollPage() {
     try {
       const { data } = await api.get('/payroll/formulas');
       setFormulaVersions(data.versions || []);
-      const current = data.current?.formulas || data.defaults || {};
+      const current = {
+        ...(data.defaults || {}),
+        ...(data.current?.formulas || {}),
+      };
       setFormulaDraft({ ...current });
       setFormulaLabel(`Version ${(data.current?.version_number || 0) + 1}`);
     } catch (err) {
@@ -369,11 +408,16 @@ export default function PayrollPage() {
     return [y - 1, y, y + 1];
   }, []);
 
+  const formulaKeyList = useMemo(() => {
+    const extra = Object.keys(formulaDraft || {}).filter((key) => !FORMULA_KEYS.includes(key));
+    return [...FORMULA_KEYS, ...extra];
+  }, [formulaDraft]);
+
   return (
     <ListPage
       eyebrow="People"
       title="Payroll"
-      subtitle="Monthly variable commercials — days worked, paid leave, and salary components."
+      subtitle="Excel salary sheet from Basic through Net Paid. Edit any cell; formulas fill the rest."
       error={error}
       actions={
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -430,7 +474,7 @@ export default function PayrollPage() {
         <EmptyState
           icon={Banknote}
           title="No payroll lines yet"
-          description={`Generate payroll for ${monthLabel(year, month)} to pull days worked, paid leave, and basic salary.`}
+          description={`Generate payroll for ${monthLabel(year, month)} to pull days worked, paid leave, and salary from Basic through Net Paid.`}
         />
       ) : null}
 
@@ -462,41 +506,50 @@ export default function PayrollPage() {
               <tr>
                 <th className="payroll-col-sticky payroll-col-code" title="Employee code">Code</th>
                 <th className="payroll-col-sticky payroll-col-name" title="Employee name">Name</th>
-                <th title="Wage period (days in month)">Wage</th>
-                <th title="Days worked">Days</th>
-                <th title="Paid leave">PL</th>
-                <th title="Earned leave">EL</th>
-                <th title="Basic salary">Basic</th>
-                <th title="Basic earned">Basic E.</th>
-                <th title="Allowance">Allow.</th>
-                <th title="Incentive paid">Inc.</th>
-                <th title="Production allowance">PA</th>
-                <th title="Total earned">Total</th>
-                <th title="ESI">ESI</th>
-                <th title="PF">PF</th>
-                <th title="PT">PT</th>
-                <th title="Total deductions">Ded.</th>
-                <th title="Net paid">Net</th>
+                <th title="Wage period (days in month)">Wage Period</th>
+                <th title="Days worked">Days Worked</th>
+                <th title="Paid leave">Paid Leave</th>
+                <th title="Earned leave">Earned Leave</th>
+                <th title="Total overtime hours from attendance">Total Overtime (hrs)</th>
+                {SALARY_COLUMNS.map((col) => (
+                  <th
+                    key={col.key}
+                    title={col.title}
+                    className={col.key === 'allowance_plus_pa' ? 'payroll-col-wide' : undefined}
+                  >
+                    {col.label}
+                  </th>
+                ))}
                 {!locked ? <th className="payroll-col-action" /> : null}
               </tr>
             </thead>
             <tbody>
               {lines.map((line) => {
                 const dirty = Boolean(drafts[line.id] && Object.keys(drafts[line.id]).length);
-                const renderInput = (key) =>
-                  locked ? (
-                    formatNum(line[key])
-                  ) : (
+                const overrides = overrideList(line);
+                const renderInput = (key, { money = false, net = false } = {}) => {
+                  const overridden = overrides.includes(key);
+                  if (locked) {
+                    const text = money ? formatInr(line[key]) : formatNum(line[key]);
+                    return (
+                      <span className={net ? 'payroll-net' : undefined} title={overridden ? 'Manual override' : undefined}>
+                        {text}
+                      </span>
+                    );
+                  }
+                  return (
                     <input
                       type="number"
                       step="any"
-                      className="payroll-input"
+                      className={`payroll-input${money ? ' payroll-input-money' : ''}${overridden ? ' is-override' : ''}${net ? ' payroll-input-net' : ''}`}
                       value={cellValue(line, key)}
                       disabled={busy}
                       onChange={(e) => setDraftValue(line.id, key, e.target.value)}
                       aria-label={key}
+                      title={overridden ? 'Manual override — save to keep this value' : undefined}
                     />
                   );
+                };
                 return (
                   <tr key={line.id} className={dirty ? 'is-dirty' : undefined}>
                     <td className="payroll-col-sticky payroll-col-code">{line.employee_code || '—'}</td>
@@ -507,17 +560,15 @@ export default function PayrollPage() {
                     <td className="payroll-num">{renderInput('days_worked')}</td>
                     <td className="payroll-num">{renderInput('paid_leave')}</td>
                     <td className="payroll-num">{renderInput('earned_leave')}</td>
-                    <td className="payroll-money">{formatInr(line.basic)}</td>
-                    <td className="payroll-money">{formatInr(line.basic_earned)}</td>
-                    <td className="payroll-money">{formatInr(line.allowance)}</td>
-                    <td className="payroll-num">{renderInput('incentive_paid')}</td>
-                    <td className="payroll-num">{renderInput('production_allowance')}</td>
-                    <td className="payroll-money">{formatInr(line.total_earned)}</td>
-                    <td className="payroll-money">{formatInr(line.esi)}</td>
-                    <td className="payroll-money">{formatInr(line.pf)}</td>
-                    <td className="payroll-money">{formatInr(line.pt)}</td>
-                    <td className="payroll-money">{formatInr(line.total_deductions)}</td>
-                    <td className="payroll-money payroll-net">{formatInr(line.net_paid)}</td>
+                    <td className="payroll-num">{renderInput('overtime_hours')}</td>
+                    {SALARY_COLUMNS.map((col) => (
+                      <td
+                        key={col.key}
+                        className={`payroll-money${col.key === 'net_paid' ? ' payroll-net' : ''}`}
+                      >
+                        {renderInput(col.key, { money: true, net: col.key === 'net_paid' })}
+                      </td>
+                    ))}
                     {!locked ? (
                       <td className="payroll-col-action">
                         {dirty ? (
@@ -559,7 +610,7 @@ export default function PayrollPage() {
           <div
             className="mes-card"
             style={{
-              width: 'min(720px, 100%)',
+              width: 'min(840px, 100%)',
               maxHeight: '90vh',
               overflow: 'auto',
               padding: 20,
@@ -571,7 +622,10 @@ export default function PayrollPage() {
               <div>
                 <h2 style={{ margin: 0, fontSize: 18 }}>Salary formulas</h2>
                 <p className="muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
-                  Saving creates a new version. Locked months keep prior formulas.
+                  Every salary formula from Basic Earned through Net Paid is listed here, including Overtime
+                  Pay. Use overtime_hours from attendance in that formula (for example overtime_hours * basic /
+                  wage_period / 8). Saving creates a new version. Locked months keep prior formulas. New keys
+                  from the engine appear automatically.
                 </p>
               </div>
               <button type="button" className="mes-btn mes-btn-secondary" onClick={() => setShowFormulas(false)}>
@@ -605,9 +659,12 @@ export default function PayrollPage() {
             </label>
 
             <div style={{ display: 'grid', gap: 10 }}>
-              {FORMULA_KEYS.map((key) => (
+              {formulaKeyList.map((key) => (
                 <label key={key} style={{ display: 'block', margin: 0 }}>
-                  {FORMULA_LABELS[key] || key}
+                  {formulaFieldLabel(key)}
+                  <span className="muted" style={{ marginLeft: 8, fontSize: 12, fontFamily: 'ui-monospace, monospace' }}>
+                    {key}
+                  </span>
                   <input
                     type="text"
                     value={formulaDraft[key] || ''}

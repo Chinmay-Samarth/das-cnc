@@ -24,10 +24,16 @@ const EDITABLE_INPUT_KEYS = [
   'days_worked',
   'paid_leave',
   'earned_leave',
+  'overtime_hours',
   'incentive_paid',
   'production_allowance',
   'basic',
 ];
+
+const OPTIONAL_LINE_COLUMNS = ['inc_plus_prod_all', 'overtime_hours', 'overtime_pay'];
+
+const EDITABLE_OUTPUT_KEYS = [...OUTPUT_KEYS];
+const EDITABLE_LINE_KEYS = [...EDITABLE_INPUT_KEYS, ...EDITABLE_OUTPUT_KEYS];
 
 function httpError(message, status = 400) {
   const err = new Error(message);
@@ -49,6 +55,50 @@ function monthBounds(year, month) {
   const endDay = daysInMonth(y, m);
   const end = `${y}-${String(m).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
   return { year: y, month: m, start, end, wagePeriod: endDay };
+}
+
+function hydratePayrollLine(row) {
+  if (!row) return row;
+  const snapshotIn = row.computed_snapshot?.inputs || {};
+  const snapshotOut = row.computed_snapshot?.outputs || {};
+  if (row.inc_plus_prod_all == null) {
+    row.inc_plus_prod_all = toNumber(
+      snapshotOut.inc_plus_prod_all,
+      toNumber(row.incentive_paid) + toNumber(row.production_allowance)
+    );
+  }
+  if (row.overtime_hours == null) {
+    row.overtime_hours = toNumber(snapshotIn.overtime_hours, 0);
+  }
+  if (row.overtime_pay == null) {
+    row.overtime_pay = toNumber(snapshotOut.overtime_pay, 0);
+  }
+  return row;
+}
+
+function stripUnknownColumn(payload, column) {
+  if (Array.isArray(payload)) {
+    return payload.map((row) => {
+      const next = { ...row };
+      delete next[column];
+      return next;
+    });
+  }
+  const next = { ...payload };
+  delete next[column];
+  return next;
+}
+
+function isMissingColumnError(error, column) {
+  const msg = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
+  return error?.code === 'PGRST204' || error?.code === '42703' || msg.includes(column);
+}
+
+function missingOptionalColumn(error, payload) {
+  const keys = Array.isArray(payload)
+    ? OPTIONAL_LINE_COLUMNS.filter((col) => payload.some((row) => row && col in row))
+    : OPTIONAL_LINE_COLUMNS.filter((col) => payload && col in payload);
+  return keys.find((col) => isMissingColumnError(error, col)) || null;
 }
 
 function parseOverrides(raw) {
@@ -165,6 +215,14 @@ function countDaysWorked(records) {
   return presentDates.size;
 }
 
+function sumOvertimeHours(records) {
+  let minutes = 0;
+  for (const r of records || []) {
+    minutes += toNumber(r.overtime_minutes, 0);
+  }
+  return Math.round((minutes / 60) * 10) / 10;
+}
+
 function overlapDaysInclusive(aStart, aEnd, bStart, bEnd) {
   const start = aStart > bStart ? aStart : bStart;
   const end = aEnd < bEnd ? aEnd : bEnd;
@@ -188,7 +246,7 @@ async function loadAttendanceByEmployee(employeeIds, start, end) {
       const to = from + pageSize - 1;
       const { data, error } = await supabase
         .from('attendance_records')
-        .select('employee_id, shift_date, status')
+        .select('employee_id, shift_date, status, overtime_minutes')
         .in('employee_id', chunk)
         .gte('shift_date', start)
         .lte('shift_date', end)
@@ -266,12 +324,15 @@ function buildLinePayload({
     days_worked: toNumber(inputs.days_worked),
     paid_leave: toNumber(inputs.paid_leave),
     earned_leave: toNumber(inputs.earned_leave),
+    overtime_hours: toNumber(inputs.overtime_hours),
     basic: toNumber(inputs.basic),
     incentive_paid: toNumber(inputs.incentive_paid),
     production_allowance: toNumber(inputs.production_allowance),
     basic_earned: toNumber(outputs.basic_earned),
     allowance: toNumber(outputs.allowance),
+    inc_plus_prod_all: toNumber(outputs.inc_plus_prod_all),
     allowance_plus_pa: toNumber(outputs.allowance_plus_pa),
+    overtime_pay: toNumber(outputs.overtime_pay),
     total_earned: toNumber(outputs.total_earned),
     esi: toNumber(outputs.esi),
     pf: toNumber(outputs.pf),
@@ -300,18 +361,20 @@ async function listLinesForRun(runId) {
     .order('created_at', { ascending: true });
   if (error) throw error;
 
-  return (data || []).map((row) => ({
-    ...row,
-    employee_name: row.employee?.full_name || null,
-    employee_code: row.employee?.employee_code || null,
-    employee_active: row.employee?.is_active ?? null,
-    bank_name: row.employee?.bank_name || null,
-    bank_account_number: row.employee?.bank_account_number || null,
-    ifsc: row.employee?.ifsc || null,
-    account_type: row.employee?.account_type || null,
-    ESI_no: row.employee?.ESI_no || null,
-    employee: undefined,
-  }));
+  return (data || []).map((row) =>
+    hydratePayrollLine({
+      ...row,
+      employee_name: row.employee?.full_name || null,
+      employee_code: row.employee?.employee_code || null,
+      employee_active: row.employee?.is_active ?? null,
+      bank_name: row.employee?.bank_name || null,
+      bank_account_number: row.employee?.bank_account_number || null,
+      ifsc: row.employee?.ifsc || null,
+      account_type: row.employee?.account_type || null,
+      ESI_no: row.employee?.ESI_no || null,
+      employee: undefined,
+    })
+  );
 }
 
 async function getPayroll(year, month) {
@@ -366,6 +429,7 @@ async function generatePayroll(year, month, { preserveOverrides = true } = {}) {
     const autoDays = countDaysWorked(attendanceMap[emp.id]);
     const autoPaidLeave = paidLeaveMap[emp.id] || 0;
     const autoBasic = toNumber(emp.basic_salary, 0);
+    const autoOvertimeHours = sumOvertimeHours(attendanceMap[emp.id]);
 
     const inputs = {
       wage_period: bounds.wagePeriod,
@@ -378,6 +442,9 @@ async function generatePayroll(year, month, { preserveOverrides = true } = {}) {
       earned_leave: overrides.includes('earned_leave')
         ? toNumber(existing?.earned_leave, 0)
         : toNumber(existing?.earned_leave, 0),
+      overtime_hours: overrides.includes('overtime_hours')
+        ? toNumber(existing?.overtime_hours, 0)
+        : autoOvertimeHours,
       basic: overrides.includes('basic') ? toNumber(existing.basic) : autoBasic,
       incentive_paid: overrides.includes('incentive_paid')
         ? toNumber(existing?.incentive_paid, 0)
@@ -390,7 +457,16 @@ async function generatePayroll(year, month, { preserveOverrides = true } = {}) {
     // Always refresh wage_period for the month
     inputs.wage_period = bounds.wagePeriod;
 
-    const { outputs } = computeLine(inputs, formulas);
+    const overrideValues = {};
+    for (const key of OUTPUT_KEYS) {
+      if (overrides.includes(key)) {
+        overrideValues[key] = toNumber(existing?.[key], 0);
+      }
+    }
+    const { outputs } = computeLine(inputs, formulas, {
+      overrides,
+      values: overrideValues,
+    });
     const payload = buildLinePayload({
       runId: run.id,
       employeeId: emp.id,
@@ -409,10 +485,22 @@ async function generatePayroll(year, month, { preserveOverrides = true } = {}) {
   }
 
   if (upserts.length) {
-    const { error: upErr } = await supabase
-      .from('salary_payroll_lines')
-      .upsert(upserts, { onConflict: 'run_id,employee_id' });
-    if (upErr) throw upErr;
+    let rows = upserts;
+    let lastErr = null;
+    for (let attempt = 0; attempt <= OPTIONAL_LINE_COLUMNS.length; attempt++) {
+      const { error: upErr } = await supabase
+        .from('salary_payroll_lines')
+        .upsert(rows, { onConflict: 'run_id,employee_id' });
+      if (!upErr) {
+        lastErr = null;
+        break;
+      }
+      lastErr = upErr;
+      const missing = missingOptionalColumn(upErr, rows);
+      if (!missing) break;
+      rows = stripUnknownColumn(rows, missing);
+    }
+    if (lastErr) throw lastErr;
   }
 
   await supabase
@@ -426,13 +514,14 @@ async function generatePayroll(year, month, { preserveOverrides = true } = {}) {
 async function updatePayrollLine(lineId, patch, userId) {
   if (!isValidUUID(lineId)) throw httpError('Invalid line id');
 
-  const { data: line, error } = await supabase
+  const { data: lineRaw, error } = await supabase
     .from('salary_payroll_lines')
     .select('*, run:salary_payroll_runs(*)')
     .eq('id', lineId)
     .maybeSingle();
   if (error) throw error;
-  if (!line) throw httpError('Payroll line not found', 404);
+  if (!lineRaw) throw httpError('Payroll line not found', 404);
+  const line = hydratePayrollLine(lineRaw);
   if (line.run?.status === 'locked') {
     throw httpError('Payroll month is locked', 409);
   }
@@ -445,6 +534,7 @@ async function updatePayrollLine(lineId, patch, userId) {
     days_worked: toNumber(line.days_worked),
     paid_leave: toNumber(line.paid_leave),
     earned_leave: toNumber(line.earned_leave),
+    overtime_hours: toNumber(line.overtime_hours),
     basic: toNumber(line.basic),
     incentive_paid: toNumber(line.incentive_paid),
     production_allowance: toNumber(line.production_allowance),
@@ -459,7 +549,19 @@ async function updatePayrollLine(lineId, patch, userId) {
   // wage_period is not manually overridable via patch for safety
   inputs.wage_period = toNumber(line.wage_period);
 
-  const { outputs, formulas } = computeLine(inputs, formulaVersion.formulas);
+  const overrideValues = {};
+  for (const key of OUTPUT_KEYS) {
+    overrideValues[key] = toNumber(line[key], 0);
+    if (patch[key] !== undefined) {
+      overrideValues[key] = toNumber(patch[key], 0);
+      overrides.add(key);
+    }
+  }
+
+  const { outputs, formulas } = computeLine(inputs, formulaVersion.formulas, {
+    overrides: [...overrides],
+    values: overrideValues,
+  });
   const payload = buildLinePayload({
     runId: line.run_id,
     employeeId: line.employee_id,
@@ -470,13 +572,27 @@ async function updatePayrollLine(lineId, patch, userId) {
     formulas,
   });
 
-  const { data: updated, error: uErr } = await supabase
-    .from('salary_payroll_lines')
-    .update(payload)
-    .eq('id', lineId)
-    .select('*')
-    .single();
-  if (uErr) throw uErr;
+  let body = payload;
+  let updated = null;
+  let lastErr = null;
+  for (let attempt = 0; attempt <= OPTIONAL_LINE_COLUMNS.length; attempt++) {
+    const { data, error: uErr } = await supabase
+      .from('salary_payroll_lines')
+      .update(body)
+      .eq('id', lineId)
+      .select('*')
+      .single();
+    if (!uErr) {
+      updated = data;
+      lastErr = null;
+      break;
+    }
+    lastErr = uErr;
+    const missing = missingOptionalColumn(uErr, body);
+    if (!missing) break;
+    body = stripUnknownColumn(body, missing);
+  }
+  if (lastErr) throw lastErr;
 
   await supabase
     .from('salary_payroll_runs')
@@ -484,7 +600,7 @@ async function updatePayrollLine(lineId, patch, userId) {
     .eq('id', line.run_id);
 
   void userId;
-  return updated;
+  return hydratePayrollLine(updated);
 }
 
 async function lockPayroll(year, month, lockedBy) {
@@ -523,7 +639,7 @@ async function getEmployeePayroll(employeeId, year, month) {
     .eq('employee_id', employeeId)
     .maybeSingle();
   if (error) throw error;
-  return { run, line, bounds };
+  return { run, line: hydratePayrollLine(line), bounds };
 }
 
 async function exportPayrollWorkbook(year, month) {
@@ -542,12 +658,15 @@ async function exportPayrollWorkbook(year, month) {
     { header: 'Days Worked', key: 'days_worked', width: 12 },
     { header: 'Paid Leave', key: 'paid_leave', width: 12 },
     { header: 'Earned Leave', key: 'earned_leave', width: 12 },
+    { header: 'Total Overtime (hrs)', key: 'overtime_hours', width: 16 },
     { header: 'Basic', key: 'basic', width: 12 },
     { header: 'Basic Earned', key: 'basic_earned', width: 14 },
     { header: 'Allowance', key: 'allowance', width: 12 },
     { header: 'Incentive Paid', key: 'incentive_paid', width: 14 },
     { header: 'Production Allowance', key: 'production_allowance', width: 18 },
+    { header: 'Inc+ Prod All', key: 'inc_plus_prod_all', width: 14 },
     { header: 'Allowance + Production Allowance', key: 'allowance_plus_pa', width: 22 },
+    { header: 'Overtime Pay', key: 'overtime_pay', width: 14 },
     { header: 'Total Earned', key: 'total_earned', width: 14 },
     { header: 'ESI', key: 'esi', width: 12 },
     { header: 'PF', key: 'pf', width: 12 },
@@ -565,12 +684,15 @@ async function exportPayrollWorkbook(year, month) {
       days_worked: Number(line.days_worked),
       paid_leave: Number(line.paid_leave),
       earned_leave: Number(line.earned_leave),
+      overtime_hours: Number(line.overtime_hours),
       basic: Number(line.basic),
       basic_earned: Number(line.basic_earned),
       allowance: Number(line.allowance),
       incentive_paid: Number(line.incentive_paid),
       production_allowance: Number(line.production_allowance),
+      inc_plus_prod_all: Number(line.inc_plus_prod_all),
       allowance_plus_pa: Number(line.allowance_plus_pa),
+      overtime_pay: Number(line.overtime_pay),
       total_earned: Number(line.total_earned),
       esi: Number(line.esi),
       pf: Number(line.pf),
@@ -589,6 +711,8 @@ module.exports = {
   INPUT_KEYS,
   OUTPUT_KEYS,
   EDITABLE_INPUT_KEYS,
+  EDITABLE_OUTPUT_KEYS,
+  EDITABLE_LINE_KEYS,
   DEFAULT_FORMULAS,
   getPayroll,
   generatePayroll,

@@ -10995,6 +10995,11 @@ button:hover:not(:disabled) {
   padding: 8px 8px;
   border-bottom: 1px solid #e2e8f0;
   box-shadow: 0 1px 0 #e2e8f0;
+  min-width: 100px;
+}
+
+.payroll-col-wide {
+  min-width: 168px;
 }
 
 .payroll-table td {
@@ -11062,6 +11067,20 @@ button:hover:not(:disabled) {
   font-size: 12.5px;
   text-align: right;
   background: #fff;
+}
+
+.payroll-input-money {
+  width: 88px;
+}
+
+.payroll-input.is-override {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.payroll-input-net {
+  font-weight: 700;
+  color: #047857;
 }
 
 .payroll-input:focus {
