@@ -12,6 +12,7 @@ const {
   normalizeFormulas,
   daysInMonth,
   toNumber,
+  overtimeHourlyRateFromBasic,
 } = require('./salaryFormulaEngine');
 
 const supabase = createClient(
@@ -30,7 +31,12 @@ const EDITABLE_INPUT_KEYS = [
   'basic',
 ];
 
-const OPTIONAL_LINE_COLUMNS = ['inc_plus_prod_all', 'overtime_hours', 'overtime_pay'];
+const OPTIONAL_LINE_COLUMNS = [
+  'inc_plus_prod_all',
+  'overtime_hours',
+  'overtime_hourly_rate',
+  'overtime_pay',
+];
 
 const EDITABLE_OUTPUT_KEYS = [...OUTPUT_KEYS];
 const EDITABLE_LINE_KEYS = [...EDITABLE_INPUT_KEYS, ...EDITABLE_OUTPUT_KEYS];
@@ -61,6 +67,7 @@ function hydratePayrollLine(row) {
   if (!row) return row;
   const snapshotIn = row.computed_snapshot?.inputs || {};
   const snapshotOut = row.computed_snapshot?.outputs || {};
+  const overrides = parseOverrides(row.manual_overrides);
   if (row.inc_plus_prod_all == null) {
     row.inc_plus_prod_all = toNumber(
       snapshotOut.inc_plus_prod_all,
@@ -70,7 +77,20 @@ function hydratePayrollLine(row) {
   if (row.overtime_hours == null) {
     row.overtime_hours = toNumber(snapshotIn.overtime_hours, 0);
   }
-  if (row.overtime_pay == null) {
+  if (!overrides.includes('overtime_hourly_rate')) {
+    const fromBasic = overtimeHourlyRateFromBasic(row.basic);
+    if (fromBasic > 0) {
+      row.overtime_hourly_rate = fromBasic;
+    } else if (row.overtime_hourly_rate == null) {
+      row.overtime_hourly_rate = toNumber(snapshotOut.overtime_hourly_rate, 0);
+    }
+  } else if (row.overtime_hourly_rate == null) {
+    row.overtime_hourly_rate = toNumber(snapshotOut.overtime_hourly_rate, 0);
+  }
+  if (!overrides.includes('overtime_pay')) {
+    row.overtime_pay =
+      toNumber(row.overtime_hours, 0) * toNumber(row.overtime_hourly_rate, 0);
+  } else if (row.overtime_pay == null) {
     row.overtime_pay = toNumber(snapshotOut.overtime_pay, 0);
   }
   return row;
@@ -332,6 +352,7 @@ function buildLinePayload({
     allowance: toNumber(outputs.allowance),
     inc_plus_prod_all: toNumber(outputs.inc_plus_prod_all),
     allowance_plus_pa: toNumber(outputs.allowance_plus_pa),
+    overtime_hourly_rate: toNumber(outputs.overtime_hourly_rate),
     overtime_pay: toNumber(outputs.overtime_pay),
     total_earned: toNumber(outputs.total_earned),
     esi: toNumber(outputs.esi),
@@ -666,6 +687,7 @@ async function exportPayrollWorkbook(year, month) {
     { header: 'Production Allowance', key: 'production_allowance', width: 18 },
     { header: 'Inc+ Prod All', key: 'inc_plus_prod_all', width: 14 },
     { header: 'Allowance + Production Allowance', key: 'allowance_plus_pa', width: 22 },
+    { header: 'Overtime Hourly Rate', key: 'overtime_hourly_rate', width: 18 },
     { header: 'Overtime Pay', key: 'overtime_pay', width: 14 },
     { header: 'Total Earned', key: 'total_earned', width: 14 },
     { header: 'ESI', key: 'esi', width: 12 },
@@ -692,6 +714,7 @@ async function exportPayrollWorkbook(year, month) {
       production_allowance: Number(line.production_allowance),
       inc_plus_prod_all: Number(line.inc_plus_prod_all),
       allowance_plus_pa: Number(line.allowance_plus_pa),
+      overtime_hourly_rate: Number(line.overtime_hourly_rate),
       overtime_pay: Number(line.overtime_pay),
       total_earned: Number(line.total_earned),
       esi: Number(line.esi),
@@ -714,6 +737,7 @@ module.exports = {
   EDITABLE_OUTPUT_KEYS,
   EDITABLE_LINE_KEYS,
   DEFAULT_FORMULAS,
+  normalizeFormulas,
   getPayroll,
   generatePayroll,
   updatePayrollLine,

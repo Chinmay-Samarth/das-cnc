@@ -29,7 +29,8 @@ const SALARY_COLUMNS = [
   { key: 'production_allowance', label: 'Production Allowance', title: 'Production allowance' },
   { key: 'inc_plus_prod_all', label: 'Inc+ Prod All', title: 'Incentive + Production Allowance' },
   { key: 'allowance_plus_pa', label: 'Allowance + Production Allowance', title: 'Allowance + Production Allowance' },
-  { key: 'overtime_pay', label: 'Overtime Pay', title: 'Overtime pay' },
+  { key: 'overtime_hourly_rate', label: 'Overtime Hourly Rate', title: '((basic / 30) / 8.5) × 1.5' },
+  { key: 'overtime_pay', label: 'Overtime Pay', title: 'Overtime hours × overtime hourly rate' },
   { key: 'total_earned', label: 'Total Earned', title: 'Total earned' },
   { key: 'esi', label: 'ESI', title: 'ESI' },
   { key: 'pf', label: 'PF', title: 'PF' },
@@ -44,11 +45,12 @@ const EDITABLE_KEYS = [
 ];
 
 const FORMULA_KEYS = [
+  'overtime_hourly_rate',
+  'overtime_pay',
   'basic_earned',
   'allowance',
   'inc_plus_prod_all',
   'allowance_plus_pa',
-  'overtime_pay',
   'total_earned',
   'esi',
   'pf',
@@ -58,11 +60,12 @@ const FORMULA_KEYS = [
 ];
 
 const FORMULA_LABELS = {
+  overtime_hourly_rate: 'Overtime Hourly Rate',
+  overtime_pay: 'Overtime Pay',
   basic_earned: 'Basic Earned',
   allowance: 'Allowance',
   inc_plus_prod_all: 'Inc+ Prod All',
   allowance_plus_pa: 'Allowance + Production Allowance',
-  overtime_pay: 'Overtime Pay',
   total_earned: 'Total Earned',
   esi: 'ESI',
   pf: 'PF',
@@ -80,6 +83,12 @@ function formulaFieldLabel(key) {
 
 function overrideList(line) {
   return Array.isArray(line?.manual_overrides) ? line.manual_overrides : [];
+}
+
+function overtimeHourlyRateFromBasic(basic) {
+  const b = Number(basic);
+  if (!Number.isFinite(b) || b <= 0) return 0;
+  return (b / 30 / 8.5) * 1.5;
 }
 
 function currentYm() {
@@ -244,6 +253,21 @@ export default function PayrollPage() {
   function cellValue(line, key) {
     const draft = drafts[line.id];
     if (draft && draft[key] !== undefined) return draft[key];
+    const overrides = overrideList(line);
+    const basic = draft?.basic !== undefined ? draft.basic : line.basic;
+    const hours = draft?.overtime_hours !== undefined ? draft.overtime_hours : line.overtime_hours;
+    if (key === 'overtime_hourly_rate' && !overrides.includes(key)) {
+      const rate = overtimeHourlyRateFromBasic(basic);
+      if (rate > 0) return rate;
+    }
+    if (key === 'overtime_pay' && !overrides.includes(key)) {
+      const rate =
+        draft?.overtime_hourly_rate !== undefined
+          ? Number(draft.overtime_hourly_rate)
+          : overtimeHourlyRateFromBasic(basic) || Number(line.overtime_hourly_rate) || 0;
+      const otHours = Number(hours) || 0;
+      return otHours * (Number.isFinite(rate) ? rate : 0);
+    }
     return line[key] ?? '';
   }
 
@@ -355,6 +379,10 @@ export default function PayrollPage() {
       const { data } = await api.get('/payroll/formulas');
       setFormulaVersions(data.versions || []);
       const current = {
+        ...FORMULA_KEYS.reduce((acc, key) => {
+          acc[key] = '';
+          return acc;
+        }, {}),
         ...(data.defaults || {}),
         ...(data.current?.formulas || {}),
       };
@@ -622,10 +650,9 @@ export default function PayrollPage() {
               <div>
                 <h2 style={{ margin: 0, fontSize: 18 }}>Salary formulas</h2>
                 <p className="muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
-                  Every salary formula from Basic Earned through Net Paid is listed here, including Overtime
-                  Pay. Use overtime_hours from attendance in that formula (for example overtime_hours * basic /
-                  wage_period / 8). Saving creates a new version. Locked months keep prior formulas. New keys
-                  from the engine appear automatically.
+                  Overtime Hourly Rate is ((basic / 30) / 8.5) × 1.5. Overtime Pay is overtime hours × that
+                  rate. Both appear at the top of this list. Saving creates a new version. Locked months keep
+                  prior formulas.
                 </p>
               </div>
               <button type="button" className="mes-btn mes-btn-secondary" onClick={() => setShowFormulas(false)}>
@@ -657,6 +684,23 @@ export default function PayrollPage() {
                 disabled={formulaBusy}
               />
             </label>
+
+            <div
+              style={{
+                marginBottom: 16,
+                padding: 12,
+                background: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                borderRadius: 8,
+              }}
+            >
+              <p style={{ margin: '0 0 6px', fontWeight: 650, fontSize: 13 }}>Overtime inputs</p>
+              <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                <code>overtime_hours</code> is filled from Attendance (editable on the payroll row). Formulas
+                below can use <code>overtime_hours</code>, <code>basic</code>, and{' '}
+                <code>overtime_hourly_rate</code>.
+              </p>
+            </div>
 
             <div style={{ display: 'grid', gap: 10 }}>
               {formulaKeyList.map((key) => (

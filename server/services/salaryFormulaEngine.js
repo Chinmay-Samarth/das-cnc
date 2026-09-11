@@ -19,6 +19,7 @@ const OUTPUT_KEYS = [
   'allowance',
   'inc_plus_prod_all',
   'allowance_plus_pa',
+  'overtime_hourly_rate',
   'overtime_pay',
   'total_earned',
   'esi',
@@ -36,7 +37,8 @@ const DEFAULT_FORMULAS = {
   allowance: 'basic_earned * 0.15',
   inc_plus_prod_all: 'incentive_paid + production_allowance',
   allowance_plus_pa: 'allowance + production_allowance',
-  overtime_pay: '0',
+  overtime_hourly_rate: '((basic / 30) / 8.5) * 1.5',
+  overtime_pay: 'overtime_hours * overtime_hourly_rate',
   total_earned:
     'basic_earned + allowance + production_allowance + incentive_paid + overtime_pay',
   esi: 'total_earned * 0.75 / 100',
@@ -52,6 +54,12 @@ function httpError(message, status = 400) {
   const err = new Error(message);
   err.status = status;
   return err;
+}
+
+function overtimeHourlyRateFromBasic(basic) {
+  const b = toNumber(basic, 0);
+  if (b <= 0) return 0;
+  return (b / 30 / 8.5) * 1.5;
 }
 
 function toNumber(value, fallback = 0) {
@@ -257,11 +265,27 @@ function evaluateFormula(expr, vars) {
 
 function normalizeFormulas(formulas) {
   const merged = { ...DEFAULT_FORMULAS, ...(formulas || {}) };
+  const storedRate = String(merged.overtime_hourly_rate || '').trim();
+  if (!storedRate || storedRate === '0') {
+    merged.overtime_hourly_rate = DEFAULT_FORMULAS.overtime_hourly_rate;
+  }
+  const storedOt = String(merged.overtime_pay || '').trim();
+  if (
+    !storedOt ||
+    storedOt === '0' ||
+    storedOt.includes('/ 8.5') ||
+    !/\bovertime_hourly_rate\b/.test(storedOt)
+  ) {
+    merged.overtime_pay = DEFAULT_FORMULAS.overtime_pay;
+  }
+  const totalExpr = String(merged.total_earned || '');
+  if (totalExpr && !/\bovertime_pay\b/.test(totalExpr)) {
+    merged.total_earned = `(${totalExpr}) + overtime_pay`;
+  }
   for (const key of OUTPUT_KEYS) {
     if (!merged[key] || typeof merged[key] !== 'string') {
       merged[key] = DEFAULT_FORMULAS[key];
     }
-    // Validate compile-time
     compileFormula(merged[key]);
   }
   return merged;
@@ -320,4 +344,5 @@ module.exports = {
   evaluateFormula,
   daysInMonth,
   toNumber,
+  overtimeHourlyRateFromBasic,
 };

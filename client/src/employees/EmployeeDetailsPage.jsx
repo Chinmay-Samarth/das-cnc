@@ -1030,6 +1030,7 @@ export default function EmployeeDetailsPage() {
                         { label: 'Prod. allowance', value: payrollLine.production_allowance, money: true, accent: '#6b7280' },
                         { label: 'Inc+ Prod All', value: payrollLine.inc_plus_prod_all, money: true, accent: '#6b7280' },
                         { label: 'Allow. + PA', value: payrollLine.allowance_plus_pa, money: true, accent: '#6b7280' },
+                        { label: 'OT hourly rate', value: payrollLine.overtime_hourly_rate, money: true, accent: '#d97706' },
                         { label: 'Overtime pay', value: payrollLine.overtime_pay, money: true, accent: '#d97706' },
                         { label: 'Total earned', value: payrollLine.total_earned, money: true, accent: '#059669' },
                         { label: 'ESI', value: payrollLine.esi, money: true, accent: '#d97706' },

@@ -15,6 +15,7 @@ const {
   createFormulaVersion,
   getLatestFormulaVersion,
   DEFAULT_FORMULAS,
+  normalizeFormulas,
 } = require('../services/payrollEngine');
 
 const router = express.Router();
@@ -73,7 +74,7 @@ router.get(
     const mergedCurrent = current
       ? {
           ...current,
-          formulas: { ...DEFAULT_FORMULAS, ...(current.formulas || {}) },
+          formulas: normalizeFormulas(current.formulas || {}),
         }
       : null;
     res.json({ versions, current: mergedCurrent, defaults: DEFAULT_FORMULAS });
