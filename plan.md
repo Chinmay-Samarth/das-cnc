@@ -4,7 +4,7 @@
 **Target:** On-prem Windows Server with a public/static IP  
 **Date:** 2026-09-12  
 
-This plan covers install layout, TLS, firewall, service management, remote admin, backups, and go-live checks. It matches how the code actually runs today.
+This plan covers install layout, **Git-based remote deploys**, TLS, firewall, service management, remote admin, backups, and go-live checks. It matches how the code actually runs today.
 
 ---
 
@@ -109,8 +109,8 @@ Install in this order:
 5. **Python 3.10.x x64** (match `.python-version` → `3.10.14`).
 6. **Visual C++ Redistributable x64** (required by Paddle / OpenCV).
 7. **NSSM** (Non-Sucking Service Manager) or WinSW — run Node + uvicorn as Windows services.
-8. **Git** (optional) or deploy via zip from a build machine.
-9. **Win64 OpenSSH Server** or keep RDP behind VPN (see §9).
+8. **Git for Windows** (required for remote push/pull deploys — see §5).
+9. **Win64 OpenSSH Server** (required if you `git push` or SSH-run deploy over the network; keep behind VPN — see §9–§10).
 
 Verify:
 
@@ -118,6 +118,7 @@ Verify:
 node -v          # v20.x
 npm -v
 py -3.10 --version
+git --version
 ```
 
 ---
@@ -128,85 +129,287 @@ Use a dedicated non-admin service account, e.g. `svc_dascnc`.
 
 ```
 C:\apps\
-  das-cnc\                 # ERP monorepo release
-    client\dist\           # built SPA only (or full repo + dist)
+  repos\                   # optional bare repos (git push target)
+    das-cnc.git\
+    invoice-ocr.git\
+  das-cnc\                 # live checkout (working tree)
+    .git\
+    client\
+      dist\                # built on server by deploy.ps1
+      .env.production      # VITE_* — NOT committed; ACL locked down
     server\
-      .env                 # secrets — ACL locked down
-      index.js
-      ...
+      .env                 # secrets — NOT committed; ACL locked down
     package.json
     node_modules\
   invoice-ocr\
+    .git\
     app\
     requirements.txt
-    .venv\
+    .venv\                 # never commit
   logs\
     api\
     ocr\
     iis\
+    deploy\
   backups\
     env\
     configs\
+    releases\              # optional tag/zip snapshots before each deploy
   tools\
     nssm\
+    deploy-das-cnc.ps1
+    deploy-invoice-ocr.ps1
 ```
 
 Permissions:
 
 - `svc_dascnc`: Modify on `C:\apps\das-cnc`, `C:\apps\invoice-ocr`, `C:\apps\logs`.
+- `deploy` user (or your admin account): Modify on live checkouts + run deploy scripts; can restart services.
 - Deny interactive login for `svc_dascnc` if policy allows.
-- `server\.env`: Read for `svc_dascnc` + admins only; no Everyone/Users.
+- `server\.env` and `client\.env.production`: Read for `svc_dascnc` + deploy admins only; **never commit**.
 
 ---
 
-## 5. Build & release process
+## 5. Git-based build & release (remote push to production)
 
-Prefer **build on a modern PC**, copy artifacts to the server (especially if the server is old).
+**Primary method:** use Git so you can deploy from your laptop without copying zips over RDP.
 
-### On build machine (dev PC)
+Recommended branch model:
+
+| Branch | Purpose |
+|--------|---------|
+| `main` (or `develop`) | Day-to-day development |
+| `production` | Only what is allowed on the live server |
+
+Flow:
+
+```
+laptop ──git push──► GitHub (origin/production)
+                         │
+                         ▼
+              production server pulls + deploy.ps1
+                         │
+         or: laptop ──git push──► server bare repo (SSH/VPN) ──hook──► deploy.ps1
+```
+
+**Critical build note:** `VITE_*` vars are baked in at **build time**. Always set these in **`client/.env.production` on the server** (not in git):
+
+```env
+VITE_API_URL=https://YOUR_DOMAIN_OR_IP/api
+VITE_SOCKET_URL=https://YOUR_DOMAIN_OR_IP
+VITE_TIMEZONE=Asia/Kolkata
+```
+
+**Socket fix:** `client/src/socket/socketContext.jsx` requires `VITE_SOCKET_URL` in production.
+
+### 5.1 What must never be in Git
+
+Confirm `.gitignore` already excludes (and double-check before first push):
+
+- `server/.env`, root `.env`, `client/.env`, `client/.env.production`, `client/.env.local`
+- `node_modules/`, `client/dist/`, `.venv/`, `__pycache__/`
+- OCR model caches, logs, NSSM secrets
+
+Keep production secrets **only** on the server (and an encrypted offsite backup).
+
+### 5.2 One-time: GitHub remotes (laptop)
 
 ```powershell
 cd "E:\Chinmay_Projects\VS Files\das-cnc"
-npm ci
+git remote -v
+# origin should be your GitHub repo, e.g. https://github.com/ORG/das-cnc.git
 
-# Production client env (create client/.env.production before build)
-# VITE_API_URL=https://YOUR_DOMAIN_OR_IP/api
-# VITE_SOCKET_URL=https://YOUR_DOMAIN_OR_IP
-# VITE_TIMEZONE=Asia/Kolkata
-
-npm run build
+git checkout -b production
+git push -u origin production
 ```
 
-**Critical:** `VITE_*` vars are baked in at **build time**. Rebuild the client whenever the public URL changes.
+Protect `production` on GitHub: require PR or restrict who can push; enable MFA on the org/account.
 
-**Socket fix:** `client/src/socket/socketContext.jsx` requires `VITE_SOCKET_URL` in production (the fallback `apiUrl` path is currently broken). Always set:
+InvoiceOCR (separate repo):
 
-```env
-VITE_SOCKET_URL=https://YOUR_DOMAIN_OR_IP
-VITE_API_URL=https://YOUR_DOMAIN_OR_IP/api
+```powershell
+cd "E:\Chinmay_Projects\VS Files\Python Files\InvoiceOCR"
+# create GitHub repo if needed, then:
+git init   # if not already a repo
+git remote add origin https://github.com/ORG/invoice-ocr.git
+git checkout -b production
+git push -u origin production
 ```
 
-### Copy to server
+### 5.3 One-time: clone on the production server
 
-Copy at least:
+**Option A — pull from GitHub (recommended)**  
+Server needs outbound HTTPS to GitHub. Use a **read-only deploy key** (or fine-scoped PAT stored in Windows Credential Manager / env for the deploy user).
 
-- `client/dist/**`
-- `server/**` (excluding local `.env` secrets from laptop if different)
-- root `package.json`, `package-lock.json`
-- Run `npm ci --omit=dev` on server **or** copy `node_modules` from a matching OS/arch build.
+```powershell
+# As deploy admin, over VPN/RDP/SSH
+cd C:\apps
+git clone -b production git@github.com:ORG/das-cnc.git das-cnc
+git clone -b production git@github.com:ORG/invoice-ocr.git invoice-ocr
 
-Also copy InvoiceOCR source (without local `.venv`) and create venv on the server.
+# Create secrets locally (never from git)
+notepad C:\apps\das-cnc\server\.env
+notepad C:\apps\das-cnc\client\.env.production
+```
 
-### On server — API deps
+Deploy key setup (GitHub → repo → Settings → Deploy keys → allow read-only):
+
+```powershell
+# On server, as the deploy user
+ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh\dascnc_deploy -N '""'
+Get-Content $env:USERPROFILE\.ssh\dascnc_deploy.pub
+# paste public key into GitHub deploy keys for das-cnc (and a second key for invoice-ocr)
+
+# ~/.ssh/config
+# Host github.com
+#   HostName github.com
+#   User git
+#   IdentityFile ~/.ssh/dascnc_deploy
+#   IdentitiesOnly yes
+```
+
+**Option B — push directly to the server (no GitHub on pull path)**  
+Use when the server cannot reach GitHub, or you want `git push production` from the laptop over **VPN/SSH only**.
+
+```powershell
+# On server — bare repo
+New-Item -ItemType Directory -Force C:\apps\repos | Out-Null
+cd C:\apps\repos
+git init --bare das-cnc.git
+
+# Live working tree (first time)
+git clone C:\apps\repos\das-cnc.git C:\apps\das-cnc
+```
+
+On the laptop:
+
+```powershell
+cd "E:\Chinmay_Projects\VS Files\das-cnc"
+git remote add production ssh://DEPLOY_USER@SERVER_VPN_IP/C:/apps/repos/das-cnc.git
+# After OpenSSH + VPN work:
+git push -u production production
+```
+
+Wire a **post-receive hook** on the bare repo to update the live tree and run deploy (see §5.5). Do **not** expose SSH/Git on the public static IP — only on VPN.
+
+### 5.4 Deploy script on the server
+
+Save as `C:\apps\tools\deploy-das-cnc.ps1`:
+
+```powershell
+#Requires -Version 5.1
+$ErrorActionPreference = "Stop"
+$AppRoot = "C:\apps\das-cnc"
+$LogDir  = "C:\apps\logs\deploy"
+$Stamp   = Get-Date -Format "yyyyMMdd-HHmmss"
+New-Item -ItemType Directory -Force $LogDir | Out-Null
+Start-Transcript -Path "$LogDir\das-cnc-$Stamp.log"
+
+try {
+  Set-Location $AppRoot
+
+  # Safety: refuse if secrets missing
+  if (-not (Test-Path ".\server\.env")) { throw "Missing server\.env — abort" }
+  if (-not (Test-Path ".\client\.env.production")) { throw "Missing client\.env.production — abort" }
+
+  # Optional backup of last good dist
+  if (Test-Path ".\client\dist") {
+    $bak = "C:\apps\backups\releases\das-cnc-$Stamp-dist"
+    New-Item -ItemType Directory -Force $bak | Out-Null
+    Copy-Item -Recurse ".\client\dist\*" $bak
+  }
+
+  Write-Host "Fetching production..."
+  git fetch origin production
+  git checkout production
+  git reset --hard origin/production
+
+  Write-Host "Installing deps..."
+  npm ci --omit=dev
+
+  Write-Host "Building client (uses client\.env.production)..."
+  npm run build
+
+  Write-Host "Restarting API..."
+  Restart-Service DasCncApi -Force
+
+  Start-Sleep -Seconds 3
+  Invoke-RestMethod http://127.0.0.1:3001/health -TimeoutSec 15
+  Write-Host "Deploy OK"
+}
+catch {
+  Write-Error $_
+  exit 1
+}
+finally {
+  Stop-Transcript
+}
+```
+
+OCR deploy script `C:\apps\tools\deploy-invoice-ocr.ps1`:
+
+```powershell
+$ErrorActionPreference = "Stop"
+$AppRoot = "C:\apps\invoice-ocr"
+Set-Location $AppRoot
+git fetch origin production
+git checkout production
+git reset --hard origin/production
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Restart-Service DasCncOcr -Force
+Start-Sleep -Seconds 5
+Invoke-RestMethod http://127.0.0.1:8000/health -TimeoutSec 60
+```
+
+If you use bare-repo Option B, change `git fetch origin` to fetch from the bare remote (often just `git --git-dir=C:\apps\repos\das-cnc.git --work-tree=C:\apps\das-cnc fetch` + `reset --hard` as in the hook below).
+
+### 5.5 Day-to-day: push from laptop → production
+
+**Path 1 — GitHub + pull on server (safest default)**
+
+```powershell
+# On laptop — after merge/test
+cd "E:\Chinmay_Projects\VS Files\das-cnc"
+git checkout production
+git merge main          # or cherry-pick / PR merge on GitHub
+git push origin production
+
+# Then trigger deploy on server (pick one):
+# 1) VPN + SSH:
+ssh DEPLOY_USER@SERVER_VPN_IP "powershell -File C:\apps\tools\deploy-das-cnc.ps1"
+# 2) VPN + RDP: run the same script
+# 3) Optional: scheduled task that polls every N minutes (less ideal)
+```
+
+**Path 2 — direct `git push production` to server (Option B)**
+
+Bare repo hook `C:\apps\repos\das-cnc.git\hooks\post-receive` (Git for Windows often needs a bash hook, or call PowerShell from it):
+
+```bash
+#!/bin/sh
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:/apps/tools/deploy-das-cnc-from-bare.ps1"
+```
+
+`deploy-das-cnc-from-bare.ps1` should:
+
+1. `git --git-dir=C:\apps\repos\das-cnc.git --work-tree=C:\apps\das-cnc checkout -f production`
+2. Preserve `server\.env` / `client\.env.production` (they are untracked — `checkout -f` does not delete them if ignored)
+3. Run `npm ci --omit=dev`, `npm run build`, `Restart-Service DasCncApi`
+
+Laptop:
+
+```powershell
+git push production production
+```
+
+### 5.6 First-time install after clone (server)
 
 ```powershell
 cd C:\apps\das-cnc
 npm ci --omit=dev
-```
+# ensure client\.env.production and server\.env exist
+npm run build
 
-### On server — OCR venv
-
-```powershell
 cd C:\apps\invoice-ocr
 py -3.10 -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -214,7 +417,34 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-First OCR start downloads Paddle models to the **service account** profile (`C:\Users\svc_dascnc\.paddleocr\`). Allow outbound HTTPS once, or pre-copy a warmed cache from another machine under the same user path.
+First OCR start downloads Paddle models to the **service account** profile (`C:\Users\svc_dascnc\.paddleocr\`). Allow outbound HTTPS once, or pre-copy a warmed cache.
+
+### 5.7 Git deploy security rules
+
+| Rule | Why |
+|------|-----|
+| SSH/Git **only on VPN** (or private Tailscale IP) | Public `git push` to a Windows box gets brute-forced |
+| Deploy key **read-only** for Option A | Compromised server cannot push malware to GitHub |
+| Protect `production` branch | Accidental force-push / unreviewed code |
+| Never commit `.env` | Service role key = full DB |
+| `git reset --hard` only on server checkout | Keeps live tree clean; local server edits are discarded |
+| Tag releases (`v2026.09.12`) before risky deploys | Easy rollback: `git reset --hard v2026.09.12` then rebuild |
+| Separate InvoiceOCR deploy | Heavy pip/OCR restart only when OCR code changes |
+
+### 5.8 Rollback via Git
+
+```powershell
+cd C:\apps\das-cnc
+git fetch origin
+git log --oneline -20
+git reset --hard <GOOD_COMMIT_OR_TAG>
+npm ci --omit=dev
+npm run build
+Restart-Service DasCncApi -Force
+Invoke-RestMethod http://127.0.0.1:3001/health
+```
+
+Or restore `client\dist` from `C:\apps\backups\releases\...` if you only need a UI rollback.
 
 ---
 
@@ -419,7 +649,7 @@ If you must use raw IP HTTPS, use a cert that includes the IP (uncommon) or acce
 
 **Localhost / loopback:** Node 3001, OCR 8000, Tally 9000.
 
-**Outbound:** HTTPS to Supabase, biometric vendor, Windows Update, (first-time) Paddle model hosts / PyPI.
+**Outbound:** HTTPS to Supabase, biometric vendor, Windows Update, GitHub (if using pull deploy), (first-time) Paddle model hosts / PyPI.
 
 Prefer placing the server behind a **router firewall / NAT** that only forwards 443.
 
@@ -517,13 +747,15 @@ if ($fail) { Add-Content C:\apps\logs\health-fail.log "$(Get-Date -Format o) hea
 
 ### Remote updates (safe pattern)
 
-1. VPN in.
-2. Stop IIS site (or put maintenance page).
-3. Stop `DasCncApi` (OCR can stay up unless OCR code changes).
-4. Robocopy new `dist` + `server` files; keep `.env`.
-5. `npm ci --omit=dev` if lockfile changed.
-6. Start services; smoke `/health`, login, one OCR upload.
-7. Keep previous release zip under `C:\apps\backups\releases\YYYYMMDD\` for rollback.
+Prefer **Git** (§5) over manual file copy:
+
+1. Merge/test on laptop → `git push origin production` (or `git push production production`).
+2. On server (VPN): run `C:\apps\tools\deploy-das-cnc.ps1` (or let the post-receive hook run it).
+3. Script pulls/resets, keeps `.env` / `.env.production`, runs `npm ci` + `npm run build`, restarts `DasCncApi`.
+4. Smoke `/health`, login, Socket.IO, one OCR upload if OCR changed.
+5. If bad: `git reset --hard <good-tag>` + rebuild, or restore `client\dist` from `C:\apps\backups\releases\`.
+
+Manual robocopy remains a fallback if Git is unavailable.
 
 ---
 
@@ -533,7 +765,7 @@ if ($fail) { Add-Content C:\apps\logs\health-fail.log "$(Get-Date -Format o) hea
 |------|-----------|-------|
 | `server\.env` (encrypted) | On every change | Offline USB / password manager + encrypted zip |
 | IIS `web.config`, NSSM exports | On every change | `C:\apps\backups\configs` + offsite |
-| App release zip | Each deploy | Offsite |
+| App release zip / Git tag | Each deploy | Offsite + `git tag` on `production` |
 | Supabase | Daily (Supabase backups / PITR if paid) | Supabase dashboard |
 | Windows System State / full image | Weekly | External drive / NAS |
 | Paddle model cache (optional) | After first warm-up | Speeds rebuilds |
@@ -577,15 +809,18 @@ Tally data is separate — follow your existing Tally backup SOP if `TALLY_ENABL
 
 - [ ] OS is 2016+ (or newer guest VM)
 - [ ] Node 20 + Python 3.10 + VC++ redist installed
+- [ ] Git for Windows installed; `production` branch exists on GitHub (or bare repo on server)
+- [ ] Server clone at `C:\apps\das-cnc` (+ `invoice-ocr`); deploy key or SSH remote works **over VPN only**
+- [ ] `deploy-das-cnc.ps1` tested; `.env` / `.env.production` present and **not** in git
 - [ ] `svc_dascnc` created; `.env` ACLs tight
-- [ ] Client rebuilt with `VITE_API_URL` + `VITE_SOCKET_URL`
+- [ ] Client builds on server with correct `VITE_API_URL` + `VITE_SOCKET_URL`
 - [ ] NSSM services auto-start; OCR on `127.0.0.1:8000`
 - [ ] IIS HTTPS + ARR timeouts ≥ 300s; WebSockets on
-- [ ] WAN firewall: only 443 (and 80 redirect)
-- [ ] RDP/SSH not on public internet; VPN works
+- [ ] WAN firewall: only 443 (and 80 redirect); **no** public Git/SSH/RDP
+- [ ] RDP/SSH/Git not on public internet; VPN works
 - [ ] Supabase migrations + buckets done
 - [ ] Health scripts + external uptime configured
-- [ ] Backup of `.env` and release zip stored off-box
+- [ ] Backup of `.env` and a Git tag / release zip stored off-box
 
 ### Functional tests
 
@@ -601,10 +836,10 @@ Tally data is separate — follow your existing Tally backup SOP if `TALLY_ENABL
 
 ### Rollback
 
-1. Stop API (+ IIS if needed).
-2. Restore previous `client\dist` + `server` from `C:\apps\backups\releases\...`.
-3. Restore `.env` if changed.
-4. Start services; verify health.
+1. On server: `git reset --hard <GOOD_TAG_OR_COMMIT>` then `npm ci --omit=dev` && `npm run build` && `Restart-Service DasCncApi`.
+2. Or restore previous `client\dist` from `C:\apps\backups\releases\...`.
+3. Restore `.env` only if it was changed outside git.
+4. Verify health + login.
 
 ---
 
@@ -612,13 +847,13 @@ Tally data is separate — follow your existing Tally backup SOP if `TALLY_ENABL
 
 | Day | Work |
 |-----|------|
-| **D1** | Confirm OS viability; patch; create service account; install Node/Python/IIS/NSSM |
-| **D2** | Deploy OCR; warm models; health OK |
-| **D3** | Deploy API + `.env`; local health; Supabase migrations |
-| **D4** | Build SPA; IIS site + TLS; proxy `/api` + `/socket.io` |
-| **D5** | Firewall lockdown; VPN/remote admin; health monitors |
-| **D6** | UAT with real users (login, production board, invoice OCR) |
-| **D7** | Backups tested; cutover; watch logs 48h |
+| **D1** | Confirm OS viability; patch; create service account; install Node/Python/IIS/NSSM/**Git**/OpenSSH |
+| **D2** | Create `production` branch; clone on server; deploy keys or bare remote over VPN |
+| **D3** | Deploy OCR via Git; warm models; health OK |
+| **D4** | `.env` + `.env.production`; first `deploy-das-cnc.ps1`; Supabase migrations |
+| **D5** | IIS site + TLS; proxy `/api` + `/socket.io` |
+| **D6** | Firewall lockdown; VPN; test laptop → `git push` → deploy |
+| **D7** | UAT; tag release; backups; cutover; watch logs 48h |
 
 ---
 
@@ -628,8 +863,9 @@ Tally data is separate — follow your existing Tally backup SOP if `TALLY_ENABL
 2. **README port is wrong** — API listens on **3001**, not 3000.
 3. **`server/.env.example` is incomplete** — use the full template in §6.
 4. **OCR `/docs`** is open if the port is reachable — bind localhost only.
-5. **No Docker** in-repo; this plan is native Windows services + IIS.
+5. **No Docker** in-repo; this plan is native Windows services + IIS + **Git deploy**.
 6. Prior Render URLs in comments (`das-cnc.onrender.com`, `invoiceocr-c7ah.onrender.com`) are **dev/legacy**; production should use your static IP/DNS + local OCR.
+7. Build the SPA **on the server** (or CI) after each pull so `client/.env.production` is applied — do not commit `client/dist` from a laptop pointed at localhost.
 
 ---
 
@@ -643,7 +879,8 @@ These are not required to boot, but strengthen production:
 4. Structured logging (e.g. rotate + ship to a file share).
 5. Disable InvoiceOCR OpenAPI docs via env flag.
 6. Pin Node/Python versions in an `engines` / deploy readme.
-7. Automate release with a PowerShell `deploy.ps1` (stop → robocopy → start → health).
+7. Keep `deploy-das-cnc.ps1` / OCR script under `C:\apps\tools` (or commit a sanitized copy under `scripts/` in the repo without secrets).
+8. Optional: GitHub Action that SSHes over VPN/self-hosted runner and runs deploy after push to `production`.
 
 ---
 
@@ -655,6 +892,13 @@ Get-Service DasCncApi, DasCncOcr
 Invoke-RestMethod http://127.0.0.1:3001/health
 Invoke-RestMethod http://127.0.0.1:8000/health
 
+# Deploy (on server)
+powershell -File C:\apps\tools\deploy-das-cnc.ps1
+powershell -File C:\apps\tools\deploy-invoice-ocr.ps1
+
+# Git status on server
+cd C:\apps\das-cnc; git status; git log -1 --oneline
+
 # Restart
 Restart-Service DasCncOcr
 Restart-Service DasCncApi
@@ -662,10 +906,23 @@ Restart-Service DasCncApi
 # Logs
 Get-Content C:\apps\logs\api\stderr.log -Tail 100
 Get-Content C:\apps\logs\ocr\stderr.log -Tail 100
+Get-Content C:\apps\logs\deploy\*.log -Tail 50
+```
+
+**Laptop push cheat sheet:**
+
+```powershell
+cd "E:\Chinmay_Projects\VS Files\das-cnc"
+git checkout production
+git merge main
+git push origin production
+ssh DEPLOY_USER@SERVER_VPN_IP "powershell -File C:\apps\tools\deploy-das-cnc.ps1"
+# or, if using bare remote:
+# git push production production
 ```
 
 ---
 
 ## Summary
 
-Deploy as **three layers on one hardened Windows host (2016+)**: IIS terminates TLS and serves the SPA; Node API and InvoiceOCR run as **localhost-only** auto-restart services; data stays in **Supabase**. Lock the static IP to **443**, manage the box over **VPN**, monitor `/health`, and treat `.env` + release zips as first-class backups. If the machine is truly Server 2008-era, put a **newer Windows Server VM** in front of the same static IP rather than running this stack on the old host OS.
+Deploy as **three layers on one hardened Windows host (2016+)**: IIS terminates TLS and serves the SPA; Node API and InvoiceOCR run as **localhost-only** auto-restart services; data stays in **Supabase**. Ship code with **Git** (`production` branch → server pull or VPN-only `git push` + `deploy-*.ps1`). Lock the static IP to **443**, manage the box over **VPN**, monitor `/health`, and keep `.env` / `.env.production` out of git with encrypted offsite backups. If the machine is truly Server 2008-era, put a **newer Windows Server VM** in front of the same static IP rather than running this stack on the old host OS.
