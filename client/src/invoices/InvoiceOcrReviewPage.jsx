@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Check } from 'lucide-react';
+import { Check, IndianRupee, Percent, Receipt } from 'lucide-react';
 import api from '../api/client';
 import InvoicePdfViewer from '../components/Invoices/InvoicePdfViewer';
-import { AlertBanner, PageHeader, StatusBadge } from '../components/mes';
+import {
+  AlertBanner,
+  MetricCard,
+  PageHeader,
+  StatusBadge,
+} from '../components/mes';
 import { appAlert } from '../components/dialog';
 import { getCategoryConfig } from '../girn/girnCategoryConfig';
 import InvoiceRecheckLineTable from './InvoiceRecheckLineTable';
@@ -43,6 +48,12 @@ function computeHeaderTotal(baseAmount, taxAmount, roundOff) {
 
 function isProcessingStatus(status) {
   return status === 'extracting' || status === 'saving' || status === 'queued' || status === 'uploading';
+}
+
+function formatMoney(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export default function InvoiceOcrReviewPage() {
@@ -195,6 +206,10 @@ export default function InvoiceOcrReviewPage() {
     [review]
   );
 
+  const taxTotal = useMemo(() => sumTaxAmount(taxes), [taxes]);
+  const lineCount = lines.length;
+  const ocrPct = Math.round((review?.ocr_confidence_level || 0) * 100);
+
   function handleLineChange(idx, field, value) {
     setLines((prev) => {
       const next = [...prev];
@@ -248,15 +263,6 @@ export default function InvoiceOcrReviewPage() {
       const next = { ...h, [field]: value };
       if (field === 'base_amount' || field === 'round_off') {
         return syncHeaderTotal(next);
-      }
-      if (field === 'total_amount') {
-        // Manual total edit → capture gap as round-off so confirm stays consistent.
-        const base = Number(next.base_amount);
-        const tax = sumTaxAmount(taxes);
-        const total = Number(value);
-        if (Number.isFinite(base) && Number.isFinite(total)) {
-          next.round_off = round2(total - base - tax);
-        }
       }
       return next;
     });
@@ -396,7 +402,9 @@ export default function InvoiceOcrReviewPage() {
 
         <div className="invoice-recheck-layout">
           <section className="mes-card invoice-recheck-pdf">
-            <h2 className="invoice-recheck-section-title">Invoice PDF</h2>
+            <header className="invoice-recheck-panel-head">
+              <h2 className="invoice-recheck-panel-title">Source PDF</h2>
+            </header>
             <InvoicePdfViewer
               file={invoice?.file_url || queueJob?.previewUrl}
               title={invoice?.invoice_number || queueJob?.fileName || 'Scanned invoice'}
@@ -407,40 +415,42 @@ export default function InvoiceOcrReviewPage() {
           </section>
 
           <section className="mes-card invoice-recheck-form">
-            <h2 className="invoice-recheck-section-title">Extraction in progress</h2>
-            <p className="muted">
-              Supplier, totals, and line items will appear here when OCR finishes. If review is required,
-              you can correct them on this same screen.
-            </p>
+            <header className="invoice-recheck-panel-head">
+              <h2 className="invoice-recheck-panel-title">Extraction in progress</h2>
+              <p className="invoice-recheck-panel-hint">
+                Supplier, totals, and line items will appear here when OCR finishes.
+              </p>
+            </header>
           </section>
         </div>
       </main>
     );
   }
 
+  const confirmLabel = submitting
+    ? 'Confirming…'
+    : context === 'girn'
+      ? 'Confirm & continue GIRN'
+      : 'Confirm invoice';
+
   return (
     <main className="mes-shell invoice-recheck-page">
       <PageHeader
         eyebrow="Accounts payable"
         title="Recheck scanned invoice"
-        subtitle="Verify OCR against the PDF, link supplier and master records, then confirm."
+        subtitle="Match the PDF, fix supplier and lines, then confirm."
+        actions={
+          <StatusBadge status="pending">OCR {ocrPct}%</StatusBadge>
+        }
       />
 
-      {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
-
-      <div className="invoice-recheck-meta">
-        <StatusBadge status="pending">
-          OCR {Math.round((review?.ocr_confidence_level || 0) * 100)}%
-        </StatusBadge>
-        {warnings.length ? (
-          <span className="muted">{warnings.length} warning{warnings.length === 1 ? '' : 's'} require review</span>
-        ) : (
-          <span className="muted">Manual recheck required before posting</span>
-        )}
-      </div>
+      {error ? <AlertBanner tone="danger" title="Could not save">{error}</AlertBanner> : null}
 
       {warnings.length ? (
-        <AlertBanner tone="danger">
+        <AlertBanner
+          tone="amber"
+          title={`${warnings.length} OCR warning${warnings.length === 1 ? '' : 's'}`}
+        >
           <ul className="invoice-recheck-warnings">
             {warnings.map((w, idx) => (
               <li key={`${w.code}-${idx}`}>{w.message}</li>
@@ -451,7 +461,10 @@ export default function InvoiceOcrReviewPage() {
 
       <div className="invoice-recheck-layout">
         <section className="mes-card invoice-recheck-pdf">
-          <h2 className="invoice-recheck-section-title">Invoice PDF</h2>
+          <header className="invoice-recheck-panel-head">
+            <h2 className="invoice-recheck-panel-title">Source PDF</h2>
+            <p className="invoice-recheck-panel-hint">Use this as the source of truth while reviewing.</p>
+          </header>
           <InvoicePdfViewer
             file={invoice?.file_url}
             title={invoice?.invoice_number || 'Scanned invoice'}
@@ -462,106 +475,148 @@ export default function InvoiceOcrReviewPage() {
         </section>
 
         <section className="mes-card invoice-recheck-form">
-          <h2 className="invoice-recheck-section-title">Extracted details</h2>
-
-          <div className="invoice-recheck-grid">
-            <label>
-              Supplier <span className="req">*</span>
-              <SupplierSelect
-                value={supplierId}
-                label={supplierLabel}
-                onChange={({ id: sid, label }) => {
-                  setSupplierId(sid);
-                  setSupplierLabel(label);
-                }}
-              />
-            </label>
-
-            <label>
-              Invoice number
-              <input
-                value={header.invoice_number}
-                onChange={(e) => handleHeaderField('invoice_number', e.target.value)}
-              />
-            </label>
-
-            <label>
-              Invoice date
-              <input
-                type="date"
-                className="date-bar"
-                value={header.invoice_date || ''}
-                onChange={(e) => handleHeaderField('invoice_date', e.target.value)}
-              />
-            </label>
-
-            <label>
-              Due date
-              <input
-                type="date"
-                className="date-bar"
-                value={header.due_date || ''}
-                onChange={(e) => handleHeaderField('due_date', e.target.value)}
-              />
-            </label>
-
-            <label>
-              Total amount
-              <input
-                type="number"
-                min="0"
-                step="any"
-                value={header.total_amount}
-                onChange={(e) => handleHeaderField('total_amount', e.target.value)}
-              />
-            </label>
-
-            <label>
-              Taxable / base amount
-              <input
-                type="number"
-                min="0"
-                step="any"
-                value={header.base_amount}
-                onChange={(e) => handleHeaderField('base_amount', e.target.value)}
-              />
-            </label>
-
-            <label>
-              Round off
-              <input
-                type="number"
-                step="any"
-                value={header.round_off}
-                onChange={(e) => handleHeaderField('round_off', e.target.value)}
-              />
-            </label>
+          <div className="mes-metric-grid invoice-recheck-totals">
+            <MetricCard
+              label="Taxable"
+              value={`₹${formatMoney(header.base_amount)}`}
+              icon={IndianRupee}
+              tone="neutral"
+            />
+            <MetricCard
+              label="Tax"
+              value={`₹${formatMoney(taxTotal)}`}
+              hint={taxes.length ? `${taxes.length} line${taxes.length === 1 ? '' : 's'}` : 'No tax lines'}
+              icon={Percent}
+              tone="info"
+            />
+            <MetricCard
+              label="Round off"
+              value={`₹${formatMoney(header.round_off)}`}
+              tone="amber"
+            />
+            <MetricCard
+              label="Grand total"
+              value={`₹${formatMoney(header.total_amount)}`}
+              hint={`${lineCount} line item${lineCount === 1 ? '' : 's'}`}
+              icon={Receipt}
+              tone="success"
+            />
           </div>
 
-          <h3 className="invoice-recheck-subtitle">Line items</h3>
-          <InvoiceRecheckLineTable
-            lines={lines}
-            onChange={handleLineChange}
-            onMasterSelect={handleMasterSelect}
-            onCategoryChange={handleCategoryChange}
-            onRemove={handleRemoveLine}
-          />
+          <div className="invoice-recheck-section">
+            <h3 className="form-page-section-title">Invoice</h3>
+            <div className="form-page-grid invoice-recheck-fields">
+              <label className="form-span-2">
+                Supplier <span className="required-mark">*</span>
+                <SupplierSelect
+                  value={supplierId}
+                  label={supplierLabel}
+                  onChange={({ id: sid, label }) => {
+                    setSupplierId(sid);
+                    setSupplierLabel(label);
+                  }}
+                />
+              </label>
 
-          <h3 className="invoice-recheck-subtitle">Tax lines</h3>
-          <InvoiceRecheckTaxTable
-            taxes={taxes}
-            onChange={handleTaxChange}
-            onRemove={handleRemoveTax}
-            onAdd={handleAddTax}
-          />
+              <label>
+                Invoice number
+                <input
+                  value={header.invoice_number}
+                  onChange={(e) => handleHeaderField('invoice_number', e.target.value)}
+                  placeholder="As printed on the invoice"
+                />
+              </label>
 
-          <div className="invoice-recheck-actions">
+              <label>
+                Invoice date
+                <input
+                  type="date"
+                  className="date-bar"
+                  value={header.invoice_date || ''}
+                  onChange={(e) => handleHeaderField('invoice_date', e.target.value)}
+                />
+              </label>
+
+              <label>
+                Due date
+                <input
+                  type="date"
+                  className="date-bar"
+                  value={header.due_date || ''}
+                  onChange={(e) => handleHeaderField('due_date', e.target.value)}
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="invoice-recheck-section">
+            <h3 className="form-page-section-title">Amounts</h3>
+            <p className="invoice-recheck-section-lead muted">
+              Grand total is taxable + tax + round off. Adjust taxable or round off if the PDF differs.
+            </p>
+            <div className="form-page-grid invoice-recheck-fields">
+              <label>
+                Taxable / base amount
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={header.base_amount}
+                  onChange={(e) => handleHeaderField('base_amount', e.target.value)}
+                />
+              </label>
+
+              <label>
+                Round off
+                <input
+                  type="number"
+                  step="any"
+                  value={header.round_off}
+                  onChange={(e) => handleHeaderField('round_off', e.target.value)}
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="invoice-recheck-section">
+            <div className="invoice-recheck-section-head">
+              <h3 className="form-page-section-title">Line items</h3>
+              <span className="muted invoice-recheck-count">{lineCount}</span>
+            </div>
+            <InvoiceRecheckLineTable
+              lines={lines}
+              onChange={handleLineChange}
+              onMasterSelect={handleMasterSelect}
+              onCategoryChange={handleCategoryChange}
+              onRemove={handleRemoveLine}
+            />
+          </div>
+
+          <div className="invoice-recheck-section">
+            <div className="invoice-recheck-section-head">
+              <h3 className="form-page-section-title">Tax</h3>
+              <span className="muted invoice-recheck-count">{taxes.length}</span>
+            </div>
+            <InvoiceRecheckTaxTable
+              taxes={taxes}
+              onChange={handleTaxChange}
+              onRemove={handleRemoveTax}
+              onAdd={handleAddTax}
+            />
+          </div>
+
+          <div className="form-page-actions invoice-recheck-actions">
             <button type="button" className="cancel-button" disabled={submitting} onClick={handleCancel}>
               Cancel
             </button>
-            <button type="button" className="primary-button" disabled={submitting || !supplierId} onClick={handleConfirm}>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={submitting || !supplierId}
+              onClick={handleConfirm}
+            >
               <Check size={16} />
-              {submitting ? 'Confirming…' : context === 'girn' ? 'Confirm & continue GIRN' : 'Confirm invoice'}
+              {confirmLabel}
             </button>
           </div>
         </section>

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import api from '../api/client';
 import { appAlert } from '../components/dialog';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
 import { getCategoryConfig } from './girnCategoryConfig';
 
 function cellValue(flat, sectionSlug, fieldSlug) {
@@ -76,62 +77,67 @@ export default function MasterItemSelect({
   placeholder,
   filterParams,
 }) {
-  const [options, setOptions] = useState([]);
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(false);
-  const wrapRef = useRef(null);
+  const [busy, setBusy] = useState(false);
   const cfg = getCategoryConfig(category);
+  const defaultPlaceholder = placeholder || `Search ${cfg.label.toLowerCase()}…`;
 
-  useEffect(() => {
-    function handleClickOutside(e) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  const fetchOptions = useCallback(
+    async (search) => {
+      if (!masterSlug) return [];
+      const { data } = await api.get(`/masters/${masterSlug}/lookup`, {
+        params: { search: search.trim(), ...(filterParams || {}) },
+      });
+      return data || [];
+    },
+    [filterParams, masterSlug]
+  );
 
-  useEffect(() => {
-    if (!open || !masterSlug) return undefined;
+  const mapOption = useCallback(
+    (option) => ({
+      value: option.record_id,
+      label: option.label,
+      title: option.label,
+      subtitle: `${cfg.label} master record`,
+      raw: option,
+    }),
+    [cfg.label]
+  );
 
-    setLoading(true);
-    const timer = setTimeout(() => {
-      api
-        .get(`/masters/${masterSlug}/lookup`, {
-          params: { search: search.trim(), ...(filterParams || {}) },
-        })
-        .then(({ data }) => setOptions(data || []))
-        .catch((err) => {
-          console.error(`Failed to load ${masterSlug} records:`, err);
-          setOptions([]);
-        })
-        .finally(() => setLoading(false));
-    }, 250);
-
-    return () => clearTimeout(timer);
-  }, [search, open, masterSlug, filterParams]);
-
-  const displayLabel = useMemo(() => {
+  const selectedLabel = useMemo(() => {
     if (label) return label;
-    const match = options.find((o) => String(o.record_id) === String(value));
-    return match?.label || '';
-  }, [label, options, value]);
+    if (value) return `Linked ${cfg.label.toLowerCase()}`;
+    return '';
+  }, [cfg.label, label, value]);
 
-  async function handleSelect(option) {
-    try {
-      setLoading(true);
-      const { mapped } = await fetchMasterRecordDetails(masterSlug, option.record_id, category);
+  async function handleChange(nextId, raw) {
+    if (!nextId) {
       onChange({
-        master_record_id: option.record_id,
-        master_record_label: option.label,
-        raw_material_id: category === 'raw_material' ? option.record_id : null,
-        raw_material_label: category === 'raw_material' ? option.label : '',
+        master_record_id: null,
+        master_record_label: '',
+        raw_material_id: null,
+        raw_material_label: '',
+        item_code: '',
+        rm_id: '',
+        rm_code: '',
+        grade: '',
+        unit: '',
+        inventory_number: '',
+        item_description: '',
+      });
+      return;
+    }
+
+    try {
+      setBusy(true);
+      const option = raw?.raw || raw || {};
+      const { mapped } = await fetchMasterRecordDetails(masterSlug, nextId, category);
+      onChange({
+        master_record_id: nextId,
+        master_record_label: option.label || label || '',
+        raw_material_id: category === 'raw_material' ? nextId : null,
+        raw_material_label: category === 'raw_material' ? option.label || label || '' : '',
         ...mapped,
       });
-      setOpen(false);
-      setSearch('');
     } catch (err) {
       console.error('Failed to load master record:', err);
       await appAlert({
@@ -140,101 +146,22 @@ export default function MasterItemSelect({
         tone: 'danger',
       });
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }
 
-  const defaultPlaceholder = placeholder || `Search ${cfg.label.toLowerCase()}...`;
-
   return (
-    <div ref={wrapRef} style={{ position: 'relative' }}>
-      <button
-        type="button"
-        disabled={disabled || !masterSlug}
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          width: '100%',
-          textAlign: 'left',
-          padding: '8px 12px',
-          border: '1px solid #d1d5db',
-          borderRadius: 6,
-          background: disabled ? '#f3f4f6' : '#fff',
-          cursor: disabled ? 'not-allowed' : 'pointer',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          fontSize: 14,
-        }}
-      >
-        <span style={{ color: displayLabel || value ? '#111827' : '#9ca3af' }}>
-          {displayLabel || (value ? `Linked ${cfg.label.toLowerCase()}` : defaultPlaceholder)}
-        </span>
-        <span style={{ color: '#6b7280', fontSize: 12 }}>{open ? '▲' : '▼'}</span>
-      </button>
-
-      {open && !disabled && masterSlug ? (
-        <div
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            right: 0,
-            marginTop: 4,
-            background: '#fff',
-            border: '1px solid #d1d5db',
-            borderRadius: 8,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-            zIndex: 50,
-            maxHeight: 280,
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          <div style={{ padding: 8, borderBottom: '1px solid #e5e7eb' }}>
-            <input
-              type="search"
-              className="search-input"
-              placeholder={`Search ${cfg.label.toLowerCase()}...`}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              autoFocus
-              style={{ width: '100%' }}
-            />
-          </div>
-          <div style={{ overflowY: 'auto', flex: 1 }}>
-            {loading ? (
-              <p className="muted" style={{ padding: '12px 16px', margin: 0 }}>
-                Searching...
-              </p>
-            ) : options.length === 0 ? (
-              <p className="muted" style={{ padding: '12px 16px', margin: 0 }}>
-                No matching master records found. Create the item in the master first, then link it here.
-              </p>
-            ) : (
-              options.map((option) => (
-                <button
-                  key={option.record_id}
-                  type="button"
-                  onClick={() => handleSelect(option)}
-                  style={{
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: '10px 16px',
-                    border: 'none',
-                    background:
-                      String(value) === String(option.record_id) ? '#eff6ff' : 'transparent',
-                    cursor: 'pointer',
-                    borderBottom: '1px solid #f3f4f6',
-                  }}
-                >
-                  <strong style={{ display: 'block', fontSize: 14, color: 'black' }}>{option.label}</strong>
-                  <span style={{ fontSize: 12, color: '#6b7280' }}>{cfg.label} master record</span>
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      ) : null}
-    </div>
+    <FormSearchSelect
+      value={value || ''}
+      selectedLabel={selectedLabel}
+      onChange={handleChange}
+      fetchOptions={fetchOptions}
+      mapOption={mapOption}
+      placeholder={defaultPlaceholder}
+      disabled={disabled || !masterSlug || busy}
+      loading={busy}
+      emptyMessage="No matching master records. Create the item in masters first."
+      portal
+    />
   );
 }

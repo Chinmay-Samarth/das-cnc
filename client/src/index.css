@@ -1336,6 +1336,39 @@ button:hover:not(:disabled) {
   font-weight: 700;
 }
 
+.app-table tbody tr.is-today {
+  background: #eff6ff;
+  box-shadow: inset 3px 0 0 #2563eb;
+}
+
+.app-table tbody tr.is-today:hover {
+  background: #dbeafe;
+}
+
+.prod-date-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-table tbody tr.is-today .prod-date-cell {
+  font-weight: 650;
+}
+
+.prod-today-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+
 .table-subtext {
   color: #64748b;
   font-size: 13px;
@@ -2240,6 +2273,10 @@ button:hover:not(:disabled) {
   width: 100%;
 }
 
+.form-search-select-trigger:hover {
+  background-color: #f3f3fe !important;
+}
+
 .form-search-select-trigger {
   width: 100%;
   min-height: 34px;
@@ -2287,6 +2324,16 @@ button:hover:not(:disabled) {
 .form-search-select-dropdown {
   z-index: 120;
   max-height: 280px;
+}
+
+.form-search-select-dropdown.is-ported {
+  position: fixed;
+  left: auto;
+  right: auto;
+  top: auto;
+  z-index: 4000;
+  max-height: none;
+  overflow-y: auto;
 }
 
 .form-search-select-search {
@@ -6946,6 +6993,12 @@ button:hover:not(:disabled) {
   outline-offset: 1px;
 }
 
+.mes-filters label.prod-filter-wc {
+  min-width: 280px;
+  flex: 1 1 280px;
+  max-width: 420px;
+}
+
 .mes-export-panel {
   display: grid;
   gap: 12px;
@@ -9806,13 +9859,6 @@ button:hover:not(:disabled) {
   gap: var(--mes-space-3);
 }
 
-.invoice-recheck-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--mes-space-3);
-  flex-wrap: wrap;
-}
-
 .invoice-recheck-warnings {
   margin: 0;
   padding-left: 1.1rem;
@@ -9820,7 +9866,7 @@ button:hover:not(:disabled) {
 
 .invoice-recheck-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(340px, 1.15fr);
+  grid-template-columns: minmax(0, 0.95fr) minmax(380px, 1.2fr);
   gap: var(--mes-space-4);
   align-items: start;
 }
@@ -9835,40 +9881,118 @@ button:hover:not(:disabled) {
   top: 16px;
 }
 
-.invoice-recheck-section-title {
+.invoice-recheck-panel-head {
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--border-default, #e2e8f0);
+}
+
+.invoice-recheck-panel-title {
   margin: 0;
-  padding: 14px 16px 0;
-  font-size: 1rem;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary, #0f172a);
+}
+
+.invoice-recheck-panel-hint {
+  margin: 4px 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-secondary, #64748b);
+  line-height: 1.4;
 }
 
 .invoice-recheck-form {
   display: flex;
   flex-direction: column;
-  gap: var(--mes-space-3);
+  gap: 0;
+  padding: 18px 20px 20px;
 }
 
-.invoice-recheck-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: var(--mes-space-3);
+.invoice-recheck-totals {
+  margin-bottom: 4px;
 }
 
-.invoice-recheck-grid label {
+.invoice-recheck-totals .mes-metric {
+  padding: 14px 16px;
+  box-shadow: none;
+}
+
+.invoice-recheck-totals .mes-metric-value {
+  font-size: 1.35rem;
+}
+
+.invoice-recheck-section {
+  padding: 18px 0 4px;
+  border-top: 1px solid var(--border-default, #e2e8f0);
+  margin-top: 14px;
+}
+
+.invoice-recheck-section:first-of-type,
+.invoice-recheck-totals + .invoice-recheck-section {
+  border-top: none;
+  margin-top: 8px;
+  padding-top: 12px;
+}
+
+.invoice-recheck-section .form-page-section-title {
+  margin: 0 0 10px;
+}
+
+.invoice-recheck-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.invoice-recheck-section-head .form-page-section-title {
+  margin: 0;
+}
+
+.invoice-recheck-section-lead {
+  margin: -4px 0 12px;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.invoice-recheck-count {
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.invoice-recheck-fields {
+  gap: 14px 16px;
+}
+
+.invoice-recheck-fields label {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  margin-bottom: 0;
   font-size: 0.8125rem;
+  font-weight: 650;
+  color: var(--text-secondary, #64748b);
 }
 
-.invoice-recheck-subtitle {
-  margin: 0;
-  font-size: 0.9375rem;
+.invoice-recheck-fields input,
+.invoice-recheck-fields .form-search-select {
+  font-weight: 500;
+  color: var(--text-primary, #0f172a);
+}
+
+.invoice-recheck-actions {
+  margin-top: 18px;
+  padding-top: 16px;
 }
 
 .invoice-recheck-lines {
   overflow-x: auto;
-  margin: 0 -4px;
-  padding: 0 4px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-default, #e2e8f0);
+  border-radius: var(--radius-md, 10px);
+  background: var(--bg-surface, #fff);
 }
 
 .invoice-recheck-lines .app-table {
@@ -9879,10 +10003,18 @@ button:hover:not(:disabled) {
   border-spacing: 0;
 }
 
+.invoice-recheck-lines .app-table thead {
+  background: #f8fafc;
+}
+
 .invoice-recheck-lines .app-table th,
 .invoice-recheck-lines .app-table td {
   padding: 12px 10px;
   vertical-align: middle;
+}
+
+.invoice-recheck-lines .app-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
 .invoice-recheck-lines .app-table th {
@@ -9996,8 +10128,11 @@ button:hover:not(:disabled) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 10px;
+  margin: 0;
+  padding: 12px 12px;
   flex-wrap: wrap;
+  border-top: 1px solid var(--border-default, #e2e8f0);
+  background: #f8fafc;
 }
 
 .invoice-recheck-add-tax {
@@ -10073,15 +10208,6 @@ button:hover:not(:disabled) {
   font-size: 0.9375rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-}
-
-.invoice-recheck-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--mes-space-2);
-  flex-wrap: wrap;
-  padding-top: var(--mes-space-2);
-  border-top: 1px solid var(--mes-border, #e5e7eb);
 }
 
 /* Background invoice upload queue */
@@ -10199,6 +10325,10 @@ button:hover:not(:disabled) {
   .invoice-recheck-pdf {
     position: static;
     min-height: 520px;
+  }
+
+  .invoice-recheck-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .invoice-upload-queue-float {

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { RefreshCw, Package, CheckCircle2, AlertCircle, XCircle } from 'lucide-react';
 import api from '../api/client';
 import { useSocket } from '../socket/socketContext';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
 import {
   PageHeader,
   MetricCard,
@@ -21,6 +22,14 @@ function addDays(dateStr, days) {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
+
+const STATUS_OPTIONS = [
+  { value: 'open', label: 'Open' },
+  { value: 'READY', label: 'Ready' },
+  { value: 'RUNNING', label: 'Running' },
+  { value: 'COMPLETED', label: 'Completed' },
+  { value: 'OVERDUE', label: 'Overdue' },
+];
 
 export default function ProductionBoardPage() {
   const navigate = useNavigate();
@@ -96,6 +105,17 @@ export default function ProductionBoardPage() {
     setFilters((f) => ({ ...f, [key]: value }));
   }
 
+  const today = todayStr();
+
+  const workCenterOptions = useMemo(
+    () =>
+      workCenters.map((wc) => ({
+        value: wc.id,
+        label: wc.code ? `${wc.code} — ${wc.name}` : wc.name,
+      })),
+    [workCenters]
+  );
+
   return (
     <main className="mes-shell">
       <PageHeader
@@ -114,6 +134,13 @@ export default function ProductionBoardPage() {
         }
       />
 
+      <div className="mes-metric-grid" style={{ marginBottom: 16 }}>
+        <MetricCard label="Open" value={metrics.open} icon={AlertCircle} tone="amber" />
+        <MetricCard label="Met" value={metrics.met} icon={CheckCircle2} tone="success" />
+        <MetricCard label="Remaining good" value={metrics.remaining} icon={Package} tone="info" />
+        <MetricCard label="Closed" value={metrics.closed} icon={XCircle} tone="neutral" />
+      </div>
+
       <div className="mes-filters" style={{ marginBottom: 16 }}>
         <label>
           From
@@ -131,37 +158,32 @@ export default function ProductionBoardPage() {
             onChange={(e) => handleFilterChange('to', e.target.value)}
           />
         </label>
-        <label>
+        <label className="prod-filter-wc">
           Work center
-          <select
+          <FormSearchSelect
             value={filters.work_center_id}
-            onChange={(e) => handleFilterChange('work_center_id', e.target.value)}
-          >
-            <option value="">All work centers</option>
-            {workCenters.map((wc) => (
-              <option key={wc.id} value={wc.id}>
-                {wc.code ? `${wc.code} â€” ` : ''}
-                {wc.name}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => handleFilterChange('work_center_id', value || '')}
+            options={workCenterOptions}
+            placeholder="All work centers"
+            searchable={workCenterOptions.length > 6}
+            emptyMessage="No work centers"
+          />
         </label>
         <label>
           Status
-          <select value={filters.status} onChange={(e) => handleFilterChange('status', e.target.value)}>
-            <option value="">All statuses</option>
-            <option value="open">Open</option>
-            <option value="READY">Ready</option>
-            <option value="RUNNING">Running</option>
-            <option value="COMPLETED">Completed</option>
-            <option value="OVERDUE">Overdue</option>
-          </select>
+          <FormSearchSelect
+            value={filters.status}
+            onChange={(value) => handleFilterChange('status', value || '')}
+            options={STATUS_OPTIONS}
+            placeholder="All statuses"
+            emptyMessage="No statuses"
+          />
         </label>
         <label>
           Search
           <input
             type="search"
-            placeholder="Component, campaignâ€¦"
+            placeholder="Component, campaign…"
             value={filters.search}
             onChange={(e) => handleFilterChange('search', e.target.value)}
           />
@@ -170,15 +192,8 @@ export default function ProductionBoardPage() {
 
       {error ? <p className="error-message">{error}</p> : null}
 
-      <div className="mes-metric-grid" style={{ marginBottom: 16 }}>
-        <MetricCard label="Open" value={metrics.open} icon={AlertCircle} tone="amber" />
-        <MetricCard label="Met" value={metrics.met} icon={CheckCircle2} tone="success" />
-        <MetricCard label="Remaining good" value={metrics.remaining} icon={Package} tone="info" />
-        <MetricCard label="Closed" value={metrics.closed} icon={XCircle} tone="neutral" />
-      </div>
-
       {loading && !commitments.length ? (
-        <p className="muted">Loading daily cardsâ€¦</p>
+        <p className="muted">Loading daily cards…</p>
       ) : !commitments.length ? (
         <EmptyState
           icon={Package}
@@ -212,22 +227,29 @@ export default function ProductionBoardPage() {
                   );
                   const progress =
                     c.committed_qty > 0 ? (c.good_qty / c.committed_qty) * 100 : 0;
+                  const isToday = String(c.work_date || '').slice(0, 10) === today;
                   return (
                     <tr
                       key={c.id}
+                      className={isToday ? 'is-today' : undefined}
                       onClick={() => navigate(`/production/cards/${c.id}`)}
                       style={{ cursor: 'pointer' }}
                     >
-                      <td>{c.work_date || 'â€”'}</td>
+                      <td>
+                        <span className="prod-date-cell">
+                          {c.work_date || '—'}
+                          {/* {isToday ? <span className="prod-today-pill">Today</span> : null} */}
+                        </span>
+                      </td>
                       <td>
                         <TruncatedText>
-                          {c.work_center_code || c.work_center_name || 'â€”'}
+                          {c.work_center_code || c.work_center_name || '—'}
                         </TruncatedText>
                       </td>
                       <td>
-                        <TruncatedText>{c.component_label || 'â€”'}</TruncatedText>
+                        <TruncatedText>{c.component_label || '—'}</TruncatedText>
                       </td>
-                      <td>{c.card_number || 'â€”'}</td>
+                      <td>{c.card_number || '—'}</td>
                       <td>{c.committed_qty}</td>
                       <td>
                         <div style={{ minWidth: 80 }}>

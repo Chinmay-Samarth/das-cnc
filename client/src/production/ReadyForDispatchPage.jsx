@@ -121,27 +121,31 @@ function ScheduleSelect({ lotOrGroup, disabled, onChange }) {
   return (
     <div style={{ marginTop: 8 }}>
       {lotOrGroup.schedule_choice_required ? (
-        <p className="muted" style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 600 }}>
-          Past due and upcoming schedules open — choose which this refers to
+        <p className="muted" style={{ margin: '0 0', fontSize: 12, fontWeight: 600 }}>
+          {/* Past due and upcoming schedules open — choose which this refers to */}
         </p>
       ) : (
-        <p className="muted" style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 600 }}>
+        <p className="muted" style={{ margin: '0 0', fontSize: 12, fontWeight: 600 }}>
           Delivery schedule
         </p>
       )}
-      <FormSearchSelect
-        value={currentId}
-        onChange={(nextId) => {
-          if (nextId && nextId !== currentId) onChange(nextId);
-        }}
-        options={options.map(toSearchSelectOption)}
-        searchable
-        clearable={false}
-        disabled={disabled}
-        placeholder="Select delivery schedule…"
-        selectedLabel={currentParts.label}
-        emptyMessage="No open schedules"
-      />
+      <div className="" style={{marginTop: "5px"}}>
+
+        <FormSearchSelect
+          value={currentId}
+          onChange={(nextId) => {
+            if (nextId && nextId !== currentId) onChange(nextId);
+          }}
+          options={options.map(toSearchSelectOption)}
+          searchable
+          clearable={false}
+          disabled={disabled}
+          placeholder="Select delivery schedule…"
+          selectedLabel={currentParts.label}
+          emptyMessage="No open schedules"
+
+          />
+      </div>
     </div>
   );
 }
@@ -525,34 +529,24 @@ export default function ReadyForDispatchPage() {
             <h2 style={{ margin: '0 0 4px', fontSize: '1.05rem' }}>
               <TruncatedText>{group.component_label || primary?.component_label || 'Component'}</TruncatedText>
             </h2>
-            <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-              Combined <strong>{Number(group.combined_qty || 0)}</strong>
-              {' · Remaining '}
-              <strong>{Number(group.schedule_qty || 0)}</strong>
-              {group.schedule_due_date ? ` · Due ${formatDueLabel(group.schedule_due_date)}` : ''}
-            </p>
-            <p
+            <p className="" style={{ margin: 0, fontSize: 15, fontWeight: 500 }}>
+              
+              <p
               className="muted"
               style={{
                 margin: '4px 0 0',
-                fontSize: 12,
+                fontSize: 15,
                 display: 'flex',
                 flexWrap: 'wrap',
                 alignItems: 'center',
                 gap: 8,
               }}
             >
-              <span>
-                Ship <strong>{Number(group.ship_qty || 0)}</strong>
-                {extra > 0.0001 ? (
-                  <>
-                    {' · Retain '}
-                    <strong>{extra}</strong>
-                  </>
-                ) : null}
-              </span>
+              {group.schedule_due_date ? ` · Due ${formatDueLabel(group.schedule_due_date)}` : ''}
               <StatusBadge status={groupQtyTone(group)}>{groupQtyLabel(group)}</StatusBadge>
             </p>
+            </p>
+            
             <ScheduleSelect
               lotOrGroup={group}
               disabled={busy || !canChangeSchedule}
@@ -646,7 +640,7 @@ export default function ReadyForDispatchPage() {
       <PageHeader
         eyebrow="Shop floor"
         title="Ready for Dispatch"
-        subtitle="Map parked qty to the current delivery schedule (choose past due vs upcoming when both are open). Dispatch only when RFD qty meets the schedule (or override is approved), after invoice and packing slip print confirmation."
+        subtitle=""
         actions={
           <>
             <button

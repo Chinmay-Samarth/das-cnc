@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown, Search, X } from 'lucide-react'
 
 function normalizeOption(option) {
@@ -41,13 +42,16 @@ export default function FormSearchSelect({
   fetchOptions,
   debounceMs = 200,
   mapOption,
+  portal = true,
 }) {
   const [open, setOpen] = useState(false)
   const [localSearch, setLocalSearch] = useState('')
   const [activeIndex, setActiveIndex] = useState(-1)
   const [asyncOptions, setAsyncOptions] = useState([])
   const [asyncLoading, setAsyncLoading] = useState(false)
+  const [menuStyle, setMenuStyle] = useState(null)
   const wrapRef = useRef(null)
+  const dropdownRef = useRef(null)
   const fetchIdRef = useRef(0)
 
   const isAsync = typeof fetchOptions === 'function'
@@ -90,11 +94,46 @@ export default function FormSearchSelect({
     }
   }, [fetchOptions, isAsync])
 
+  const updateMenuPosition = useCallback(() => {
+    if (!portal || !wrapRef.current) return
+    const rect = wrapRef.current.getBoundingClientRect()
+    const viewportH = window.innerHeight
+    const spaceBelow = viewportH - rect.bottom
+    const preferUp = spaceBelow < 280 && rect.top > spaceBelow
+    const maxHeight = Math.min(320, preferUp ? rect.top - 12 : spaceBelow - 12)
+    setMenuStyle({
+      position: 'fixed',
+      left: rect.left,
+      width: Math.max(rect.width, 220),
+      top: preferUp ? undefined : rect.bottom + 4,
+      bottom: preferUp ? viewportH - rect.top + 4 : undefined,
+      maxHeight: Math.max(160, maxHeight),
+      zIndex: 4000,
+    })
+  }, [portal])
+
+  useLayoutEffect(() => {
+    if (!open || !portal) {
+      setMenuStyle(null)
+      return undefined
+    }
+    updateMenuPosition()
+    function handleReposition() {
+      updateMenuPosition()
+    }
+    window.addEventListener('resize', handleReposition)
+    window.addEventListener('scroll', handleReposition, true)
+    return () => {
+      window.removeEventListener('resize', handleReposition)
+      window.removeEventListener('scroll', handleReposition, true)
+    }
+  }, [open, portal, updateMenuPosition])
+
   useEffect(() => {
     function handleClickOutside(event) {
-      if (wrapRef.current && !wrapRef.current.contains(event.target)) {
-        setOpen(false)
-      }
+      const inTrigger = wrapRef.current?.contains(event.target)
+      const inDropdown = dropdownRef.current?.contains(event.target)
+      if (!inTrigger && !inDropdown) setOpen(false)
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -158,6 +197,72 @@ export default function FormSearchSelect({
   const showSearch = searchable || isSearchControlled || isAsync
   const showDropdown = open && !disabled
 
+  const dropdown = showDropdown ? (
+    <div
+      ref={dropdownRef}
+      className={`global-search-dropdown form-search-select-dropdown${portal ? ' is-ported' : ''}`}
+      role="listbox"
+      style={portal ? menuStyle || { visibility: 'hidden' } : undefined}
+    >
+      {showSearch ? (
+        <div className="form-search-select-search">
+          <div className="global-search-inner">
+            <Search size={15} className="global-search-icon" aria-hidden="true" />
+            <input
+              autoFocus
+              type="search"
+              className="global-search-input"
+              placeholder="Search…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+              aria-label="Filter options"
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {isLoading ? (
+        <p className="global-search-status">Loading…</p>
+      ) : filteredOptions.length === 0 ? (
+        <p className="global-search-status">{emptyMessage}</p>
+      ) : (
+        filteredOptions.map((option, index) => {
+          const isSelected = String(option.value) === String(value)
+          const isActive = index === activeIndex
+          const rich = !!(option.typeLabel || option.title || option.subtitle)
+          return (
+            <button
+              key={String(option.value)}
+              type="button"
+              role="option"
+              aria-selected={isSelected}
+              className={`global-search-result${rich ? '' : ' is-simple'}${isSelected || isActive ? ' is-active' : ''}`}
+              onMouseEnter={() => setActiveIndex(index)}
+              onClick={() => selectOption(option)}
+            >
+              {rich ? (
+                <>
+                  {option.typeLabel ? (
+                    <span className="global-search-result-type">{option.typeLabel}</span>
+                  ) : null}
+                  <span className="global-search-result-title">
+                    {option.title || option.label}
+                  </span>
+                  {option.subtitle ? (
+                    <span className="global-search-result-subtitle">{option.subtitle}</span>
+                  ) : null}
+                </>
+              ) : (
+                <span className="global-search-result-title">{option.label}</span>
+              )}
+            </button>
+          )
+        })
+      )}
+    </div>
+  ) : null
+
   return (
     <div className={`form-search-select global-search-wrap ${className}`.trim()} ref={wrapRef}>
       <button
@@ -192,66 +297,11 @@ export default function FormSearchSelect({
         />
       </button>
 
-      {showDropdown ? (
-        <div className="global-search-dropdown form-search-select-dropdown" role="listbox">
-          {showSearch ? (
-            <div className="form-search-select-search">
-              <div className="global-search-inner">
-                <Search size={15} className="global-search-icon" aria-hidden="true" />
-                <input
-                  autoFocus
-                  type="search"
-                  className="global-search-input"
-                  placeholder="Search…"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  aria-label="Filter options"
-                />
-              </div>
-            </div>
-          ) : null}
-
-          {isLoading ? (
-            <p className="global-search-status">Loading…</p>
-          ) : filteredOptions.length === 0 ? (
-            <p className="global-search-status">{emptyMessage}</p>
-          ) : (
-            filteredOptions.map((option, index) => {
-              const isSelected = String(option.value) === String(value)
-              const isActive = index === activeIndex
-              const rich = !!(option.typeLabel || option.title || option.subtitle)
-              return (
-                <button
-                  key={String(option.value)}
-                  type="button"
-                  role="option"
-                  aria-selected={isSelected}
-                  className={`global-search-result${rich ? '' : ' is-simple'}${isSelected || isActive ? ' is-active' : ''}`}
-                  onMouseEnter={() => setActiveIndex(index)}
-                  onClick={() => selectOption(option)}
-                >
-                  {rich ? (
-                    <>
-                      {option.typeLabel ? (
-                        <span className="global-search-result-type">{option.typeLabel}</span>
-                      ) : null}
-                      <span className="global-search-result-title">
-                        {option.title || option.label}
-                      </span>
-                      {option.subtitle ? (
-                        <span className="global-search-result-subtitle">{option.subtitle}</span>
-                      ) : null}
-                    </>
-                  ) : (
-                    <span className="global-search-result-title">{option.label}</span>
-                  )}
-                </button>
-              )
-            })
-          )}
-        </div>
-      ) : null}
+      {portal && typeof document !== 'undefined'
+        ? dropdown
+          ? createPortal(dropdown, document.body)
+          : null
+        : dropdown}
     </div>
   )
 }
