@@ -18,12 +18,14 @@ const ATTENDANCE_EDITABLE_KEYS = [
   'days_worked',
   'paid_leave',
   'earned_leave',
+  'absent_days',
   'overtime_hours',
 ];
 
 const SALARY_COLUMNS = [
   { key: 'basic', label: 'Basic', title: 'Basic salary' },
-  { key: 'basic_earned', label: 'Basic Earned', title: 'Basic earned' },
+  { key: 'absent_deduction', label: 'Absent Deduction', title: 'basic / wage period × absent days' },
+  { key: 'basic_earned', label: 'Basic Earned', title: 'Basic − absent deduction' },
   { key: 'allowance', label: 'Allowance', title: 'Allowance' },
   { key: 'incentive_paid', label: 'Incentive Paid', title: 'Incentive paid' },
   { key: 'production_allowance', label: 'Production Allowance', title: 'Production allowance' },
@@ -45,9 +47,10 @@ const EDITABLE_KEYS = [
 ];
 
 const FORMULA_KEYS = [
+  'absent_deduction',
+  'basic_earned',
   'overtime_hourly_rate',
   'overtime_pay',
-  'basic_earned',
   'allowance',
   'inc_plus_prod_all',
   'allowance_plus_pa',
@@ -60,9 +63,10 @@ const FORMULA_KEYS = [
 ];
 
 const FORMULA_LABELS = {
+  absent_deduction: 'Absent Deduction',
+  basic_earned: 'Basic Earned',
   overtime_hourly_rate: 'Overtime Hourly Rate',
   overtime_pay: 'Overtime Pay',
-  basic_earned: 'Basic Earned',
   allowance: 'Allowance',
   inc_plus_prod_all: 'Inc+ Prod All',
   allowance_plus_pa: 'Allowance + Production Allowance',
@@ -536,9 +540,10 @@ export default function PayrollPage() {
                 <th className="payroll-col-sticky payroll-col-name" title="Employee name">Name</th>
                 <th title="Wage period (days in month)">Wage Period</th>
                 <th title="Days worked">Days Worked</th>
-                <th title="Paid leave">Paid Leave</th>
+                <th title="Paid leave from approved leave requests">Paid Leave</th>
                 <th title="Earned leave">Earned Leave</th>
-                <th title="Total overtime hours from attendance">Total Overtime (hrs)</th>
+                <th title="Days not worked without paid leave (ABSENT / unpaid leave)">Absent Days</th>
+                <th title="Total overtime hours for this month only">Total Overtime (hrs)</th>
                 {SALARY_COLUMNS.map((col) => (
                   <th
                     key={col.key}
@@ -588,6 +593,7 @@ export default function PayrollPage() {
                     <td className="payroll-num">{renderInput('days_worked')}</td>
                     <td className="payroll-num">{renderInput('paid_leave')}</td>
                     <td className="payroll-num">{renderInput('earned_leave')}</td>
+                    <td className="payroll-num">{renderInput('absent_days')}</td>
                     <td className="payroll-num">{renderInput('overtime_hours')}</td>
                     {SALARY_COLUMNS.map((col) => (
                       <td
@@ -650,9 +656,10 @@ export default function PayrollPage() {
               <div>
                 <h2 style={{ margin: 0, fontSize: 18 }}>Salary formulas</h2>
                 <p className="muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
-                  Overtime Hourly Rate is ((basic / 30) / 8.5) × 1.5. Overtime Pay is overtime hours × that
-                  rate. Both appear at the top of this list. Saving creates a new version. Locked months keep
-                  prior formulas.
+                  Absent Deduction is basic / wage period × absent days; Basic Earned is basic − that
+                  deduction (paid leave is not treated as absent). Overtime Hourly Rate is ((basic / 30) /
+                  8.5) × 1.5. Overtime Pay is overtime hours × that rate. Saving creates a new version.
+                  Locked months keep prior formulas.
                 </p>
               </div>
               <button type="button" className="mes-btn mes-btn-secondary" onClick={() => setShowFormulas(false)}>

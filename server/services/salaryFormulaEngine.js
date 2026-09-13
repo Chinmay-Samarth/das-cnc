@@ -6,6 +6,7 @@
 const INPUT_KEYS = [
   'wage_period',
   'days_worked',
+  'absent_days',
   'paid_leave',
   'earned_leave',
   'overtime_hours',
@@ -15,6 +16,7 @@ const INPUT_KEYS = [
 ];
 
 const OUTPUT_KEYS = [
+  'absent_deduction',
   'basic_earned',
   'allowance',
   'inc_plus_prod_all',
@@ -32,8 +34,9 @@ const OUTPUT_KEYS = [
 const COMPUTE_ORDER = [...OUTPUT_KEYS];
 
 const DEFAULT_FORMULAS = {
-  basic_earned:
-    'IF(basic > 0, basic / wage_period * (days_worked + paid_leave + earned_leave), 0)',
+  // LOP: deduct basic/wage_period for each absent day (paid leave is not absent)
+  absent_deduction: 'IF(wage_period > 0, basic / wage_period * absent_days, 0)',
+  basic_earned: 'IF(basic > 0, basic - absent_deduction, 0)',
   allowance: 'basic_earned * 0.15',
   inc_plus_prod_all: 'incentive_paid + production_allowance',
   allowance_plus_pa: 'allowance + production_allowance',
@@ -277,6 +280,19 @@ function normalizeFormulas(formulas) {
     !/\bovertime_hourly_rate\b/.test(storedOt)
   ) {
     merged.overtime_pay = DEFAULT_FORMULAS.overtime_pay;
+  }
+  const storedAbsent = String(merged.absent_deduction || '').trim();
+  if (!storedAbsent || storedAbsent === '0') {
+    merged.absent_deduction = DEFAULT_FORMULAS.absent_deduction;
+  }
+  const storedBasic = String(merged.basic_earned || '').trim();
+  // Upgrade older attendance-pro-rata basic formulas to LOP (basic − absent deduction)
+  if (
+    !storedBasic ||
+    storedBasic.includes('days_worked') ||
+    !/\babsent_deduction\b/.test(storedBasic)
+  ) {
+    merged.basic_earned = DEFAULT_FORMULAS.basic_earned;
   }
   const totalExpr = String(merged.total_earned || '');
   if (totalExpr && !/\bovertime_pay\b/.test(totalExpr)) {

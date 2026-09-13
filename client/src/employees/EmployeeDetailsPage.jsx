@@ -1022,6 +1022,8 @@ export default function EmployeeDetailsPage() {
                         { label: 'Days worked', value: payrollLine.days_worked, accent: '#059669' },
                         { label: 'Paid leave', value: payrollLine.paid_leave, accent: '#0ea5e9' },
                         { label: 'Earned leave', value: payrollLine.earned_leave, accent: '#6b7280' },
+                        { label: 'Absent days', value: payrollLine.absent_days, accent: '#dc2626' },
+                        { label: 'Absent deduction', value: payrollLine.absent_deduction, money: true, accent: '#dc2626' },
                         { label: 'Overtime (hrs)', value: payrollLine.overtime_hours, accent: '#d97706' },
                         { label: 'Basic', value: payrollLine.basic, money: true, accent: '#059669' },
                         { label: 'Basic earned', value: payrollLine.basic_earned, money: true, accent: '#059669' },

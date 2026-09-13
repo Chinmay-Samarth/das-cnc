@@ -25,6 +25,7 @@ const PRESENT_FAMILY = new Set(['PRESENT', 'COMPLETED', 'LATE', 'HALF_DAY']);
 const FULL_DAY_MINUTES = 8.5 * 60;
 const EDITABLE_INPUT_KEYS = [
   'days_worked',
+  'absent_days',
   'paid_leave',
   'earned_leave',
   'overtime_hours',
@@ -35,6 +36,8 @@ const EDITABLE_INPUT_KEYS = [
 
 const OPTIONAL_LINE_COLUMNS = [
   'inc_plus_prod_all',
+  'absent_days',
+  'absent_deduction',
   'overtime_hours',
   'overtime_hourly_rate',
   'overtime_pay',
@@ -78,6 +81,12 @@ function hydratePayrollLine(row) {
   }
   if (row.overtime_hours == null) {
     row.overtime_hours = toNumber(snapshotIn.overtime_hours, 0);
+  }
+  if (row.absent_days == null) {
+    row.absent_days = toNumber(snapshotIn.absent_days, 0);
+  }
+  if (row.absent_deduction == null) {
+    row.absent_deduction = toNumber(snapshotOut.absent_deduction, 0);
   }
   if (!overrides.includes('overtime_hourly_rate')) {
     const fromBasic = overtimeHourlyRateFromBasic(row.basic);
@@ -225,6 +234,7 @@ async function getOrCreateRun(year, month) {
 /**
  * Days worked = unique calendar days with PRESENT / COMPLETED / LATE / HALF_DAY.
  * Matches Employee Details → Attendance tab "Present" tile.
+ * Counts only rows already filtered to the payroll month.
  */
 function countDaysWorked(records) {
   const presentDates = new Set();
@@ -237,10 +247,101 @@ function countDaysWorked(records) {
   return presentDates.size;
 }
 
+function collectDatesByStatus(records, statuses) {
+  const wanted = new Set((statuses || []).map((s) => String(s).toUpperCase()));
+  const dates = new Set();
+  for (const r of records || []) {
+    const status = String(r.status || '').toUpperCase();
+    if (!wanted.has(status)) continue;
+    const date = String(r.shift_date || '').slice(0, 10);
+    if (date) dates.add(date);
+  }
+  return dates;
+}
+
+function eachDateInclusive(startYmd, endYmd) {
+  const out = [];
+  if (!startYmd || !endYmd || startYmd > endYmd) return out;
+  const cur = new Date(`${startYmd}T00:00:00Z`);
+  const end = new Date(`${endYmd}T00:00:00Z`);
+  while (cur <= end) {
+    out.push(cur.toISOString().slice(0, 10));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return out;
+}
+
 /**
- * Overtime = minutes worked beyond 8.5 hours on a single calendar day.
- * Recomputed from minutes_worked because stored overtime_minutes on older rows
- * was measured against the shift duration instead of the 8.5 hour day.
+ * Paid leave from approved leave_requests (pay_type=paid).
+ * Absent days:
+ *  1) explicit ABSENT / unpaid LEAVE attendance, plus
+ *  2) LOP residual when those status rows are missing:
+ *     accountableDays − days_worked − paid_leave − earned_leave
+ * For the current month, accountable days stop at today so future days are not LOP yet.
+ */
+function computeLeaveAndAbsent(
+  records,
+  leaveRows,
+  monthStart,
+  monthEnd,
+  { daysWorked = null, earnedLeave = 0, wagePeriod = null } = {}
+) {
+  const paidLeaveDates = new Set();
+  const unpaidLeaveDates = new Set();
+
+  for (const row of leaveRows || []) {
+    if (String(row.status || '').toLowerCase() !== 'approved') continue;
+    const rangeStart = row.start_date > monthStart ? row.start_date : monthStart;
+    const rangeEnd = row.end_date < monthEnd ? row.end_date : monthEnd;
+    const dates = eachDateInclusive(rangeStart, rangeEnd);
+    const payType = String(row.pay_type || '').toLowerCase();
+    const target = payType === 'paid' ? paidLeaveDates : unpaidLeaveDates;
+    for (const d of dates) target.add(d);
+  }
+
+  const absentAttendance = collectDatesByStatus(records, ['ABSENT']);
+  const leaveAttendance = collectDatesByStatus(records, ['LEAVE']);
+  const presentDates = collectDatesByStatus(records, [...PRESENT_FAMILY]);
+
+  const absentDates = new Set();
+  for (const d of absentAttendance) {
+    if (!paidLeaveDates.has(d) && !presentDates.has(d)) absentDates.add(d);
+  }
+  for (const d of unpaidLeaveDates) {
+    if (!paidLeaveDates.has(d) && !presentDates.has(d)) absentDates.add(d);
+  }
+  for (const d of leaveAttendance) {
+    if (!paidLeaveDates.has(d) && !presentDates.has(d)) absentDates.add(d);
+  }
+
+  const worked =
+    daysWorked == null ? presentDates.size : toNumber(daysWorked, presentDates.size);
+  const paidLeave = paidLeaveDates.size;
+  const earned = toNumber(earnedLeave, 0);
+  const accountableDays = accountableDaysInMonth(monthStart, monthEnd, wagePeriod);
+  const residualAbsent = Math.max(0, accountableDays - worked - paidLeave - earned);
+  const absentDays = Math.max(absentDates.size, residualAbsent);
+
+  return {
+    paid_leave: paidLeave,
+    absent_days: absentDays,
+  };
+}
+
+/** Calendar days in the payroll month that can already be treated as LOP-eligible. */
+function accountableDaysInMonth(monthStart, monthEnd, wagePeriod = null) {
+  const today = new Date().toISOString().slice(0, 10);
+  const end = monthEnd < today ? monthEnd : today < monthStart ? monthStart : today;
+  const elapsed = eachDateInclusive(monthStart, end).length;
+  if (monthEnd < today && wagePeriod != null && Number(wagePeriod) > 0) {
+    return Number(wagePeriod);
+  }
+  return elapsed;
+}
+
+/**
+ * Overtime = minutes worked beyond 8.5 hours on a single calendar day,
+ * summed only for the records passed in (already limited to one payroll month).
  */
 function sumOvertimeHours(records) {
   const minutesByDate = new Map();
@@ -303,7 +404,7 @@ async function loadAttendanceByEmployee(employeeIds, start, end) {
   return map;
 }
 
-async function loadPaidLeaveDaysByEmployee(employeeIds, start, end) {
+async function loadLeaveRequestsByEmployee(employeeIds, start, end) {
   if (!employeeIds.length) return {};
   const map = {};
   const idChunkSize = 80;
@@ -319,7 +420,6 @@ async function loadPaidLeaveDaysByEmployee(employeeIds, start, end) {
         .select('employee_id, start_date, end_date, days, pay_type, status')
         .in('employee_id', chunk)
         .eq('status', 'approved')
-        .eq('pay_type', 'paid')
         .lte('start_date', end)
         .gte('end_date', start)
         .order('employee_id', { ascending: true })
@@ -328,8 +428,8 @@ async function loadPaidLeaveDaysByEmployee(employeeIds, start, end) {
 
       const rows = data || [];
       for (const row of rows) {
-        const days = overlapDaysInclusive(row.start_date, row.end_date, start, end);
-        map[row.employee_id] = (map[row.employee_id] || 0) + days;
+        if (!map[row.employee_id]) map[row.employee_id] = [];
+        map[row.employee_id].push(row);
       }
 
       if (rows.length < pageSize) break;
@@ -337,6 +437,17 @@ async function loadPaidLeaveDaysByEmployee(employeeIds, start, end) {
     }
   }
 
+  return map;
+}
+
+/** @deprecated use loadLeaveRequestsByEmployee + computeLeaveAndAbsent */
+async function loadPaidLeaveDaysByEmployee(employeeIds, start, end) {
+  const leaveMap = await loadLeaveRequestsByEmployee(employeeIds, start, end);
+  const map = {};
+  for (const [employeeId, rows] of Object.entries(leaveMap)) {
+    const { paid_leave } = computeLeaveAndAbsent([], rows, start, end);
+    map[employeeId] = paid_leave;
+  }
   return map;
 }
 
@@ -356,6 +467,7 @@ function buildLinePayload({
     formula_version_id: formulaVersionId,
     wage_period: toNumber(inputs.wage_period),
     days_worked: toNumber(inputs.days_worked),
+    absent_days: toNumber(inputs.absent_days),
     paid_leave: toNumber(inputs.paid_leave),
     earned_leave: toNumber(inputs.earned_leave),
     overtime_hours: toNumber(inputs.overtime_hours),
@@ -368,6 +480,7 @@ function buildLinePayload({
     allowance_plus_pa: toNumber(outputs.allowance_plus_pa),
     overtime_hourly_rate: toNumber(outputs.overtime_hourly_rate),
     overtime_pay: toNumber(outputs.overtime_pay),
+    absent_deduction: toNumber(outputs.absent_deduction),
     total_earned: toNumber(outputs.total_earned),
     esi: toNumber(outputs.esi),
     pf: toNumber(outputs.pf),
@@ -415,21 +528,83 @@ async function listLinesForRun(runId) {
 async function getPayroll(year, month) {
   const { run, bounds } = await getOrCreateRun(year, month);
   let lines = await listLinesForRun(run.id);
-  // Draft months always show live OT from attendance so hours appear without a
-  // separate Refresh after the overtime rule changed.
+  // Draft months always show live attendance stats for THIS month only
+  // (days worked, absent days, overtime hours) so prior months never leak in.
   if (run.status !== 'locked' && lines.length) {
-    lines = await attachLiveOvertimeHours(lines, bounds);
+    const formulas =
+      run.formula_version?.formulas ||
+      (await getFormulaVersionById(run.formula_version_id)).formulas ||
+      DEFAULT_FORMULAS;
+    lines = await attachLiveAttendanceStats(lines, bounds, formulas);
+    await persistLiveAttendanceStats(lines);
   }
   return { run, lines, bounds };
 }
 
 /**
- * Fill overtime_hours / rate / pay from attendance for each payroll line,
- * keyed strictly by employee_id. Manual overrides are left alone.
+ * Write live attendance + recomputed salary fields back to salary_payroll_lines
+ * so absent_days / absent_deduction are stored, not only returned in the API.
  */
-async function attachLiveOvertimeHours(lines, bounds) {
+async function persistLiveAttendanceStats(lines) {
+  if (!lines.length) return;
+  const now = new Date().toISOString();
+  const chunkSize = 40;
+  for (let i = 0; i < lines.length; i += chunkSize) {
+    const chunk = lines.slice(i, i + chunkSize);
+    await Promise.all(
+      chunk.map(async (line) => {
+        if (!line?.id) return;
+        const payload = {
+          days_worked: toNumber(line.days_worked),
+          absent_days: toNumber(line.absent_days),
+          paid_leave: toNumber(line.paid_leave),
+          overtime_hours: toNumber(line.overtime_hours),
+          absent_deduction: toNumber(line.absent_deduction),
+          basic_earned: toNumber(line.basic_earned),
+          allowance: toNumber(line.allowance),
+          inc_plus_prod_all: toNumber(line.inc_plus_prod_all),
+          allowance_plus_pa: toNumber(line.allowance_plus_pa),
+          overtime_hourly_rate: toNumber(line.overtime_hourly_rate),
+          overtime_pay: toNumber(line.overtime_pay),
+          total_earned: toNumber(line.total_earned),
+          esi: toNumber(line.esi),
+          pf: toNumber(line.pf),
+          pt: toNumber(line.pt),
+          total_deductions: toNumber(line.total_deductions),
+          net_paid: toNumber(line.net_paid),
+          updated_at: now,
+        };
+        let body = payload;
+        for (let attempt = 0; attempt <= OPTIONAL_LINE_COLUMNS.length; attempt++) {
+          const { error } = await supabase
+            .from('salary_payroll_lines')
+            .update(body)
+            .eq('id', line.id);
+          if (!error) break;
+          const missing = missingOptionalColumn(error, body);
+          if (!missing) {
+            console.error('persistLiveAttendanceStats failed:', error.message || error);
+            break;
+          }
+          body = stripUnknownColumn(body, missing);
+        }
+      })
+    );
+  }
+}
+
+/**
+ * Fill days_worked / paid_leave / absent_days / overtime_* from attendance + leave_requests,
+ * then recompute salary so absent_deduction (basic/wage_period × absent_days) hits net pay.
+ */
+async function attachLiveAttendanceStats(lines, bounds, formulas = DEFAULT_FORMULAS) {
   const employeeIds = [...new Set(lines.map((l) => l.employee_id).filter(Boolean))];
   const attendanceMap = await loadAttendanceByEmployee(
+    employeeIds,
+    bounds.start,
+    bounds.end
+  );
+  const leaveMap = await loadLeaveRequestsByEmployee(
     employeeIds,
     bounds.start,
     bounds.end
@@ -437,20 +612,68 @@ async function attachLiveOvertimeHours(lines, bounds) {
 
   return lines.map((line) => {
     const overrides = parseOverrides(line.manual_overrides);
+    const monthRecords = attendanceMap[line.employee_id] || [];
+    const leaveRows = leaveMap[line.employee_id] || [];
+    const worked = overrides.includes('days_worked')
+      ? toNumber(line.days_worked)
+      : countDaysWorked(monthRecords);
+    const earnedLeave = overrides.includes('earned_leave')
+      ? toNumber(line.earned_leave)
+      : toNumber(line.earned_leave, 0);
+    const leaveStats = computeLeaveAndAbsent(
+      monthRecords,
+      leaveRows,
+      bounds.start,
+      bounds.end,
+      {
+        daysWorked: worked,
+        earnedLeave,
+        wagePeriod: bounds.wagePeriod,
+      }
+    );
     const next = { ...line };
 
+    if (!overrides.includes('days_worked')) {
+      next.days_worked = worked;
+    }
+    if (!overrides.includes('paid_leave')) {
+      next.paid_leave = leaveStats.paid_leave;
+    }
+    if (!overrides.includes('absent_days')) {
+      next.absent_days = leaveStats.absent_days;
+    }
     if (!overrides.includes('overtime_hours')) {
-      next.overtime_hours = sumOvertimeHours(attendanceMap[line.employee_id]);
+      next.overtime_hours = sumOvertimeHours(monthRecords);
     }
 
-    if (!overrides.includes('overtime_hourly_rate')) {
-      const fromBasic = overtimeHourlyRateFromBasic(next.basic);
-      if (fromBasic > 0) next.overtime_hourly_rate = fromBasic;
+    const inputs = {
+      wage_period: toNumber(next.wage_period, bounds.wagePeriod),
+      days_worked: toNumber(next.days_worked),
+      absent_days: toNumber(next.absent_days),
+      paid_leave: toNumber(next.paid_leave),
+      earned_leave: toNumber(next.earned_leave),
+      overtime_hours: toNumber(next.overtime_hours),
+      basic: toNumber(next.basic),
+      incentive_paid: toNumber(next.incentive_paid),
+      production_allowance: toNumber(next.production_allowance),
+    };
+
+    const overrideValues = {};
+    for (const key of OUTPUT_KEYS) {
+      if (overrides.includes(key)) {
+        overrideValues[key] = toNumber(next[key], 0);
+      }
     }
 
-    if (!overrides.includes('overtime_pay')) {
-      next.overtime_pay =
-        toNumber(next.overtime_hours, 0) * toNumber(next.overtime_hourly_rate, 0);
+    const { outputs } = computeLine(inputs, formulas, {
+      overrides,
+      values: overrideValues,
+    });
+
+    for (const key of OUTPUT_KEYS) {
+      if (!overrides.includes(key)) {
+        next[key] = outputs[key];
+      }
     }
 
     return next;
@@ -493,23 +716,44 @@ async function generatePayroll(year, month, { preserveOverrides = true } = {}) {
   const existingByEmp = Object.fromEntries(existingLines.map((l) => [l.employee_id, l]));
 
   const attendanceMap = await loadAttendanceByEmployee(employeeIds, bounds.start, bounds.end);
-  const paidLeaveMap = await loadPaidLeaveDaysByEmployee(employeeIds, bounds.start, bounds.end);
+  const leaveMap = await loadLeaveRequestsByEmployee(employeeIds, bounds.start, bounds.end);
 
   const upserts = [];
   for (const emp of employees || []) {
     const existing = existingByEmp[emp.id];
     const overrides = preserveOverrides ? parseOverrides(existing?.manual_overrides) : [];
 
-    const autoDays = countDaysWorked(attendanceMap[emp.id]);
-    const autoPaidLeave = paidLeaveMap[emp.id] || 0;
+    const monthRecords = attendanceMap[emp.id] || [];
+    const autoDays = countDaysWorked(monthRecords);
+    const earnedLeave = overrides.includes('earned_leave')
+      ? toNumber(existing?.earned_leave, 0)
+      : toNumber(existing?.earned_leave, 0);
+    const leaveStats = computeLeaveAndAbsent(
+      monthRecords,
+      leaveMap[emp.id] || [],
+      bounds.start,
+      bounds.end,
+      {
+        daysWorked: overrides.includes('days_worked')
+          ? toNumber(existing.days_worked)
+          : autoDays,
+        earnedLeave,
+        wagePeriod: bounds.wagePeriod,
+      }
+    );
+    const autoAbsentDays = leaveStats.absent_days;
+    const autoPaidLeave = leaveStats.paid_leave;
     const autoBasic = toNumber(emp.basic_salary, 0);
-    const autoOvertimeHours = sumOvertimeHours(attendanceMap[emp.id]);
+    const autoOvertimeHours = sumOvertimeHours(monthRecords);
 
     const inputs = {
       wage_period: bounds.wagePeriod,
       days_worked: overrides.includes('days_worked')
         ? toNumber(existing.days_worked)
         : autoDays,
+      absent_days: overrides.includes('absent_days')
+        ? toNumber(existing?.absent_days, 0)
+        : autoAbsentDays,
       paid_leave: overrides.includes('paid_leave')
         ? toNumber(existing.paid_leave)
         : autoPaidLeave,
@@ -606,6 +850,7 @@ async function updatePayrollLine(lineId, patch, userId) {
   const inputs = {
     wage_period: toNumber(line.wage_period),
     days_worked: toNumber(line.days_worked),
+    absent_days: toNumber(line.absent_days),
     paid_leave: toNumber(line.paid_leave),
     earned_leave: toNumber(line.earned_leave),
     overtime_hours: toNumber(line.overtime_hours),
@@ -732,6 +977,8 @@ async function exportPayrollWorkbook(year, month) {
     { header: 'Days Worked', key: 'days_worked', width: 12 },
     { header: 'Paid Leave', key: 'paid_leave', width: 12 },
     { header: 'Earned Leave', key: 'earned_leave', width: 12 },
+    { header: 'Absent Days', key: 'absent_days', width: 12 },
+    { header: 'Absent Deduction', key: 'absent_deduction', width: 16 },
     { header: 'Total Overtime (hrs)', key: 'overtime_hours', width: 16 },
     { header: 'Basic', key: 'basic', width: 12 },
     { header: 'Basic Earned', key: 'basic_earned', width: 14 },
@@ -759,6 +1006,8 @@ async function exportPayrollWorkbook(year, month) {
       days_worked: Number(line.days_worked),
       paid_leave: Number(line.paid_leave),
       earned_leave: Number(line.earned_leave),
+      absent_days: Number(line.absent_days),
+      absent_deduction: Number(line.absent_deduction),
       overtime_hours: Number(line.overtime_hours),
       basic: Number(line.basic),
       basic_earned: Number(line.basic_earned),
