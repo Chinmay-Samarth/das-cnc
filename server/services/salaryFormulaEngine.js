@@ -1,12 +1,23 @@
 /**
  * Safe salary formula evaluator + Excel-baseline compute helpers.
  * Supports arithmetic, comparisons, parentheses, and IF(cond, a, b).
+ *
+ * Excel payroll model (no double LOP):
+ * - Basic Earned = basic / wage_period × (days_worked + paid_leave + earned_leave)
+ * - Absent Deduction = basic/30 × absent_days + basic/30 × unauthorized_absent_days × 1.5
+ *   (shown for accounting; NOT subtracted again from Net because Basic Earned already
+ *   excludes unpaid days)
+ * - OT Hourly Rate = basic / 170
+ * - Regular Earnings = Basic Earned + Allowance + Incentive + Production Allowance
+ * - Gross (total_earned) = Regular Earnings + OT Pay
+ * - ESI on gross @ 0.75%; PF on basic_earned+allowance (capped); PT on gross
  */
 
 const INPUT_KEYS = [
   'wage_period',
   'days_worked',
   'absent_days',
+  'unauthorized_absent_days',
   'paid_leave',
   'earned_leave',
   'overtime_hours',
@@ -16,13 +27,14 @@ const INPUT_KEYS = [
 ];
 
 const OUTPUT_KEYS = [
-  'absent_deduction',
   'basic_earned',
+  'absent_deduction',
   'allowance',
   'inc_plus_prod_all',
   'allowance_plus_pa',
   'overtime_hourly_rate',
   'overtime_pay',
+  'regular_earnings',
   'total_earned',
   'esi',
   'pf',
@@ -34,21 +46,30 @@ const OUTPUT_KEYS = [
 const COMPUTE_ORDER = [...OUTPUT_KEYS];
 
 const DEFAULT_FORMULAS = {
-  // LOP: deduct basic/wage_period for each absent day (paid leave is not absent)
-  absent_deduction: 'IF(wage_period > 0, basic / wage_period * absent_days, 0)',
-  basic_earned: 'IF(basic > 0, basic - absent_deduction, 0)',
+  // Paid/worked days only — do NOT use basic - absent_deduction
+  basic_earned:
+    'IF(wage_period > 0, basic / wage_period * (days_worked + paid_leave + earned_leave), 0)',
+  // Excel LOP cut uses fixed /30 divisor; unauthorized days at 1.5x
+  absent_deduction:
+    'basic / 30 * absent_days + basic / 30 * unauthorized_absent_days * 1.5',
   allowance: 'basic_earned * 0.15',
   inc_plus_prod_all: 'incentive_paid + production_allowance',
   allowance_plus_pa: 'allowance + production_allowance',
-  overtime_hourly_rate: '((basic / 30) / 8.5) * 1.5',
+  overtime_hourly_rate: 'basic / 170',
   overtime_pay: 'overtime_hours * overtime_hourly_rate',
-  total_earned:
-    'basic_earned + allowance + production_allowance + incentive_paid + overtime_pay',
+  // Regular earnings exclude OT; total_earned is gross (regular + OT)
+  regular_earnings:
+    'basic_earned + allowance + production_allowance + incentive_paid',
+  total_earned: 'regular_earnings + overtime_pay',
+  // ESI wage base = gross including OT
   esi: 'total_earned * 0.75 / 100',
+  // PF wages = basic_earned + allowance only (no OT), capped at 15000
   pf: 'IF((basic_earned + allowance) <= 15000, (basic_earned + allowance) * 0.12, 15000 * 0.12)',
   pt: 'IF(total_earned > 25000, 200, 0)',
+  // Statutory deductions only — absent_deduction is NOT subtracted again
   total_deductions: 'esi + pf + pt',
-  net_paid: 'total_earned - total_deductions',
+  // Excel: Net Paid = Total Earned − ESI − PF − PT
+  net_paid: 'total_earned - esi - pf - pt',
 };
 
 const ALLOWED_IDENTIFIERS = new Set([...INPUT_KEYS, ...OUTPUT_KEYS]);
@@ -59,10 +80,11 @@ function httpError(message, status = 400) {
   return err;
 }
 
+/** Excel OT rate: Basic / 170 */
 function overtimeHourlyRateFromBasic(basic) {
   const b = toNumber(basic, 0);
   if (b <= 0) return 0;
-  return (b / 30 / 8.5) * 1.5;
+  return b / 170;
 }
 
 function toNumber(value, fallback = 0) {
@@ -268,36 +290,79 @@ function evaluateFormula(expr, vars) {
 
 function normalizeFormulas(formulas) {
   const merged = { ...DEFAULT_FORMULAS, ...(formulas || {}) };
+
+  // Force-upgrade known outdated Excel-mismatched formulas stored in older versions
   const storedRate = String(merged.overtime_hourly_rate || '').trim();
-  if (!storedRate || storedRate === '0') {
+  if (
+    !storedRate ||
+    storedRate === '0' ||
+    storedRate.includes('8.5') ||
+    storedRate.includes('/ 30')
+  ) {
     merged.overtime_hourly_rate = DEFAULT_FORMULAS.overtime_hourly_rate;
   }
+
   const storedOt = String(merged.overtime_pay || '').trim();
-  if (
-    !storedOt ||
-    storedOt === '0' ||
-    storedOt.includes('/ 8.5') ||
-    !/\bovertime_hourly_rate\b/.test(storedOt)
-  ) {
+  if (!storedOt || storedOt === '0' || !/\bovertime_hourly_rate\b/.test(storedOt)) {
     merged.overtime_pay = DEFAULT_FORMULAS.overtime_pay;
   }
+
   const storedAbsent = String(merged.absent_deduction || '').trim();
-  if (!storedAbsent || storedAbsent === '0') {
+  if (
+    !storedAbsent ||
+    storedAbsent === '0' ||
+    storedAbsent.includes('wage_period') ||
+    !storedAbsent.includes('unauthorized_absent_days')
+  ) {
     merged.absent_deduction = DEFAULT_FORMULAS.absent_deduction;
   }
+
   const storedBasic = String(merged.basic_earned || '').trim();
-  // Upgrade older attendance-pro-rata basic formulas to LOP (basic − absent deduction)
+  // Reject "basic - absent_deduction" LOP-as-basic model
   if (
     !storedBasic ||
-    storedBasic.includes('days_worked') ||
-    !/\babsent_deduction\b/.test(storedBasic)
+    storedBasic.includes('absent_deduction') ||
+    !storedBasic.includes('days_worked')
   ) {
     merged.basic_earned = DEFAULT_FORMULAS.basic_earned;
   }
-  const totalExpr = String(merged.total_earned || '');
-  if (totalExpr && !/\bovertime_pay\b/.test(totalExpr)) {
-    merged.total_earned = `(${totalExpr}) + overtime_pay`;
+
+  if (!String(merged.regular_earnings || '').trim()) {
+    merged.regular_earnings = DEFAULT_FORMULAS.regular_earnings;
   }
+
+  const totalExpr = String(merged.total_earned || '').trim();
+  if (
+    !totalExpr ||
+    !/\bregular_earnings\b/.test(totalExpr) ||
+    !/\bovertime_pay\b/.test(totalExpr)
+  ) {
+    merged.total_earned = DEFAULT_FORMULAS.total_earned;
+  }
+
+  // Ensure absent_deduction is never baked into net/total_deductions
+  const dedExpr = String(merged.total_deductions || '');
+  if (
+    !dedExpr ||
+    /\babsent_deduction\b/.test(dedExpr) ||
+    !/\besi\b/.test(dedExpr) ||
+    !/\bpf\b/.test(dedExpr) ||
+    !/\bpt\b/.test(dedExpr)
+  ) {
+    merged.total_deductions = DEFAULT_FORMULAS.total_deductions;
+  }
+  const netExpr = String(merged.net_paid || '');
+  if (
+    !netExpr ||
+    /\babsent_deduction\b/.test(netExpr) ||
+    !/\btotal_earned\b/.test(netExpr) ||
+    !/\besi\b/.test(netExpr) ||
+    !/\bpf\b/.test(netExpr) ||
+    !/\bpt\b/.test(netExpr)
+  ) {
+    merged.net_paid = DEFAULT_FORMULAS.net_paid;
+  }
+
   for (const key of OUTPUT_KEYS) {
     if (!merged[key] || typeof merged[key] !== 'string') {
       merged[key] = DEFAULT_FORMULAS[key];

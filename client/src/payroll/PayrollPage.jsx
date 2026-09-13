@@ -19,26 +19,40 @@ const ATTENDANCE_EDITABLE_KEYS = [
   'paid_leave',
   'earned_leave',
   'absent_days',
+  'unauthorized_absent_days',
   'overtime_hours',
 ];
 
 const SALARY_COLUMNS = [
   { key: 'basic', label: 'Basic', title: 'Basic salary' },
-  { key: 'absent_deduction', label: 'Absent Deduction', title: 'basic / wage period × absent days' },
-  { key: 'basic_earned', label: 'Basic Earned', title: 'Basic − absent deduction' },
+  {
+    key: 'absent_deduction',
+    label: 'Absent Deduction',
+    title: 'basic/30 × absent + basic/30 × unauthorized × 1.5 (accounting; not re-cut from net)',
+  },
+  {
+    key: 'basic_earned',
+    label: 'Basic Earned',
+    title: 'basic / wage period × (days worked + paid leave + earned leave)',
+  },
   { key: 'allowance', label: 'Allowance', title: 'Allowance' },
   { key: 'incentive_paid', label: 'Incentive Paid', title: 'Incentive paid' },
   { key: 'production_allowance', label: 'Production Allowance', title: 'Production allowance' },
   { key: 'inc_plus_prod_all', label: 'Inc+ Prod All', title: 'Incentive + Production Allowance' },
   { key: 'allowance_plus_pa', label: 'Allowance + Production Allowance', title: 'Allowance + Production Allowance' },
-  { key: 'overtime_hourly_rate', label: 'Overtime Hourly Rate', title: '((basic / 30) / 8.5) × 1.5' },
+  { key: 'overtime_hourly_rate', label: 'Overtime Hourly Rate', title: 'basic / 170' },
   { key: 'overtime_pay', label: 'Overtime Pay', title: 'Overtime hours × overtime hourly rate' },
-  { key: 'total_earned', label: 'Total Earned', title: 'Total earned' },
-  { key: 'esi', label: 'ESI', title: 'ESI' },
-  { key: 'pf', label: 'PF', title: 'PF' },
-  { key: 'pt', label: 'PT', title: 'PT' },
-  { key: 'total_deductions', label: 'Total', title: 'Total deductions' },
-  { key: 'net_paid', label: 'Net Paid', title: 'Net paid' },
+  {
+    key: 'regular_earnings',
+    label: 'Regular Earnings',
+    title: 'Basic earned + allowance + incentive + production allowance',
+  },
+  { key: 'total_earned', label: 'Total Earned', title: 'Regular earnings + overtime pay (gross)' },
+  { key: 'esi', label: 'ESI', title: 'ESI on gross @ 0.75%' },
+  { key: 'pf', label: 'PF', title: 'PF on basic earned + allowance (no OT)' },
+  { key: 'pt', label: 'PT', title: 'Professional tax' },
+  { key: 'total_deductions', label: 'Total', title: 'ESI + PF + PT' },
+  { key: 'net_paid', label: 'Net Paid', title: 'Total Earned − ESI − PF − PT' },
 ];
 
 const EDITABLE_KEYS = [
@@ -54,6 +68,7 @@ const FORMULA_KEYS = [
   'allowance',
   'inc_plus_prod_all',
   'allowance_plus_pa',
+  'regular_earnings',
   'total_earned',
   'esi',
   'pf',
@@ -70,6 +85,7 @@ const FORMULA_LABELS = {
   allowance: 'Allowance',
   inc_plus_prod_all: 'Inc+ Prod All',
   allowance_plus_pa: 'Allowance + Production Allowance',
+  regular_earnings: 'Regular Earnings',
   total_earned: 'Total Earned',
   esi: 'ESI',
   pf: 'PF',
@@ -92,7 +108,7 @@ function overrideList(line) {
 function overtimeHourlyRateFromBasic(basic) {
   const b = Number(basic);
   if (!Number.isFinite(b) || b <= 0) return 0;
-  return (b / 30 / 8.5) * 1.5;
+  return b / 170;
 }
 
 function currentYm() {
@@ -258,19 +274,70 @@ export default function PayrollPage() {
     const draft = drafts[line.id];
     if (draft && draft[key] !== undefined) return draft[key];
     const overrides = overrideList(line);
-    const basic = draft?.basic !== undefined ? draft.basic : line.basic;
-    const hours = draft?.overtime_hours !== undefined ? draft.overtime_hours : line.overtime_hours;
+    const readNum = (k) => {
+      if (draft && draft[k] !== undefined) {
+        const n = Number(draft[k]);
+        return Number.isFinite(n) ? n : 0;
+      }
+      const n = Number(line[k]);
+      return Number.isFinite(n) ? n : 0;
+    };
+    const basic = readNum('basic');
+    const hours = readNum('overtime_hours');
+    const liveRate = (() => {
+      if (overrides.includes('overtime_hourly_rate')) return readNum('overtime_hourly_rate');
+      const fromBasic = overtimeHourlyRateFromBasic(basic);
+      return fromBasic > 0 ? fromBasic : readNum('overtime_hourly_rate');
+    })();
+    const liveOtPay = overrides.includes('overtime_pay')
+      ? readNum('overtime_pay')
+      : hours * liveRate;
+    const liveRegular = overrides.includes('regular_earnings')
+      ? readNum('regular_earnings')
+      : readNum('basic_earned') +
+        readNum('allowance') +
+        readNum('incentive_paid') +
+        readNum('production_allowance');
+
     if (key === 'overtime_hourly_rate' && !overrides.includes(key)) {
-      const rate = overtimeHourlyRateFromBasic(basic);
-      if (rate > 0) return rate;
+      if (liveRate > 0) return liveRate;
     }
     if (key === 'overtime_pay' && !overrides.includes(key)) {
-      const rate =
-        draft?.overtime_hourly_rate !== undefined
-          ? Number(draft.overtime_hourly_rate)
-          : overtimeHourlyRateFromBasic(basic) || Number(line.overtime_hourly_rate) || 0;
-      const otHours = Number(hours) || 0;
-      return otHours * (Number.isFinite(rate) ? rate : 0);
+      return liveOtPay;
+    }
+    if (key === 'regular_earnings') {
+      if (
+        !draft ||
+        (!draft.basic_earned && !draft.allowance && !draft.incentive_paid && !draft.production_allowance)
+      ) {
+        const stored = Number(line.regular_earnings);
+        if (Number.isFinite(stored) && stored > 0) return stored;
+      }
+      return liveRegular;
+    }
+    if (key === 'total_earned') {
+      const regular =
+        Number(line.regular_earnings) > 0 &&
+        !(draft && (draft.basic_earned !== undefined || draft.allowance !== undefined))
+          ? readNum('regular_earnings')
+          : liveRegular;
+      return regular + liveOtPay;
+    }
+    // Always derive Net from the same Total Earned the grid shows
+    if (key === 'esi' || key === 'pt' || key === 'total_deductions' || key === 'net_paid') {
+      const regular =
+        Number(line.regular_earnings) > 0 &&
+        !(draft && (draft.basic_earned !== undefined || draft.allowance !== undefined))
+          ? readNum('regular_earnings')
+          : liveRegular;
+      const gross = regular + liveOtPay;
+      const esi = (gross * 0.75) / 100;
+      const pf = readNum('pf');
+      const pt = gross > 25000 ? 200 : 0;
+      if (key === 'esi') return esi;
+      if (key === 'pt') return pt;
+      if (key === 'total_deductions') return esi + pf + pt;
+      return gross - esi - pf - pt;
     }
     return line[key] ?? '';
   }
@@ -542,7 +609,8 @@ export default function PayrollPage() {
                 <th title="Days worked">Days Worked</th>
                 <th title="Paid leave from approved leave requests">Paid Leave</th>
                 <th title="Earned leave">Earned Leave</th>
-                <th title="Days not worked without paid leave (ABSENT / unpaid leave)">Absent Days</th>
+                <th title="Normal unpaid absent days">Absent Days</th>
+                <th title="Unauthorized absent days (1.5× in absent deduction)">Unauthorized Absent</th>
                 <th title="Total overtime hours for this month only">Total Overtime (hrs)</th>
                 {SALARY_COLUMNS.map((col) => (
                   <th
@@ -594,6 +662,7 @@ export default function PayrollPage() {
                     <td className="payroll-num">{renderInput('paid_leave')}</td>
                     <td className="payroll-num">{renderInput('earned_leave')}</td>
                     <td className="payroll-num">{renderInput('absent_days')}</td>
+                    <td className="payroll-num">{renderInput('unauthorized_absent_days')}</td>
                     <td className="payroll-num">{renderInput('overtime_hours')}</td>
                     {SALARY_COLUMNS.map((col) => (
                       <td
@@ -656,10 +725,12 @@ export default function PayrollPage() {
               <div>
                 <h2 style={{ margin: 0, fontSize: 18 }}>Salary formulas</h2>
                 <p className="muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
-                  Absent Deduction is basic / wage period × absent days; Basic Earned is basic − that
-                  deduction (paid leave is not treated as absent). Overtime Hourly Rate is ((basic / 30) /
-                  8.5) × 1.5. Overtime Pay is overtime hours × that rate. Saving creates a new version.
-                  Locked months keep prior formulas.
+                  Basic Earned = basic / wage period × (days worked + paid leave + earned leave).
+                  Absent Deduction = basic/30 × absent + basic/30 × unauthorized × 1.5 (shown for
+                  accounting; not subtracted again from Net). OT rate = basic / 170. Gross (Total
+                  Earned) = regular earnings + OT. ESI on gross; PF on basic earned + allowance.
+                  Net Paid = Total Earned − ESI − PF − PT. Saving creates a new version. Locked
+                  months keep prior formulas.
                 </p>
               </div>
               <button type="button" className="mes-btn mes-btn-secondary" onClick={() => setShowFormulas(false)}>

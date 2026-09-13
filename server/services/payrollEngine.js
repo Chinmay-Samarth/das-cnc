@@ -26,6 +26,7 @@ const FULL_DAY_MINUTES = 8.5 * 60;
 const EDITABLE_INPUT_KEYS = [
   'days_worked',
   'absent_days',
+  'unauthorized_absent_days',
   'paid_leave',
   'earned_leave',
   'overtime_hours',
@@ -37,7 +38,9 @@ const EDITABLE_INPUT_KEYS = [
 const OPTIONAL_LINE_COLUMNS = [
   'inc_plus_prod_all',
   'absent_days',
+  'unauthorized_absent_days',
   'absent_deduction',
+  'regular_earnings',
   'overtime_hours',
   'overtime_hourly_rate',
   'overtime_pay',
@@ -68,11 +71,55 @@ function monthBounds(year, month) {
   return { year: y, month: m, start, end, wagePeriod: endDay };
 }
 
+/** Derived money fields that must stay formula-driven (never freeze via stale overrides). */
+const DERIVED_GROSS_NET_KEYS = [
+  'regular_earnings',
+  'total_earned',
+  'esi',
+  'pt',
+  'total_deductions',
+  'net_paid',
+];
+
+function applyGrossAndNetGuarantees(row) {
+  // Always rebuild gross → statutory → net from current components.
+  // Stale manual_overrides previously froze Net Paid on regular-only gross.
+  const regular =
+    toNumber(row.regular_earnings) ||
+    toNumber(row.basic_earned) +
+      toNumber(row.allowance) +
+      toNumber(row.incentive_paid) +
+      toNumber(row.production_allowance);
+  row.regular_earnings = regular;
+  row.total_earned = regular + toNumber(row.overtime_pay);
+
+  const gross = toNumber(row.total_earned);
+  row.esi = (gross * 0.75) / 100;
+  row.pt = gross > 25000 ? 200 : 0;
+  row.total_deductions = toNumber(row.esi) + toNumber(row.pf) + toNumber(row.pt);
+  // Excel: Net Paid = Total Earned − ESI − PF − PT
+  row.net_paid =
+    toNumber(row.total_earned) -
+    toNumber(row.esi) -
+    toNumber(row.pf) -
+    toNumber(row.pt);
+
+  return row;
+}
+
+function stripDerivedOverrides(overrides) {
+  const list = Array.isArray(overrides) ? overrides : [];
+  return list.filter((k) => !DERIVED_GROSS_NET_KEYS.includes(k));
+}
+
 function hydratePayrollLine(row) {
   if (!row) return row;
   const snapshotIn = row.computed_snapshot?.inputs || {};
   const snapshotOut = row.computed_snapshot?.outputs || {};
-  const overrides = parseOverrides(row.manual_overrides);
+  const overrides = stripDerivedOverrides(parseOverrides(row.manual_overrides));
+  row.manual_overrides = overrides;
+  const formulas = row.computed_snapshot?.formulas || DEFAULT_FORMULAS;
+
   if (row.inc_plus_prod_all == null) {
     row.inc_plus_prod_all = toNumber(
       snapshotOut.inc_plus_prod_all,
@@ -85,26 +132,55 @@ function hydratePayrollLine(row) {
   if (row.absent_days == null) {
     row.absent_days = toNumber(snapshotIn.absent_days, 0);
   }
+  if (row.unauthorized_absent_days == null) {
+    row.unauthorized_absent_days = toNumber(snapshotIn.unauthorized_absent_days, 0);
+  }
   if (row.absent_deduction == null) {
     row.absent_deduction = toNumber(snapshotOut.absent_deduction, 0);
   }
-  if (!overrides.includes('overtime_hourly_rate')) {
-    const fromBasic = overtimeHourlyRateFromBasic(row.basic);
-    if (fromBasic > 0) {
-      row.overtime_hourly_rate = fromBasic;
-    } else if (row.overtime_hourly_rate == null) {
-      row.overtime_hourly_rate = toNumber(snapshotOut.overtime_hourly_rate, 0);
+
+  // Recompute salary outputs so Total Earned always includes OT Pay (gross),
+  // even when stored rows were generated with the old regular-only formula.
+  const inputs = {
+    wage_period: toNumber(row.wage_period, snapshotIn.wage_period),
+    days_worked: toNumber(row.days_worked, snapshotIn.days_worked),
+    absent_days: toNumber(row.absent_days, snapshotIn.absent_days),
+    unauthorized_absent_days: toNumber(
+      row.unauthorized_absent_days,
+      snapshotIn.unauthorized_absent_days
+    ),
+    paid_leave: toNumber(row.paid_leave, snapshotIn.paid_leave),
+    earned_leave: toNumber(row.earned_leave, snapshotIn.earned_leave),
+    overtime_hours: toNumber(row.overtime_hours, snapshotIn.overtime_hours),
+    basic: toNumber(row.basic, snapshotIn.basic),
+    incentive_paid: toNumber(row.incentive_paid, snapshotIn.incentive_paid),
+    production_allowance: toNumber(
+      row.production_allowance,
+      snapshotIn.production_allowance
+    ),
+  };
+
+  const overrideValues = {};
+  for (const key of OUTPUT_KEYS) {
+    if (overrides.includes(key)) {
+      overrideValues[key] = toNumber(row[key], toNumber(snapshotOut[key], 0));
     }
-  } else if (row.overtime_hourly_rate == null) {
-    row.overtime_hourly_rate = toNumber(snapshotOut.overtime_hourly_rate, 0);
   }
-  if (!overrides.includes('overtime_pay')) {
-    row.overtime_pay =
-      toNumber(row.overtime_hours, 0) * toNumber(row.overtime_hourly_rate, 0);
-  } else if (row.overtime_pay == null) {
-    row.overtime_pay = toNumber(snapshotOut.overtime_pay, 0);
+
+  const { outputs } = computeLine(inputs, formulas, {
+    overrides,
+    values: overrideValues,
+  });
+
+  for (const key of OUTPUT_KEYS) {
+    if (!overrides.includes(key)) {
+      row[key] = outputs[key];
+    } else if (row[key] == null) {
+      row[key] = toNumber(snapshotOut[key], outputs[key]);
+    }
   }
-  return row;
+
+  return applyGrossAndNetGuarantees(row);
 }
 
 function stripUnknownColumn(payload, column) {
@@ -468,6 +544,7 @@ function buildLinePayload({
     wage_period: toNumber(inputs.wage_period),
     days_worked: toNumber(inputs.days_worked),
     absent_days: toNumber(inputs.absent_days),
+    unauthorized_absent_days: toNumber(inputs.unauthorized_absent_days),
     paid_leave: toNumber(inputs.paid_leave),
     earned_leave: toNumber(inputs.earned_leave),
     overtime_hours: toNumber(inputs.overtime_hours),
@@ -481,6 +558,7 @@ function buildLinePayload({
     overtime_hourly_rate: toNumber(outputs.overtime_hourly_rate),
     overtime_pay: toNumber(outputs.overtime_pay),
     absent_deduction: toNumber(outputs.absent_deduction),
+    regular_earnings: toNumber(outputs.regular_earnings),
     total_earned: toNumber(outputs.total_earned),
     esi: toNumber(outputs.esi),
     pf: toNumber(outputs.pf),
@@ -557,6 +635,7 @@ async function persistLiveAttendanceStats(lines) {
         const payload = {
           days_worked: toNumber(line.days_worked),
           absent_days: toNumber(line.absent_days),
+          unauthorized_absent_days: toNumber(line.unauthorized_absent_days),
           paid_leave: toNumber(line.paid_leave),
           overtime_hours: toNumber(line.overtime_hours),
           absent_deduction: toNumber(line.absent_deduction),
@@ -566,6 +645,7 @@ async function persistLiveAttendanceStats(lines) {
           allowance_plus_pa: toNumber(line.allowance_plus_pa),
           overtime_hourly_rate: toNumber(line.overtime_hourly_rate),
           overtime_pay: toNumber(line.overtime_pay),
+          regular_earnings: toNumber(line.regular_earnings),
           total_earned: toNumber(line.total_earned),
           esi: toNumber(line.esi),
           pf: toNumber(line.pf),
@@ -595,7 +675,8 @@ async function persistLiveAttendanceStats(lines) {
 
 /**
  * Fill days_worked / paid_leave / absent_days / overtime_* from attendance + leave_requests,
- * then recompute salary so absent_deduction (basic/wage_period × absent_days) hits net pay.
+ * then recompute salary. Absent deduction is shown for accounting; net uses
+ * paid-days Basic Earned (no second LOP cut).
  */
 async function attachLiveAttendanceStats(lines, bounds, formulas = DEFAULT_FORMULAS) {
   const employeeIds = [...new Set(lines.map((l) => l.employee_id).filter(Boolean))];
@@ -611,7 +692,7 @@ async function attachLiveAttendanceStats(lines, bounds, formulas = DEFAULT_FORMU
   );
 
   return lines.map((line) => {
-    const overrides = parseOverrides(line.manual_overrides);
+    const overrides = stripDerivedOverrides(parseOverrides(line.manual_overrides));
     const monthRecords = attendanceMap[line.employee_id] || [];
     const leaveRows = leaveMap[line.employee_id] || [];
     const worked = overrides.includes('days_worked')
@@ -631,7 +712,7 @@ async function attachLiveAttendanceStats(lines, bounds, formulas = DEFAULT_FORMU
         wagePeriod: bounds.wagePeriod,
       }
     );
-    const next = { ...line };
+    const next = { ...line, manual_overrides: overrides };
 
     if (!overrides.includes('days_worked')) {
       next.days_worked = worked;
@@ -650,6 +731,7 @@ async function attachLiveAttendanceStats(lines, bounds, formulas = DEFAULT_FORMU
       wage_period: toNumber(next.wage_period, bounds.wagePeriod),
       days_worked: toNumber(next.days_worked),
       absent_days: toNumber(next.absent_days),
+      unauthorized_absent_days: toNumber(next.unauthorized_absent_days),
       paid_leave: toNumber(next.paid_leave),
       earned_leave: toNumber(next.earned_leave),
       overtime_hours: toNumber(next.overtime_hours),
@@ -676,7 +758,7 @@ async function attachLiveAttendanceStats(lines, bounds, formulas = DEFAULT_FORMU
       }
     }
 
-    return next;
+    return applyGrossAndNetGuarantees(next);
   });
 }
 
@@ -721,7 +803,9 @@ async function generatePayroll(year, month, { preserveOverrides = true } = {}) {
   const upserts = [];
   for (const emp of employees || []) {
     const existing = existingByEmp[emp.id];
-    const overrides = preserveOverrides ? parseOverrides(existing?.manual_overrides) : [];
+    const overrides = stripDerivedOverrides(
+      preserveOverrides ? parseOverrides(existing?.manual_overrides) : []
+    );
 
     const monthRecords = attendanceMap[emp.id] || [];
     const autoDays = countDaysWorked(monthRecords);
@@ -754,6 +838,9 @@ async function generatePayroll(year, month, { preserveOverrides = true } = {}) {
       absent_days: overrides.includes('absent_days')
         ? toNumber(existing?.absent_days, 0)
         : autoAbsentDays,
+      unauthorized_absent_days: overrides.includes('unauthorized_absent_days')
+        ? toNumber(existing?.unauthorized_absent_days, 0)
+        : toNumber(existing?.unauthorized_absent_days, 0),
       paid_leave: overrides.includes('paid_leave')
         ? toNumber(existing.paid_leave)
         : autoPaidLeave,
@@ -785,12 +872,13 @@ async function generatePayroll(year, month, { preserveOverrides = true } = {}) {
       overrides,
       values: overrideValues,
     });
+    const synced = applyGrossAndNetGuarantees({ ...outputs });
     const payload = buildLinePayload({
       runId: run.id,
       employeeId: emp.id,
       formulaVersionId: formulaVersion.id,
       inputs,
-      outputs,
+      outputs: synced,
       overrides,
       formulas,
     });
@@ -845,12 +933,15 @@ async function updatePayrollLine(lineId, patch, userId) {
   }
 
   const formulaVersion = await getFormulaVersionById(line.formula_version_id);
-  const overrides = new Set(parseOverrides(line.manual_overrides));
+  const overrides = new Set(
+    stripDerivedOverrides(parseOverrides(line.manual_overrides))
+  );
 
   const inputs = {
     wage_period: toNumber(line.wage_period),
     days_worked: toNumber(line.days_worked),
     absent_days: toNumber(line.absent_days),
+    unauthorized_absent_days: toNumber(line.unauthorized_absent_days),
     paid_leave: toNumber(line.paid_leave),
     earned_leave: toNumber(line.earned_leave),
     overtime_hours: toNumber(line.overtime_hours),
@@ -877,16 +968,37 @@ async function updatePayrollLine(lineId, patch, userId) {
     }
   }
 
+  // Recalculate derived earnings/net unless the user explicitly edited those cells
+  if (patch.total_earned === undefined) {
+    overrides.delete('total_earned');
+  }
+  if (patch.regular_earnings === undefined) {
+    overrides.delete('regular_earnings');
+  }
+  if (patch.net_paid === undefined) {
+    overrides.delete('net_paid');
+  }
+  if (patch.total_deductions === undefined) {
+    overrides.delete('total_deductions');
+  }
+  if (patch.esi === undefined) {
+    overrides.delete('esi');
+  }
+  if (patch.pt === undefined) {
+    overrides.delete('pt');
+  }
+
   const { outputs, formulas } = computeLine(inputs, formulaVersion.formulas, {
     overrides: [...overrides],
     values: overrideValues,
   });
+  const synced = applyGrossAndNetGuarantees({ ...outputs });
   const payload = buildLinePayload({
     runId: line.run_id,
     employeeId: line.employee_id,
     formulaVersionId: formulaVersion.id,
     inputs,
-    outputs,
+    outputs: synced,
     overrides: [...overrides],
     formulas,
   });
@@ -978,6 +1090,7 @@ async function exportPayrollWorkbook(year, month) {
     { header: 'Paid Leave', key: 'paid_leave', width: 12 },
     { header: 'Earned Leave', key: 'earned_leave', width: 12 },
     { header: 'Absent Days', key: 'absent_days', width: 12 },
+    { header: 'Unauthorized Absent', key: 'unauthorized_absent_days', width: 16 },
     { header: 'Absent Deduction', key: 'absent_deduction', width: 16 },
     { header: 'Total Overtime (hrs)', key: 'overtime_hours', width: 16 },
     { header: 'Basic', key: 'basic', width: 12 },
@@ -989,6 +1102,7 @@ async function exportPayrollWorkbook(year, month) {
     { header: 'Allowance + Production Allowance', key: 'allowance_plus_pa', width: 22 },
     { header: 'Overtime Hourly Rate', key: 'overtime_hourly_rate', width: 18 },
     { header: 'Overtime Pay', key: 'overtime_pay', width: 14 },
+    { header: 'Regular Earnings', key: 'regular_earnings', width: 14 },
     { header: 'Total Earned', key: 'total_earned', width: 14 },
     { header: 'ESI', key: 'esi', width: 12 },
     { header: 'PF', key: 'pf', width: 12 },
@@ -1007,6 +1121,7 @@ async function exportPayrollWorkbook(year, month) {
       paid_leave: Number(line.paid_leave),
       earned_leave: Number(line.earned_leave),
       absent_days: Number(line.absent_days),
+      unauthorized_absent_days: Number(line.unauthorized_absent_days),
       absent_deduction: Number(line.absent_deduction),
       overtime_hours: Number(line.overtime_hours),
       basic: Number(line.basic),
@@ -1018,6 +1133,7 @@ async function exportPayrollWorkbook(year, month) {
       allowance_plus_pa: Number(line.allowance_plus_pa),
       overtime_hourly_rate: Number(line.overtime_hourly_rate),
       overtime_pay: Number(line.overtime_pay),
+      regular_earnings: Number(line.regular_earnings),
       total_earned: Number(line.total_earned),
       esi: Number(line.esi),
       pf: Number(line.pf),
