@@ -30,7 +30,7 @@ const {
   listInvoicesByDateRange,
   exportVendorInvoicesExcel,
 } = require('../services/invoiceExportEngine');
-const { buildReviewPayload, confirmReview } = require('../services/invoiceReviewEngine');
+const { buildReviewPayload, confirmReview, abandonReviewDraft } = require('../services/invoiceReviewEngine');
 const { buildDraftGirnFromInvoice } = require('../services/girnDraftEngine');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
@@ -272,6 +272,16 @@ router.post('/:id/confirm-review', verifyEmployeeAuth, async (req, res) => {
     return res.json(response);
   } catch (err) {
     console.error('Invoice review confirm error:', err);
+    return sendServiceError(res, err);
+  }
+});
+
+router.post('/:id/abandon-review', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const result = await abandonReviewDraft(req.params.id);
+    return res.json({ message: 'OCR draft discarded', ...result });
+  } catch (err) {
+    console.error('Invoice review abandon error:', err);
     return sendServiceError(res, err);
   }
 });

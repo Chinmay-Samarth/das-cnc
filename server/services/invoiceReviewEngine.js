@@ -486,6 +486,48 @@ async function supersedeAbandonedReviewDrafts({ keepInvoiceId, invoiceNumber, no
   }
 }
 
+const ABANDONABLE_STATUSES = new Set([
+  'needs_review',
+  'extracting',
+  'saving',
+  'error',
+  'queued',
+  'uploading',
+]);
+
+/**
+ * Discard an unconfirmed OCR draft (Cancel on review / abandoned duplicate).
+ * Hard-deletes so it does not linger under Needs review.
+ */
+async function abandonReviewDraft(invoiceId) {
+  const invoice = await getInvoice(invoiceId);
+  if (!invoice) {
+    const err = new Error('Invoice not found');
+    err.status = 404;
+    throw err;
+  }
+
+  const status = String(invoice.status || '');
+  const reviewStatus = String(invoice.review_status || '');
+
+  const isUnconfirmedDraft =
+    ABANDONABLE_STATUSES.has(status) || reviewStatus === 'needs_review';
+
+  if (
+    !isUnconfirmedDraft ||
+    reviewStatus === 'confirmed' ||
+    ['paid', 'overdue', 'partial'].includes(status)
+  ) {
+    const err = new Error('Only unconfirmed OCR drafts can be discarded');
+    err.status = 409;
+    throw err;
+  }
+
+  const { error } = await supabase.from('invoices').delete().eq('id', invoiceId);
+  if (error) throw error;
+  return { deleted: true, id: invoiceId };
+}
+
 async function finalizeOcrReview(invoiceId, doc, invoiceDraft) {
   const classified = await classifyLinesForReview(
     invoiceDraft.supplier_id,
@@ -596,4 +638,5 @@ module.exports = {
   enrichLineForReview,
   reconcileInvoiceTotals,
   assertUniqueSupplierInvoiceNumber,
+  abandonReviewDraft,
 };

@@ -1,415 +1,545 @@
-# Production Deployment Plan — DasCNC on Windows Server (Static IP)
+# DasCNC Production Plan — New Server (Full Guide)
 
-**App:** `das-cnc` (React/Vite client + Express API) + `InvoiceOCR` (FastAPI/PaddleOCR)  
-**Target:** On-prem Windows Server with a public/static IP  
-**Date:** 2026-09-12  
-
-This plan covers install layout, **Git-based remote deploys**, TLS, firewall, service management, remote admin, backups, and go-live checks. It matches how the code actually runs today.
+**What this document is:** the complete plan to put DasCNC live for your company.  
+**What this document is not:** a guide to force production onto the current weak Windows Server 2016 box.
 
 ---
 
-## 0. Reality check — “Windows 2010 Server”
+## Read this first (honest status)
 
-There is **no** Microsoft product named Windows Server 2010. Closest matches:
+Your current 2016 server (~**4 cores / 8 GB RAM / ~10 GB free disk**) is **not suitable for production** of this stack:
 
-| Likely OS | Node 20 / modern tooling | Recommendation |
-|-----------|--------------------------|----------------|
-| Windows Server **2008 R2** (~2009) | **Not supported** by Node 18/20 | Do **not** run this stack natively. Upgrade OS or run a newer guest VM. |
-| Windows Server **2012 / 2012 R2** | Fragile / often unsupported by current Node | Prefer upgrade; if stuck, test Node 20 thoroughly or use a newer VM. |
-| Windows Server **2016 / 2019 / 2022** | Supported | **Recommended** production host. |
+| Need | Why | Current box |
+|------|-----|-------------|
+| Disk | Node modules, Python/PaddleOCR, IIS logs, Windows updates | ~10 GB free → will fill and break |
+| RAM | API + PaddleOCR + Windows + IIS | 8 GB → OCR will thrash/swap |
+| CPU | OCR is CPU-heavy | 4 cores → usable only if nothing else competes |
+| UX | You already see lag over RDP | Same machine can’t also run OCR well |
 
-**Minimum practical host for this app:** Windows Server **2016+** (2019/2022 preferred), x64, with outbound HTTPS.
+**Decision:** company procures a **new server** that meets the specs below.  
+Until then, do the **prep work on your laptop / GitHub / Supabase** (Phase A).  
+When the new machine arrives, follow **Phase B onward** step by step.
 
-If the physical box must stay on 2008/2012:
+You will always see:
 
-1. Install Hyper-V (if licensed) or another hypervisor.
-2. Create a **Windows Server 2019/2022** guest VM.
-3. Deploy DasCNC + InvoiceOCR inside the guest.
-4. NAT/port-forward the static IP to the guest (80/443 only).
-
-Do not try to force Node 20 + PaddleOCR onto an unsupported OS — it will fail at install or crash under load.
+- **What to do** — exact action  
+- **Why** — so you understand the purpose  
+- **Checkpoint** — prove it worked before moving on  
 
 ---
 
-## 1. What you are deploying
+# PART 0 — What you are deploying (the big picture)
 
-### Components (this monorepo + sibling OCR)
+## The three pieces of software
 
-| Component | Source path | Runtime | Default port |
-|-----------|-------------|---------|--------------|
-| **SPA (client)** | `das-cnc/client` → build to `client/dist` | Static files (IIS) | 443 (HTTPS) |
-| **API (server)** | `das-cnc/server` → `node index.js` | Node.js 20 LTS | **3001** (localhost only) |
-| **Invoice OCR** | `Python Files/InvoiceOCR` → `uvicorn app.main:app` | Python 3.10 + PaddleOCR CPU | **8000** (localhost only) |
-| **Supabase** | Cloud | Postgres + Storage | HTTPS outbound |
-| **Tally** (optional) | Local Tally ERP | HTTP XML API | **9000** (LAN / localhost) |
-| **Biometric API** | External vendor URL | HTTPS outbound | vendor |
+| Piece | Where the code lives today | What it does in production |
+|-------|----------------------------|----------------------------|
+| **Website (client)** | `das-cnc/client` | React UI users open in a browser |
+| **API (server)** | `das-cnc/server` | Express + Socket.IO; auth, business logic, crons |
+| **Invoice OCR** | `Python Files/InvoiceOCR` (separate folder) | Reads invoice PDFs with PaddleOCR; returns fields |
 
-InvoiceOCR is **not** inside `das-cnc`. It lives at:
-
-`E:\Chinmay_Projects\VS Files\Python Files\InvoiceOCR`
-
-Copy that folder (or a release zip) to the server alongside the ERP.
-
-### Architecture (recommended)
+## What runs where
 
 ```
-Internet users
+Users' browsers
       │
+      │  HTTPS only (port 443)
       ▼
-[ Windows Firewall ]  allow 443 (and 80→443 redirect) only
+[ New Windows Server ]
       │
-      ▼
-[ IIS + URL Rewrite + ARR ]  TLS cert on static IP / DNS name
+      ├── IIS  → serves website files (client/dist)
+      │         and forwards /api + /socket.io to Node
       │
-      ├── /           → static site: C:\apps\das-cnc\client\dist
-      ├── /api/*      → http://127.0.0.1:3001/api/*
-      └── /socket.io/*→ http://127.0.0.1:3001/socket.io/*  (WebSocket)
-            │
-            ▼
-      [ Node API :3001 ] ──HTTPS──► Supabase
-            │
-            ├──HTTP──► InvoiceOCR 127.0.0.1:8000
-            ├──HTTP──► Tally 127.0.0.1:9000 (optional)
-            └──HTTPS─► Biometric API (optional)
+      ├── Node API on 127.0.0.1:3001   ← not public
+      │       │
+      │       ├── talks to Supabase (cloud database + file storage)
+      │       ├── talks to Invoice OCR on 127.0.0.1:8000
+      │       └── optional: Tally, biometric API
+      │
+      └── Python OCR on 127.0.0.1:8000  ← not public
 
-Remote admins ──VPN or jump host──► RDP / WinRM (never expose RDP on 3389 to the world)
+You (admin)
+      │
+      └── Remote Desktop into the new server (locked down)
+           to install, configure, and run deploy scripts
 ```
 
-**Do not** expose 3001, 8000, or 9000 on the public static IP.
+## Why this layout?
+
+| Choice | Why |
+|--------|-----|
+| **IIS in front** | Handles HTTPS certificates and serves static files well on Windows |
+| **Node/OCR on localhost only** | Attackers on the internet never talk to them directly |
+| **Supabase in the cloud** | You don’t run Postgres yourself on this server; less ops burden |
+| **GitHub + deploy script** | You push code from your laptop; server pulls and rebuilds — no USB zips |
+| **RDP for admin** | Matches how you already work; we harden it so the static IP isn’t an open door |
+
+## Ports (memorize this)
+
+| Port | Service | Public? |
+|------|---------|---------|
+| **443** | HTTPS website | **Yes** |
+| **80** | HTTP → redirect / cert renewals | Yes (limited) |
+| **3001** | Node API | **No** — localhost only |
+| **8000** | Invoice OCR | **No** — localhost only |
+| **3389** | Remote Desktop | **Not to the whole internet** — VPN or your IP only |
+| **9000** | Tally (optional) | LAN/localhost only |
 
 ---
 
-## 2. Server sizing (starting point)
+# PART 1 — Buy / specify the new server
 
-| Role | Minimum | Comfortable |
-|------|---------|-------------|
-| CPU | 4 cores | 8 cores (OCR is CPU-heavy) |
-| RAM | 8 GB | **16 GB** (Node ~0.5–1 GB + OCR 4–8 GB + OS/IIS) |
-| Disk | 60 GB free | 100+ GB SSD (logs, models, Windows updates) |
-| Network | Static IP + outbound HTTPS | Same + DNS A record |
+Give this table to whoever procures hardware (IT / vendor / management).
 
-OCR runs **CPU-only** (`paddlepaddle`, `use_gpu=False`). Keep **uvicorn `--workers 1`**.
+## Minimum vs recommended
 
-If RAM ≤ 8 GB, set OCR low-memory mode (see §6).
+| Item | Minimum (works) | Recommended (comfortable) | Why |
+|------|-----------------|---------------------------|-----|
+| **OS** | Windows Server **2019** or **2022** Standard | **2022** | 2016 is OK technically, but newer is smoother for Node 20 + drivers + support life |
+| **CPU** | 4 cores | **8 cores** | OCR uses many cores while invoices parse |
+| **RAM** | 16 GB | **32 GB** | Windows + IIS + Node (~1 GB) + OCR (4–8 GB spikes) |
+| **System disk** | 256 GB SSD | **512 GB SSD** | OS + apps + logs + updates; 10 GB free is why the old box fails |
+| **Network** | 1 static public IP (or NAT to one) | Same + DNS name (`erp.company.com`) | Users and TLS certificates need a stable address |
+| **Backup** | External disk or NAS | Same + offsite copy | Recovery after failure/ransomware |
+| **Access** | RDP available to you | RDP + optional VPN (Tailscale/company VPN) | Safe remote management |
+
+### Software licenses / accounts you also need
+
+| Item | Why |
+|------|-----|
+| Windows Server license | OS |
+| Ability to install IIS roles | Front door for HTTPS |
+| GitHub account + repos | Source of truth for code |
+| Supabase project (production) | Database + file storage |
+| Domain DNS control (preferred) | Proper HTTPS certificate (Let’s Encrypt) |
+
+### Explicitly do **not** run production on
+
+- The current 2016 box with ~10 GB free  
+- A laptop left on overnight  
+- A machine without backups  
+
+**Checkpoint — procurement**
+
+- [ ] New server ordered/approved with ≥16 GB RAM and ≥256 GB SSD  
+- [ ] Static IP / DNS plan known  
+- [ ] You will have Administrator + Remote Desktop access  
 
 ---
 
-## 3. Prerequisites on the Windows host
+# PART 2 — Work you can do NOW (while waiting for hardware)
 
-Install in this order:
+Do these on your **laptop**. They save days later and don’t need the new server.
 
-1. **Windows Updates** + reboot.
-2. **.NET Framework** (IIS features may need it).
-3. **IIS** with:
-   - Static Content, Default Document
-   - URL Rewrite module
-   - Application Request Routing (ARR) + enable proxy
-   - WebSocket protocol
-4. **Node.js 20 LTS x64** (≥ 20.16 recommended) from nodejs.org.
-5. **Python 3.10.x x64** (match `.python-version` → `3.10.14`).
-6. **Visual C++ Redistributable x64** (required by Paddle / OpenCV).
-7. **NSSM** (Non-Sucking Service Manager) or WinSW — run Node + uvicorn as Windows services.
-8. **Git for Windows** (required for remote push/pull deploys — see §5).
-9. **Win64 OpenSSH Server** (required if you `git push` or SSH-run deploy over the network; keep behind VPN — see §9–§10).
+---
 
-Verify:
+## Phase A1 — Understand and clean your Git setup
+
+### A1.1 — Make sure both apps are on GitHub
+
+**What:** Push `das-cnc` and `InvoiceOCR` to GitHub if not already.
+
+**Why:** The new server will **clone/pull** from GitHub. GitHub is the bridge between your laptop and production. Secrets must never live in Git.
 
 ```powershell
-node -v          # v20.x
-npm -v
-py -3.10 --version
-git --version
+# On your laptop — ERP
+cd "E:\Chinmay_Projects\VS Files\das-cnc"
+git remote -v
+git status
+
+# Invoice OCR
+cd "E:\Chinmay_Projects\VS Files\Python Files\InvoiceOCR"
+git status
+# If it is not a git repo yet: git init, create GitHub repo, add remote, commit, push
 ```
+
+### A1.2 — Create a `production` branch
+
+**What:** A branch that means “this is what production is allowed to run.”
+
+**Why:** You can keep experimenting on `main` without accidentally shipping half-finished work. Production only tracks `production`.
+
+```powershell
+cd "E:\Chinmay_Projects\VS Files\das-cnc"
+git checkout main
+git pull
+git checkout -b production
+git push -u origin production
+
+cd "E:\Chinmay_Projects\VS Files\Python Files\InvoiceOCR"
+git checkout -b production
+git push -u origin production
+```
+
+On GitHub → repo → **Settings → Branches**: protect `production` if you can (limit who can push).
+
+### A1.3 — Confirm secrets are ignored by Git
+
+**What:** Ensure `.env` files are not tracked.
+
+**Why:** `SUPABASE_SERVICE_KEY` can read/write your whole database. If it hits GitHub, treat it as leaked and rotate it.
+
+```powershell
+cd "E:\Chinmay_Projects\VS Files\das-cnc"
+git check-ignore -v server/.env
+git check-ignore -v client/.env.production
+# Both should print an ignore rule. If not, add them to .gitignore now.
+```
+
+**Checkpoint A1**
+
+- [ ] Both repos on GitHub  
+- [ ] `production` branch exists on both  
+- [ ] `.env` files are ignored  
 
 ---
 
-## 4. Folder layout on the server
+## Phase A2 — Inventory your production secrets (write them down safely)
 
-Use a dedicated non-admin service account, e.g. `svc_dascnc`.
+**What:** Collect every value production will need into a password manager or encrypted note (not WhatsApp, not a plain git file).
 
-```
-C:\apps\
-  repos\                   # optional bare repos (git push target)
-    das-cnc.git\
-    invoice-ocr.git\
-  das-cnc\                 # live checkout (working tree)
-    .git\
-    client\
-      dist\                # built on server by deploy.ps1
-      .env.production      # VITE_* — NOT committed; ACL locked down
-    server\
-      .env                 # secrets — NOT committed; ACL locked down
-    package.json
-    node_modules\
-  invoice-ocr\
-    .git\
-    app\
-    requirements.txt
-    .venv\                 # never commit
-  logs\
-    api\
-    ocr\
-    iis\
-    deploy\
-  backups\
-    env\
-    configs\
-    releases\              # optional tag/zip snapshots before each deploy
-  tools\
-    nssm\
-    deploy-das-cnc.ps1
-    deploy-invoice-ocr.ps1
+**Why:** On go-live day you will paste these into `server\.env` on the new server. Missing one value = login/OCR/sync fails and you’ll be debugging under pressure.
+
+### Server env values you will need
+
+| Variable | What it is | Why |
+|----------|------------|-----|
+| `SUPABASE_URL` | Your Supabase project URL | Where the API stores data |
+| `SUPABASE_SERVICE_KEY` | Service role key | Server bypasses RLS — **never** put in the browser |
+| `JWT_SECRET` | Long random string | Signs login tokens |
+| `FRONTEND_URL` | Exact public site URL | CORS / Socket origin |
+| `DEVICE_SECRET` | Shared secret for biometric devices | Device posts attendance |
+| `BIOMETRIC_*` | Vendor API URL + user + password | Punch sync (if used) |
+| `INVOICE_OCR_URL` | Usually `http://127.0.0.1:8000/parse` | API finds OCR on same machine |
+| `TALLY_*` | Optional Tally URL + company name | Accounting sync |
+
+### Client build values (baked into the website at build time)
+
+| Variable | Example | Why |
+|----------|---------|-----|
+| `VITE_API_URL` | `https://erp.company.com/api` | Browser calls the API |
+| `VITE_SOCKET_URL` | `https://erp.company.com` | Live updates (Socket.IO) — **required** in production |
+| `VITE_TIMEZONE` | `Asia/Kolkata` | Date/time display |
+
+Generate a strong secret when ready:
+
+```powershell
+-join ((48..57 + 65..90 + 97..122) | Get-Random -Count 64 | ForEach-Object {[char]$_})
 ```
 
-Permissions:
+**Checkpoint A2**
 
-- `svc_dascnc`: Modify on `C:\apps\das-cnc`, `C:\apps\invoice-ocr`, `C:\apps\logs`.
-- `deploy` user (or your admin account): Modify on live checkouts + run deploy scripts; can restart services.
-- Deny interactive login for `svc_dascnc` if policy allows.
-- `server\.env` and `client\.env.production`: Read for `svc_dascnc` + deploy admins only; **never commit**.
+- [ ] Secrets list complete in a password manager  
+- [ ] You know the intended public URL (DNS name preferred over raw IP)  
 
 ---
 
-## 5. Git-based build & release (remote push to production)
+## Phase A3 — Prepare Supabase for production
 
-**Primary method:** use Git so you can deploy from your laptop without copying zips over RDP.
+**What:** Decide which Supabase project is **production** (ideally not the messy shared-dev one).
 
-Recommended branch model:
+**Why:** Production data should not be wiped by a test migration. Buckets must exist or uploads fail.
 
-| Branch | Purpose |
-|--------|---------|
-| `main` (or `develop`) | Day-to-day development |
-| `production` | Only what is allowed on the live server |
+1. Create or pick production project in Supabase.  
+2. Note URL + service role key into your secrets list.  
+3. Confirm storage buckets exist (or plan to create them):  
+   `invoices`, `master-images`, `employee-images`, `photos`  
+4. List SQL files you must apply in order from `das-cnc/server/migrations/` (oldest date first). Keep that checklist.
 
-Flow:
+**Checkpoint A3**
+
+- [ ] Production Supabase project identified  
+- [ ] Migration file list ordered  
+- [ ] Bucket names known  
+
+---
+
+## Phase A4 — Optional: dry-run build on your laptop
+
+**What:** Build the client once with temporary production-like URLs.
+
+**Why:** Catches build errors now, not on go-live night.
+
+```powershell
+cd "E:\Chinmay_Projects\VS Files\das-cnc"
+npm ci
+# Temporarily set client/.env.production with your future URL, then:
+npm run build
+```
+
+You do **not** commit `client/dist`. The **new server** will build again with the real `.env.production`.
+
+**Checkpoint A4**
+
+- [ ] `npm run build` succeeds on your laptop  
+
+---
+
+# PART 3 — When the new server arrives
+
+Fill these in on day one:
+
+| Placeholder | Your value |
+|-------------|------------|
+| `STATIC_IP` | |
+| `PUBLIC_URL` | e.g. `https://erp.yourcompany.com` |
+| `GITHUB_ORG_OR_USER` | |
+| `DASCNC_REPO` | e.g. `das-cnc` |
+| `OCR_REPO` | e.g. `invoice-ocr` |
+| `YOUR_RDP_SOURCE_IP` | your office/home public IP (whatismyip.com) |
+
+Connect with **Remote Desktop** as Administrator. Every step below that does not say “On your laptop” is done **inside that RDP session**.
+
+---
+
+## Phase B — Base Windows setup
+
+### B1 — Patch the OS
+
+**What:** Install Windows Updates → reboot → repeat until clean.
+
+**Why:** Unpatched servers get exploited. TLS and IIS also behave better on updated boxes.
+
+### B2 — Set timezone
+
+**What:**
+
+```powershell
+tzutil /s "India Standard Time"
+```
+
+**Why:** Your API crons (attendance, alerts) use `TIMEZONE=Asia/Kolkata`. Wrong OS time = wrong “who is absent” logic.
+
+### B3 — Create folder layout
+
+**What:**
+
+```powershell
+New-Item -ItemType Directory -Force -Path @(
+  "C:\apps\das-cnc",
+  "C:\apps\invoice-ocr",
+  "C:\apps\logs\api",
+  "C:\apps\logs\ocr",
+  "C:\apps\logs\deploy",
+  "C:\apps\backups\env",
+  "C:\apps\backups\releases",
+  "C:\apps\tools"
+) | Out-Null
+```
+
+**Why:** One predictable place for app, logs, backups, and scripts. Makes support and handoff easier.
+
+### B4 — Create accounts
+
+**What:**
+
+```powershell
+net user svc_dascnc "STRONG_PASSWORD_HERE" /add /fullname:no /expires:never
+net localgroup "Users" svc_dascnc /add
+
+net user deploy "STRONG_DEPLOY_PASSWORD" /add /expires:never
+net localgroup "Administrators" deploy /add
+
+icacls "C:\apps\das-cnc" /grant "svc_dascnc:(OI)(CI)M" /T
+icacls "C:\apps\invoice-ocr" /grant "svc_dascnc:(OI)(CI)M" /T
+icacls "C:\apps\logs" /grant "svc_dascnc:(OI)(CI)M" /T
+```
+
+Also: `secpol.msc` → **User Rights Assignment** → **Log on as a service** → add `svc_dascnc`.
+
+**Why:**
+
+- `svc_dascnc` runs Node/OCR — not your daily admin account  
+- `deploy` is who you RDP as to pull Git and restart services  
+- “Log on as a service” is required or Windows services fail to start  
+
+**Checkpoint B**
+
+- [ ] Updated + rebooted  
+- [ ] IST timezone  
+- [ ] Folders + `svc_dascnc` + `deploy` ready  
+
+---
+
+## Phase C — Install required software (order matters)
+
+### C1 — IIS + WebSockets
+
+**What:**
+
+```powershell
+Install-WindowsFeature Web-Server, Web-Common-Http, Web-Static-Content, Web-Default-Doc, Web-Dir-Browsing, Web-Http-Errors, Web-Http-Redirect, Web-Filtering, Web-Stat-Compression, Web-Mgmt-Console, Web-WebSockets -IncludeManagementTools
+```
+
+**Why:** IIS is the public HTTPS entry. WebSockets are required for Socket.IO live updates through IIS.
+
+### C2 — URL Rewrite + Application Request Routing (ARR)
+
+**What:** Download/install from Microsoft iis.net:
+
+1. URL Rewrite 2.x  
+2. ARR 3.x  
+3. IIS Manager → server node → **ARR → Server Proxy Settings** → **Enable proxy**  
+4. Set proxy **timeout = 300 seconds**
+
+**Why:** Browser calls `https://yoursite/api/...`. IIS must **forward** that to `http://127.0.0.1:3001`. OCR uploads can take minutes — short timeouts look like “OCR is broken.”
+
+### C3 — Node.js 20 LTS (x64 MSI)
+
+**What:** Install from nodejs.org → reopen PowerShell → `node -v` shows `v20.x`.
+
+**Why:** Your API and tooling expect modern Node (`@supabase/supabase-js`, Vite build). Older Node will fail installs.
+
+### C4 — Python 3.10 (x64)
+
+**What:** Install 3.10.x with PATH enabled → `py -3.10 --version`.
+
+**Why:** InvoiceOCR is pinned around Python 3.10 (`paddlepaddle` stack). Other versions often break wheels.
+
+### C5 — Visual C++ Redistributable x64
+
+**What:** Install latest VC++ redist from Microsoft.
+
+**Why:** PaddleOCR/OpenCV native libraries won’t load without it.
+
+### C6 — Git for Windows
+
+**What:** Install → `git --version`.
+
+**Why:** Production updates are `git pull` based.
+
+### C7 — NSSM
+
+**What:** Unzip to `C:\apps\tools\nssm\` (use `win64\nssm.exe`).
+
+**Why:** Turns `node` and `uvicorn` into Windows services that **auto-start after reboot** and restart on crash — you shouldn’t rely on a logged-in RDP window.
+
+### C8 — OpenSSH? Skip for now
+
+**Why:** You use **Remote Desktop**. SSH is optional later for one-line remote scripts. Skipping reduces attack surface.
+
+**Checkpoint C**
+
+```powershell
+node -v; npm -v; py -3.10 --version; git --version
+Get-WindowsFeature Web-Server | Select InstallState
+```
+
+- [ ] All installed  
+- [ ] ARR proxy enabled, timeout 300  
+
+---
+
+## Phase D — Clone code from GitHub
+
+### D1 — Deploy key (read-only)
+
+**What:** As user `deploy`:
+
+```powershell
+ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh\dascnc_deploy -N '""'
+Get-Content $env:USERPROFILE\.ssh\dascnc_deploy.pub
+```
+
+Add that public key in GitHub → repo → **Settings → Deploy keys** (read-only) for `das-cnc` and `invoice-ocr`.
+
+`C:\Users\deploy\.ssh\config`:
 
 ```
-laptop ──git push──► GitHub (origin/production)
-                         │
-                         ▼
-              production server pulls + deploy.ps1
-                         │
-         or: laptop ──git push──► server bare repo (SSH/VPN) ──hook──► deploy.ps1
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/dascnc_deploy
+  IdentitiesOnly yes
 ```
 
-**Critical build note:** `VITE_*` vars are baked in at **build time**. Always set these in **`client/.env.production` on the server** (not in git):
+Test: `ssh -T git@github.com`
+
+**Why:** Server can pull code without your personal password. Read-only means a compromised server can’t push malware into GitHub.
+
+### D2 — Clone `production` branch
+
+```powershell
+Remove-Item -Recurse -Force C:\apps\das-cnc, C:\apps\invoice-ocr -ErrorAction SilentlyContinue
+git clone -b production git@github.com:GITHUB_ORG_OR_USER/DASCNC_REPO.git C:\apps\das-cnc
+git clone -b production git@github.com:GITHUB_ORG_OR_USER/OCR_REPO.git C:\apps\invoice-ocr
+
+icacls "C:\apps\das-cnc" /grant "svc_dascnc:(OI)(CI)M" /T
+icacls "C:\apps\invoice-ocr" /grant "svc_dascnc:(OI)(CI)M" /T
+```
+
+**Why:** Live code lives under `C:\apps\...` as a real git checkout so deploys are `fetch` + `reset` + build.
+
+**Checkpoint D**
+
+- [ ] Both clones on `production`  
+- [ ] `ssh -T git@github.com` works from the server (outbound HTTPS/SSH allowed)  
+
+---
+
+## Phase E — Secrets on the server (never in Git)
+
+### E1 — `C:\apps\das-cnc\server\.env`
+
+**What:** Create with Notepad; paste real values from your password manager (Phase A2).
 
 ```env
-VITE_API_URL=https://YOUR_DOMAIN_OR_IP/api
-VITE_SOCKET_URL=https://YOUR_DOMAIN_OR_IP
+PORT=3001
+FRONTEND_URL=https://YOUR_PUBLIC_HOST
+TIMEZONE=Asia/Kolkata
+JWT_SECRET=LONG_RANDOM
+JWT_EXPIRES_IN=12h
+
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_SERVICE_KEY=eyJ...
+
+DEVICE_SECRET=LONG_RANDOM
+BIOMETRIC_API_URL=
+BIOMETRIC_API_USERNAME=
+BIOMETRIC_API_PASSWORD=
+
+INVOICE_OCR_URL=http://127.0.0.1:8000/parse
+INVOICE_OCR_HEALTH_URL=http://127.0.0.1:8000/health
+INVOICE_OCR_TIMEOUT_MS=300000
+
+TALLY_ENABLED=false
+TALLY_URL=http://127.0.0.1:9000
+TALLY_COMPANY=
+```
+
+Lock ACL + backup:
+
+```powershell
+icacls "C:\apps\das-cnc\server\.env" /inheritance:r
+icacls "C:\apps\das-cnc\server\.env" /grant:r "Administrators:F" "deploy:F" "svc_dascnc:R"
+Copy-Item C:\apps\das-cnc\server\.env C:\apps\backups\env\server.env.backup
+# Copy encrypted backup off the server (USB / password manager)
+```
+
+**Why:** The API reads this on start. Wrong `FRONTEND_URL` breaks browser CORS. Missing Supabase key = total failure. Backup saves you if the disk dies.
+
+### E2 — `C:\apps\das-cnc\client\.env.production`
+
+```env
+VITE_API_URL=https://YOUR_PUBLIC_HOST/api
+VITE_SOCKET_URL=https://YOUR_PUBLIC_HOST
 VITE_TIMEZONE=Asia/Kolkata
 ```
 
-**Socket fix:** `client/src/socket/socketContext.jsx` requires `VITE_SOCKET_URL` in production.
+**Why:** Vite **bakes** these into JS at build time. If you build with localhost URLs, production browsers will call your laptop. `VITE_SOCKET_URL` is required — without it live production boards break.
 
-### 5.1 What must never be in Git
+**Checkpoint E**
 
-Confirm `.gitignore` already excludes (and double-check before first push):
+- [ ] Both env files exist, locked, backed up off-box  
+- [ ] URLs match the real public hostname  
 
-- `server/.env`, root `.env`, `client/.env`, `client/.env.production`, `client/.env.local`
-- `node_modules/`, `client/dist/`, `.venv/`, `__pycache__/`
-- OCR model caches, logs, NSSM secrets
+---
 
-Keep production secrets **only** on the server (and an encrypted offsite backup).
+## Phase F — Install and test Invoice OCR by hand
 
-### 5.2 One-time: GitHub remotes (laptop)
-
-```powershell
-cd "E:\Chinmay_Projects\VS Files\das-cnc"
-git remote -v
-# origin should be your GitHub repo, e.g. https://github.com/ORG/das-cnc.git
-
-git checkout -b production
-git push -u origin production
-```
-
-Protect `production` on GitHub: require PR or restrict who can push; enable MFA on the org/account.
-
-InvoiceOCR (separate repo):
+### F1 — Python venv + packages
 
 ```powershell
-cd "E:\Chinmay_Projects\VS Files\Python Files\InvoiceOCR"
-# create GitHub repo if needed, then:
-git init   # if not already a repo
-git remote add origin https://github.com/ORG/invoice-ocr.git
-git checkout -b production
-git push -u origin production
-```
-
-### 5.3 One-time: clone on the production server
-
-**Option A — pull from GitHub (recommended)**  
-Server needs outbound HTTPS to GitHub. Use a **read-only deploy key** (or fine-scoped PAT stored in Windows Credential Manager / env for the deploy user).
-
-```powershell
-# As deploy admin, over VPN/RDP/SSH
-cd C:\apps
-git clone -b production git@github.com:ORG/das-cnc.git das-cnc
-git clone -b production git@github.com:ORG/invoice-ocr.git invoice-ocr
-
-# Create secrets locally (never from git)
-notepad C:\apps\das-cnc\server\.env
-notepad C:\apps\das-cnc\client\.env.production
-```
-
-Deploy key setup (GitHub → repo → Settings → Deploy keys → allow read-only):
-
-```powershell
-# On server, as the deploy user
-ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh\dascnc_deploy -N '""'
-Get-Content $env:USERPROFILE\.ssh\dascnc_deploy.pub
-# paste public key into GitHub deploy keys for das-cnc (and a second key for invoice-ocr)
-
-# ~/.ssh/config
-# Host github.com
-#   HostName github.com
-#   User git
-#   IdentityFile ~/.ssh/dascnc_deploy
-#   IdentitiesOnly yes
-```
-
-**Option B — push directly to the server (no GitHub on pull path)**  
-Use when the server cannot reach GitHub, or you want `git push production` from the laptop over **VPN/SSH only**.
-
-```powershell
-# On server — bare repo
-New-Item -ItemType Directory -Force C:\apps\repos | Out-Null
-cd C:\apps\repos
-git init --bare das-cnc.git
-
-# Live working tree (first time)
-git clone C:\apps\repos\das-cnc.git C:\apps\das-cnc
-```
-
-On the laptop:
-
-```powershell
-cd "E:\Chinmay_Projects\VS Files\das-cnc"
-git remote add production ssh://DEPLOY_USER@SERVER_VPN_IP/C:/apps/repos/das-cnc.git
-# After OpenSSH + VPN work:
-git push -u production production
-```
-
-Wire a **post-receive hook** on the bare repo to update the live tree and run deploy (see §5.5). Do **not** expose SSH/Git on the public static IP — only on VPN.
-
-### 5.4 Deploy script on the server
-
-Save as `C:\apps\tools\deploy-das-cnc.ps1`:
-
-```powershell
-#Requires -Version 5.1
-$ErrorActionPreference = "Stop"
-$AppRoot = "C:\apps\das-cnc"
-$LogDir  = "C:\apps\logs\deploy"
-$Stamp   = Get-Date -Format "yyyyMMdd-HHmmss"
-New-Item -ItemType Directory -Force $LogDir | Out-Null
-Start-Transcript -Path "$LogDir\das-cnc-$Stamp.log"
-
-try {
-  Set-Location $AppRoot
-
-  # Safety: refuse if secrets missing
-  if (-not (Test-Path ".\server\.env")) { throw "Missing server\.env — abort" }
-  if (-not (Test-Path ".\client\.env.production")) { throw "Missing client\.env.production — abort" }
-
-  # Optional backup of last good dist
-  if (Test-Path ".\client\dist") {
-    $bak = "C:\apps\backups\releases\das-cnc-$Stamp-dist"
-    New-Item -ItemType Directory -Force $bak | Out-Null
-    Copy-Item -Recurse ".\client\dist\*" $bak
-  }
-
-  Write-Host "Fetching production..."
-  git fetch origin production
-  git checkout production
-  git reset --hard origin/production
-
-  Write-Host "Installing deps..."
-  npm ci --omit=dev
-
-  Write-Host "Building client (uses client\.env.production)..."
-  npm run build
-
-  Write-Host "Restarting API..."
-  Restart-Service DasCncApi -Force
-
-  Start-Sleep -Seconds 3
-  Invoke-RestMethod http://127.0.0.1:3001/health -TimeoutSec 15
-  Write-Host "Deploy OK"
-}
-catch {
-  Write-Error $_
-  exit 1
-}
-finally {
-  Stop-Transcript
-}
-```
-
-OCR deploy script `C:\apps\tools\deploy-invoice-ocr.ps1`:
-
-```powershell
-$ErrorActionPreference = "Stop"
-$AppRoot = "C:\apps\invoice-ocr"
-Set-Location $AppRoot
-git fetch origin production
-git checkout production
-git reset --hard origin/production
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-Restart-Service DasCncOcr -Force
-Start-Sleep -Seconds 5
-Invoke-RestMethod http://127.0.0.1:8000/health -TimeoutSec 60
-```
-
-If you use bare-repo Option B, change `git fetch origin` to fetch from the bare remote (often just `git --git-dir=C:\apps\repos\das-cnc.git --work-tree=C:\apps\das-cnc fetch` + `reset --hard` as in the hook below).
-
-### 5.5 Day-to-day: push from laptop → production
-
-**Path 1 — GitHub + pull on server (safest default)**
-
-```powershell
-# On laptop — after merge/test
-cd "E:\Chinmay_Projects\VS Files\das-cnc"
-git checkout production
-git merge main          # or cherry-pick / PR merge on GitHub
-git push origin production
-
-# Then trigger deploy on server (pick one):
-# 1) VPN + SSH:
-ssh DEPLOY_USER@SERVER_VPN_IP "powershell -File C:\apps\tools\deploy-das-cnc.ps1"
-# 2) VPN + RDP: run the same script
-# 3) Optional: scheduled task that polls every N minutes (less ideal)
-```
-
-**Path 2 — direct `git push production` to server (Option B)**
-
-Bare repo hook `C:\apps\repos\das-cnc.git\hooks\post-receive` (Git for Windows often needs a bash hook, or call PowerShell from it):
-
-```bash
-#!/bin/sh
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:/apps/tools/deploy-das-cnc-from-bare.ps1"
-```
-
-`deploy-das-cnc-from-bare.ps1` should:
-
-1. `git --git-dir=C:\apps\repos\das-cnc.git --work-tree=C:\apps\das-cnc checkout -f production`
-2. Preserve `server\.env` / `client\.env.production` (they are untracked — `checkout -f` does not delete them if ignored)
-3. Run `npm ci --omit=dev`, `npm run build`, `Restart-Service DasCncApi`
-
-Laptop:
-
-```powershell
-git push production production
-```
-
-### 5.6 First-time install after clone (server)
-
-```powershell
-cd C:\apps\das-cnc
-npm ci --omit=dev
-# ensure client\.env.production and server\.env exist
-npm run build
-
 cd C:\apps\invoice-ocr
 py -3.10 -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -417,167 +547,135 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-First OCR start downloads Paddle models to the **service account** profile (`C:\Users\svc_dascnc\.paddleocr\`). Allow outbound HTTPS once, or pre-copy a warmed cache.
+**Why:** Isolates OCR deps. First install is large; needs internet. On **16 GB+ RAM** leave defaults. Only if you were stuck on 8 GB would you set `OCR_LOW_MEMORY=true` (you should not be — new server has ≥16 GB).
 
-### 5.7 Git deploy security rules
+### F2 — Manual start test
 
-| Rule | Why |
-|------|-----|
-| SSH/Git **only on VPN** (or private Tailscale IP) | Public `git push` to a Windows box gets brute-forced |
-| Deploy key **read-only** for Option A | Compromised server cannot push malware to GitHub |
-| Protect `production` branch | Accidental force-push / unreviewed code |
-| Never commit `.env` | Service role key = full DB |
-| `git reset --hard` only on server checkout | Keeps live tree clean; local server edits are discarded |
-| Tag releases (`v2026.09.12`) before risky deploys | Easy rollback: `git reset --hard v2026.09.12` then rebuild |
-| Separate InvoiceOCR deploy | Heavy pip/OCR restart only when OCR code changes |
+```powershell
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+```
 
-### 5.8 Rollback via Git
+Second window: `Invoke-RestMethod http://127.0.0.1:8000/health`
+
+**Why:**
+
+- `127.0.0.1` = not reachable from internet  
+- `--workers 1` = OCR models are heavy; more workers multiply RAM and fight each other  
+- First start may download models into the user profile (`.paddleocr`) — needs outbound HTTPS once  
+
+Stop with Ctrl+C when healthy.
+
+**Checkpoint F**
+
+- [ ] Health OK  
+- [ ] Models downloaded (or you know they’ll download under `svc_dascnc` when the service starts)  
+
+---
+
+## Phase G — Install API + build website by hand
+
+### G1 — Dependencies + build
 
 ```powershell
 cd C:\apps\das-cnc
-git fetch origin
-git log --oneline -20
-git reset --hard <GOOD_COMMIT_OR_TAG>
 npm ci --omit=dev
 npm run build
-Restart-Service DasCncApi -Force
-Invoke-RestMethod http://127.0.0.1:3001/health
+dir .\client\dist
 ```
 
-Or restore `client\dist` from `C:\apps\backups\releases\...` if you only need a UI rollback.
+**Why:** `npm ci` uses the lockfile for reproducible installs. `build` creates static files IIS will serve.
+
+### G2 — Manual API test
+
+```powershell
+cd C:\apps\das-cnc\server
+node index.js
+```
+
+Other window: `Invoke-RestMethod http://127.0.0.1:3001/health`
+
+**Why:** Proves `.env` loads and the process listens before you wrap it in a service (easier to read errors in the console).
+
+**Checkpoint G**
+
+- [ ] `client\dist\index.html` exists  
+- [ ] `/health` returns ok  
 
 ---
 
-## 6. Environment configuration
+## Phase H — Windows services (survive reboot)
 
-### `C:\apps\das-cnc\server\.env` (template)
-
-```env
-# --- Core ---
-PORT=3001
-FRONTEND_URL=https://YOUR_DOMAIN_OR_IP
-TIMEZONE=Asia/Kolkata
-JWT_SECRET=REPLACE_WITH_LONG_RANDOM_64_CHARS
-JWT_EXPIRES_IN=12h
-
-# --- Supabase (service role — never expose to browser) ---
-SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-SUPABASE_SERVICE_KEY=REPLACE_SERVICE_ROLE_KEY
-
-# --- Device / biometric ---
-DEVICE_SECRET=REPLACE_DEVICE_HEADER_SECRET
-BIOMETRIC_API_URL=https://vendor.example/api
-BIOMETRIC_API_USERNAME=
-BIOMETRIC_API_PASSWORD=
-
-# --- Invoice OCR (localhost only) ---
-INVOICE_OCR_URL=http://127.0.0.1:8000/parse
-INVOICE_OCR_HEALTH_URL=http://127.0.0.1:8000/health
-INVOICE_OCR_TIMEOUT_MS=300000
-
-# --- Tally (optional) ---
-TALLY_ENABLED=false
-TALLY_URL=http://127.0.0.1:9000
-TALLY_COMPANY=Exact Company Name In Tally
-# TALLY_TIMEOUT_MS=30000
-```
-
-Generate secrets:
+### H1 — OCR service (NSSM)
 
 ```powershell
-[Convert]::ToBase64String((1..48 | ForEach-Object { Get-Random -Maximum 256 }) -as [byte[]])
-```
-
-### OCR process environment (NSSM / system env)
-
-Full accuracy (needs RAM):
-
-```env
-OCR_LOW_MEMORY=false
-OCR_VERSION=PP-OCRv4
-OCR_DPI=150
-OCR_MAX_SIDE=2400
-OCR_MAX_PAGES=1
-```
-
-Low RAM (≤ 8 GB):
-
-```env
-OCR_LOW_MEMORY=true
-# or OCR_FAST_MODE=true
-```
-
----
-
-## 7. Run as Windows services (NSSM)
-
-### API service
-
-```powershell
-nssm install DasCncApi "C:\Program Files\nodejs\node.exe" "C:\apps\das-cnc\server\index.js"
-nssm set DasCncApi AppDirectory "C:\apps\das-cnc\server"
-nssm set DasCncApi AppEnvironmentExtra "NODE_ENV=production"
-nssm set DasCncApi ObjectName ".\svc_dascnc" "SERVICE_USER_PASSWORD"
-nssm set DasCncApi AppStdout "C:\apps\logs\api\stdout.log"
-nssm set DasCncApi AppStderr "C:\apps\logs\api\stderr.log"
-nssm set DasCncApi AppRotateFiles 1
-nssm set DasCncApi AppRotateBytes 10485760
-nssm set DasCncApi Start SERVICE_AUTO_START
-nssm set DasCncApi AppExit Default Restart
-nssm set DasCncApi AppRestartDelay 5000
-```
-
-Ensure `.env` is loaded (server already loads `server/.env` via dotenv).
-
-### OCR service
-
-```powershell
-nssm install DasCncOcr "C:\apps\invoice-ocr\.venv\Scripts\uvicorn.exe" "app.main:app --host 127.0.0.1 --port 8000 --workers 1"
-nssm set DasCncOcr AppDirectory "C:\apps\invoice-ocr"
-nssm set DasCncOcr ObjectName ".\svc_dascnc" "SERVICE_USER_PASSWORD"
-nssm set DasCncOcr AppStdout "C:\apps\logs\ocr\stdout.log"
-nssm set DasCncOcr AppStderr "C:\apps\logs\ocr\stderr.log"
-nssm set DasCncOcr AppRotateFiles 1
-nssm set DasCncOcr AppRotateBytes 10485760
-nssm set DasCncOcr Start SERVICE_AUTO_START
-nssm set DasCncOcr AppExit Default Restart
-nssm set DasCncOcr AppRestartDelay 10000
-```
-
-Bind OCR to **`127.0.0.1`**, not `0.0.0.0`, so it is not reachable from the LAN/internet.
-
-Start order: **OCR → API → IIS**.
-
-```powershell
+$nssm = "C:\apps\tools\nssm\win64\nssm.exe"
+& $nssm install DasCncOcr "C:\apps\invoice-ocr\.venv\Scripts\uvicorn.exe" "app.main:app --host 127.0.0.1 --port 8000 --workers 1"
+& $nssm set DasCncOcr AppDirectory "C:\apps\invoice-ocr"
+& $nssm set DasCncOcr ObjectName ".\svc_dascnc" "SVC_PASSWORD"
+& $nssm set DasCncOcr AppStdout "C:\apps\logs\ocr\stdout.log"
+& $nssm set DasCncOcr AppStderr "C:\apps\logs\ocr\stderr.log"
+& $nssm set DasCncOcr AppRotateFiles 1
+& $nssm set DasCncOcr AppRotateBytes 10485760
+& $nssm set DasCncOcr Start SERVICE_AUTO_START
+& $nssm set DasCncOcr AppExit Default Restart
+& $nssm set DasCncOcr AppRestartDelay 10000
 Start-Service DasCncOcr
-Start-Service DasCncApi
-iisreset /noforce
 ```
 
-Smoke:
+### H2 — API service (NSSM)
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8000/health
-Invoke-RestMethod http://127.0.0.1:3001/health
+$nssm = "C:\apps\tools\nssm\win64\nssm.exe"
+& $nssm install DasCncApi "C:\Program Files\nodejs\node.exe" "C:\apps\das-cnc\server\index.js"
+& $nssm set DasCncApi AppDirectory "C:\apps\das-cnc\server"
+& $nssm set DasCncApi ObjectName ".\svc_dascnc" "SVC_PASSWORD"
+& $nssm set DasCncApi AppStdout "C:\apps\logs\api\stdout.log"
+& $nssm set DasCncApi AppStderr "C:\apps\logs\api\stderr.log"
+& $nssm set DasCncApi AppRotateFiles 1
+& $nssm set DasCncApi AppRotateBytes 10485760
+& $nssm set DasCncApi Start SERVICE_AUTO_START
+& $nssm set DasCncApi AppExit Default Restart
+& $nssm set DasCncApi AppRestartDelay 5000
+& $nssm set DasCncApi AppEnvironmentExtra "NODE_ENV=production"
+Start-Service DasCncApi
 ```
+
+### H3 — Reboot test
+
+```powershell
+Restart-Computer
+# After reboot (no login needed for services):
+Get-Service DasCncApi, DasCncOcr
+Invoke-RestMethod http://127.0.0.1:3001/health
+Invoke-RestMethod http://127.0.0.1:8000/health
+```
+
+**Why:** Production must come back after power loss without you RDPing in to click “start.”
+
+**Checkpoint H**
+
+- [ ] Both services Running after reboot  
+- [ ] Both health endpoints OK  
 
 ---
 
-## 8. IIS reverse proxy + TLS
+## Phase I — IIS website + HTTPS
 
-### Why IIS
+### I1 — DNS (strongly preferred)
 
-- Terminate HTTPS on the static IP / DNS name.
-- Serve SPA from `client/dist`.
-- Proxy `/api` and `/socket.io` to Node (WebSockets required for Socket.IO).
-- Keep Node/OCR off the public NIC.
+**What:** Create `erp.yourcompany.com` → A record → `STATIC_IP`.
 
-### SPA site
+**Why:** Let’s Encrypt and browsers work cleanly with names. Raw IPs are painful for certificates.
 
-1. Create IIS site `DasCnc` → physical path `C:\apps\das-cnc\client\dist`.
-2. Bind **HTTPS 443** to the static IP (and hostname if you have DNS).
-3. Optional: HTTP 80 site that redirects to HTTPS.
-4. Add `web.config` for SPA fallback + proxy (example):
+### I2 — Create the IIS site
+
+Point physical path to `C:\apps\das-cnc\client\dist`, bind HTTP 80 on the server IP (GUI or PowerShell).
+
+**Why:** Users hit IIS; IIS serves the built React files.
+
+### I3 — `web.config` (SPA + reverse proxy)
+
+Save master copy at `C:\apps\tools\web.config` and copy into `dist` (builds wipe `dist`):
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -592,6 +690,10 @@ Invoke-RestMethod http://127.0.0.1:3001/health
         <rule name="SocketIO" stopProcessing="true">
           <match url="^socket.io/(.*)" />
           <action type="Rewrite" url="http://127.0.0.1:3001/socket.io/{R:1}" />
+        </rule>
+        <rule name="Health" stopProcessing="true">
+          <match url="^health$" />
+          <action type="Rewrite" url="http://127.0.0.1:3001/health" />
         </rule>
         <rule name="SPA" stopProcessing="true">
           <match url=".*" />
@@ -608,321 +710,279 @@ Invoke-RestMethod http://127.0.0.1:3001/health
         <add name="X-Content-Type-Options" value="nosniff" />
         <add name="X-Frame-Options" value="SAMEORIGIN" />
         <add name="Referrer-Policy" value="strict-origin-when-cross-origin" />
-        <!-- After HTTPS works: -->
-        <!-- <add name="Strict-Transport-Security" value="max-age=31536000; includeSubDomains" /> -->
       </customHeaders>
     </httpProtocol>
+    <security>
+      <requestFiltering>
+        <requestLimits maxAllowedContentLength="26214400" />
+      </requestFiltering>
+    </security>
   </system.webServer>
 </configuration>
 ```
 
-Enable ARR proxy:
+**Why:**
 
-- IIS → Application Request Routing → Server Proxy Settings → **Enable proxy**.
-- Increase timeout for OCR uploads (invoice parse can take minutes) — set proxy timeout ≥ **300 seconds**.
+- `/api` and `/socket.io` → Node  
+- Other routes → `index.html` (React Router)  
+- 25 MB upload limit aligns with OCR  
+- Security headers are basic hardening  
 
-### TLS certificate
+### I4 — TLS certificate
 
-| Option | When to use |
-|--------|-------------|
-| **Let's Encrypt** (win-acme) | You have a **public DNS name** pointing at the static IP |
-| **Commercial cert** | Corporate requirement |
-| **Self-signed** | Internal-only LAN; browsers will warn — avoid for real users |
+**What:** Use win-acme (Let’s Encrypt) for your DNS name, bind HTTPS 443 on the IIS site, redirect HTTP→HTTPS.
 
-Prefer a DNS name (`erp.yourcompany.com` → static IP) over raw IP for certificates and cookies.
+**Why:** Login tokens and business data must not travel in clear text. Browsers also warn on plain HTTP.
 
-If you must use raw IP HTTPS, use a cert that includes the IP (uncommon) or accept that public CAs will not issue easily — DNS name is strongly preferred.
+If `PUBLIC_URL` changed, update `.env` files and rebuild (Phase K).
 
----
+**Checkpoint I**
 
-## 9. Security hardening (production checklist)
-
-### Network / firewall
-
-**Public inbound (WAN):**
-
-| Port | Action |
-|------|--------|
-| 443/tcp | Allow (IIS HTTPS) |
-| 80/tcp | Allow only for ACME/HTTP→HTTPS |
-| 3389, 22, 5985/5986, 3001, 8000, 9000 | **Block** from internet |
-
-**Localhost / loopback:** Node 3001, OCR 8000, Tally 9000.
-
-**Outbound:** HTTPS to Supabase, biometric vendor, Windows Update, GitHub (if using pull deploy), (first-time) Paddle model hosts / PyPI.
-
-Prefer placing the server behind a **router firewall / NAT** that only forwards 443.
-
-### Application security (current gaps to close)
-
-The API today has JWT + bcrypt auth, but **no helmet, no rate limiting**, and CORS defaults can be wide. Before go-live:
-
-1. Set `FRONTEND_URL` to the exact public origin (not `*`).
-2. Restrict CORS in `server/index.js` to that origin (already partially prepared).
-3. Add (recommended code follow-ups, not in this doc’s scope unless you ask):
-   - `helmet`
-   - rate limit on `/api/auth/login` and OCR upload routes
-   - disable FastAPI `/docs` on OCR in production (or bind localhost only — already planned)
-4. Never put `SUPABASE_SERVICE_KEY` in the client.
-5. Rotate `JWT_SECRET` / `DEVICE_SECRET` if they were ever committed or shared.
-6. Protect manual debug route `POST /api/sync/biometric` (auth-gate or disable in prod).
-
-### InvoiceOCR
-
-- No API key in the OCR service today → **must stay on 127.0.0.1**.
-- Upload max **25 MB**.
-- Do not publish port 8000.
-
-### Windows host
-
-- Dedicated local/domain accounts; no shared Administrator for daily use.
-- Disable unused roles/features.
-- Enable **Windows Firewall**, **Defender** (or approved AV), real-time protection.
-- BitLocker if the chassis is at risk of theft.
-- Audit logon events; forward logs if possible.
-- Keep the box patched on a monthly cadence (or weekly).
-
-### Supabase
-
-- Confirm Storage buckets (`invoices`, `master-images`, `employee-images`, `photos`) exist.
-- Apply SQL from `server/migrations/*.sql` (and any private `supabase/migrations` you maintain) in order on the **production** project.
-- Restrict Supabase dashboard access (MFA on owners).
-- Note: service role bypasses RLS — API security is your RLS.
+- [ ] `https://PUBLIC_URL` shows login  
+- [ ] `https://PUBLIC_URL/health` returns ok  
+- [ ] Browser Network tab calls `/api/...` on the same host (not `localhost:3001`)  
 
 ---
 
-## 10. Healthy remote management
+## Phase J — Firewall + harden Remote Desktop
 
-### Preferred access model
-
-```
-Admin laptop → VPN (or ZeroTier / Tailscale / WireGuard) → Server private RDP/WinRM
-```
-
-**Never** leave RDP (3389) open to `0.0.0.0/0` on a static IP. That is the #1 way these boxes get ransomware.
-
-### Options (pick one primary)
-
-| Method | Use |
-|--------|-----|
-| **Site-to-site / SSL VPN** + RDP | Best for factory networks |
-| **Tailscale / ZeroTier** | Fast to set up; lock ACL to admin devices only |
-| **RD Gateway** | If you already run Microsoft remote stack |
-| **OpenSSH** (Admin only, key auth, non-default port, VPN still better) | Scripted deploys |
-
-### Hardening RDP (even on VPN)
-
-- Network Level Authentication (NLA) on.
-- Strong passwords / preferably domain accounts + MFA at VPN.
-- Account lockout policy.
-- Optionally change RDP listen port **and** still keep it off the public internet.
-- Restrict which AD/local groups can log on via RDP.
-
-### WinRM / PowerShell remoting
-
-Enable only on the management network:
+### J1 — Public web ports only
 
 ```powershell
-Enable-PSRemoting -Force
-# Prefer HTTPS listener + cert; restrict firewall to VPN subnet
+New-NetFirewallRule -DisplayName "DasCnc HTTP" -Direction Inbound -Protocol TCP -LocalPort 80 -Action Allow
+New-NetFirewallRule -DisplayName "DasCnc HTTPS" -Direction Inbound -Protocol TCP -LocalPort 443 -Action Allow
 ```
 
-### Monitoring & health
+Router/NAT: forward **80/443** only for the website. Do **not** forward 3001 or 8000.
 
-1. **Scheduled task every 5 minutes** — hit local health endpoints; restart service on failure; append to log.
+**Why:** Shrink the attack surface to “just the website.”
+
+### J2 — RDP lockdown (you use RDP — this matters)
+
+**What — pick one:**
+
+1. **Best:** Tailscale/company VPN on laptop + server → RDP to VPN IP → **do not** port-forward 3389 on the router.  
+2. **OK:** Port-forward 3389 but firewall-allow **only** `YOUR_RDP_SOURCE_IP`.  
+3. **On-site only:** no 3389 forward; RDP only on LAN.
+
+Also enable **NLA** (`SystemPropertiesRemote`).
 
 ```powershell
-# C:\apps\tools\healthcheck.ps1
-$fail = $false
-try { Invoke-RestMethod http://127.0.0.1:3001/health -TimeoutSec 10 | Out-Null } catch { $fail = $true; Restart-Service DasCncApi -ErrorAction SilentlyContinue }
-try { Invoke-RestMethod http://127.0.0.1:8000/health -TimeoutSec 30 | Out-Null } catch { $fail = $true; Restart-Service DasCncOcr -ErrorAction SilentlyContinue }
-if ($fail) { Add-Content C:\apps\logs\health-fail.log "$(Get-Date -Format o) health restart triggered" }
+# Example for option 2
+New-NetFirewallRule -DisplayName "RDP from my PC only" `
+  -Direction Inbound -Protocol TCP -LocalPort 3389 `
+  -RemoteAddress YOUR_RDP_SOURCE_IP -Action Allow
+
+net accounts /lockoutthreshold:5 /lockoutduration:30 /lockoutwindow:30
 ```
 
-2. **External uptime** (UptimeRobot / Better Stack / Hetrix) against `https://YOUR_HOST/health` — requires exposing `/health` through IIS (add a rewrite rule for `^health$` → `http://127.0.0.1:3001/health`).
+**Why:** Open RDP on a public static IP is a top ransomware path. You still get convenient Remote Desktop — just not for the entire internet.
 
-3. **Disk / RAM alerts** via Performance Monitor + email, or a small script checking free space & service status.
+### J3 — Outside test (phone mobile data)
 
-4. **Log rotation** — NSSM rotate + IIS logs; purge `C:\apps\logs` older than 30–90 days.
+- Site HTTPS works  
+- `:3001` and `:8000` fail from outside  
+- Random-network RDP fails  
+- Your chosen RDP path still works  
 
-### Remote updates (safe pattern)
+**Checkpoint J**
 
-Prefer **Git** (§5) over manual file copy:
-
-1. Merge/test on laptop → `git push origin production` (or `git push production production`).
-2. On server (VPN): run `C:\apps\tools\deploy-das-cnc.ps1` (or let the post-receive hook run it).
-3. Script pulls/resets, keeps `.env` / `.env.production`, runs `npm ci` + `npm run build`, restarts `DasCncApi`.
-4. Smoke `/health`, login, Socket.IO, one OCR upload if OCR changed.
-5. If bad: `git reset --hard <good-tag>` + rebuild, or restore `client\dist` from `C:\apps\backups\releases\`.
-
-Manual robocopy remains a fallback if Git is unavailable.
+- [ ] Website public; API/OCR private  
+- [ ] RDP not open to the world  
+- [ ] You can still RDP in  
 
 ---
 
-## 11. Backups & disaster recovery
+## Phase K — Everyday Git deploy (laptop + RDP)
 
-| What | How often | Where |
-|------|-----------|-------|
-| `server\.env` (encrypted) | On every change | Offline USB / password manager + encrypted zip |
-| IIS `web.config`, NSSM exports | On every change | `C:\apps\backups\configs` + offsite |
-| App release zip / Git tag | Each deploy | Offsite + `git tag` on `production` |
-| Supabase | Daily (Supabase backups / PITR if paid) | Supabase dashboard |
-| Windows System State / full image | Weekly | External drive / NAS |
-| Paddle model cache (optional) | After first warm-up | Speeds rebuilds |
+### K1 — Deploy script on the server
 
-Test restore once before go-live.
-
-Tally data is separate — follow your existing Tally backup SOP if `TALLY_ENABLED=true`.
-
----
-
-## 12. Database / storage go-live
-
-1. Create or select **production** Supabase project (do not reuse a dirty shared-dev project if avoidable).
-2. Apply migrations in chronological order from `server/migrations/`.
-3. Verify buckets + policies.
-4. Create at least one admin employee login; verify bcrypt path works.
-5. Confirm cron jobs on the API (attendance, alerts, etc.) use `TIMEZONE=Asia/Kolkata` and that the Windows clock/NTP is correct.
-
----
-
-## 13. Tally & biometric (optional)
-
-### Tally
-
-- Install Tally on the **same LAN** (often same server or accounting PC).
-- Enable Tally HTTP/XML on port 9000; company name must match `TALLY_COMPANY` exactly.
-- Firewall: allow 9000 only from the API host IP.
-- Set `TALLY_ENABLED=true` only after a test voucher sync.
-
-### Biometric
-
-- Confirm vendor API reachable from the server (outbound).
-- Set Basic auth env vars.
-- Test `POST /api/sync/biometric` once from an authenticated admin session (or temporarily from localhost), then lock the route down.
-
----
-
-## 14. Go-live checklist
-
-### Pre-flight
-
-- [ ] OS is 2016+ (or newer guest VM)
-- [ ] Node 20 + Python 3.10 + VC++ redist installed
-- [ ] Git for Windows installed; `production` branch exists on GitHub (or bare repo on server)
-- [ ] Server clone at `C:\apps\das-cnc` (+ `invoice-ocr`); deploy key or SSH remote works **over VPN only**
-- [ ] `deploy-das-cnc.ps1` tested; `.env` / `.env.production` present and **not** in git
-- [ ] `svc_dascnc` created; `.env` ACLs tight
-- [ ] Client builds on server with correct `VITE_API_URL` + `VITE_SOCKET_URL`
-- [ ] NSSM services auto-start; OCR on `127.0.0.1:8000`
-- [ ] IIS HTTPS + ARR timeouts ≥ 300s; WebSockets on
-- [ ] WAN firewall: only 443 (and 80 redirect); **no** public Git/SSH/RDP
-- [ ] RDP/SSH/Git not on public internet; VPN works
-- [ ] Supabase migrations + buckets done
-- [ ] Health scripts + external uptime configured
-- [ ] Backup of `.env` and a Git tag / release zip stored off-box
-
-### Functional tests
-
-- [ ] `GET https://HOST/health` → `{ status: "ok" }`
-- [ ] Login works; JWT stored; protected pages load
-- [ ] Socket.IO connects (production board / live updates)
-- [ ] Upload employee/master image
-- [ ] Invoice OCR upload → review page fields populated
-- [ ] GIRN extract-invoice path (if used)
-- [ ] Cron: wait for a scheduled tick or trigger sync manually
-- [ ] Tally ping (if enabled)
-- [ ] Reboot server → services come back without login
-
-### Rollback
-
-1. On server: `git reset --hard <GOOD_TAG_OR_COMMIT>` then `npm ci --omit=dev` && `npm run build` && `Restart-Service DasCncApi`.
-2. Or restore previous `client\dist` from `C:\apps\backups\releases\...`.
-3. Restore `.env` only if it was changed outside git.
-4. Verify health + login.
-
----
-
-## 15. Suggested deployment timeline
-
-| Day | Work |
-|-----|------|
-| **D1** | Confirm OS viability; patch; create service account; install Node/Python/IIS/NSSM/**Git**/OpenSSH |
-| **D2** | Create `production` branch; clone on server; deploy keys or bare remote over VPN |
-| **D3** | Deploy OCR via Git; warm models; health OK |
-| **D4** | `.env` + `.env.production`; first `deploy-das-cnc.ps1`; Supabase migrations |
-| **D5** | IIS site + TLS; proxy `/api` + `/socket.io` |
-| **D6** | Firewall lockdown; VPN; test laptop → `git push` → deploy |
-| **D7** | UAT; tag release; backups; cutover; watch logs 48h |
-
----
-
-## 16. Known product notes (fix before prod)
-
-1. **`VITE_SOCKET_URL` is mandatory** in production builds (`socketContext.jsx`).
-2. **README port is wrong** — API listens on **3001**, not 3000.
-3. **`server/.env.example` is incomplete** — use the full template in §6.
-4. **OCR `/docs`** is open if the port is reachable — bind localhost only.
-5. **No Docker** in-repo; this plan is native Windows services + IIS + **Git deploy**.
-6. Prior Render URLs in comments (`das-cnc.onrender.com`, `invoiceocr-c7ah.onrender.com`) are **dev/legacy**; production should use your static IP/DNS + local OCR.
-7. Build the SPA **on the server** (or CI) after each pull so `client/.env.production` is applied — do not commit `client/dist` from a laptop pointed at localhost.
-
----
-
-## 17. Post-deploy improvements (recommended backlog)
-
-These are not required to boot, but strengthen production:
-
-1. Add `helmet`, login rate limiting, request size limits on Express.
-2. Auth-protect or remove public debug sync endpoints.
-3. Serve SPA from Express *or* keep IIS — but document one official path.
-4. Structured logging (e.g. rotate + ship to a file share).
-5. Disable InvoiceOCR OpenAPI docs via env flag.
-6. Pin Node/Python versions in an `engines` / deploy readme.
-7. Keep `deploy-das-cnc.ps1` / OCR script under `C:\apps\tools` (or commit a sanitized copy under `scripts/` in the repo without secrets).
-8. Optional: GitHub Action that SSHes over VPN/self-hosted runner and runs deploy after push to `production`.
-
----
-
-## 18. Quick command cheat sheet
+Save `C:\apps\tools\deploy-das-cnc.ps1`:
 
 ```powershell
-# Status
-Get-Service DasCncApi, DasCncOcr
-Invoke-RestMethod http://127.0.0.1:3001/health
-Invoke-RestMethod http://127.0.0.1:8000/health
+#Requires -Version 5.1
+$ErrorActionPreference = "Stop"
+$AppRoot = "C:\apps\das-cnc"
+$LogDir  = "C:\apps\logs\deploy"
+$Stamp   = Get-Date -Format "yyyyMMdd-HHmmss"
+New-Item -ItemType Directory -Force $LogDir | Out-Null
+Start-Transcript -Path "$LogDir\das-cnc-$Stamp.log"
+try {
+  Set-Location $AppRoot
+  if (-not (Test-Path ".\server\.env")) { throw "Missing server\.env" }
+  if (-not (Test-Path ".\client\.env.production")) { throw "Missing client\.env.production" }
 
-# Deploy (on server)
-powershell -File C:\apps\tools\deploy-das-cnc.ps1
-powershell -File C:\apps\tools\deploy-invoice-ocr.ps1
+  if (Test-Path ".\client\dist") {
+    $bak = "C:\apps\backups\releases\dist-$Stamp"
+    New-Item -ItemType Directory -Force $bak | Out-Null
+    Copy-Item -Recurse ".\client\dist\*" $bak
+  }
 
-# Git status on server
-cd C:\apps\das-cnc; git status; git log -1 --oneline
-
-# Restart
-Restart-Service DasCncOcr
-Restart-Service DasCncApi
-
-# Logs
-Get-Content C:\apps\logs\api\stderr.log -Tail 100
-Get-Content C:\apps\logs\ocr\stderr.log -Tail 100
-Get-Content C:\apps\logs\deploy\*.log -Tail 50
+  git fetch origin production
+  git checkout production
+  git reset --hard origin/production
+  npm ci --omit=dev
+  npm run build
+  Copy-Item "C:\apps\tools\web.config" ".\client\dist\web.config" -Force
+  Restart-Service DasCncApi -Force
+  Start-Sleep 4
+  Invoke-RestMethod http://127.0.0.1:3001/health -TimeoutSec 20
+  Write-Host "DEPLOY OK $Stamp"
+}
+catch { Write-Error $_; exit 1 }
+finally { Stop-Transcript }
 ```
 
-**Laptop push cheat sheet:**
+OCR: `C:\apps\tools\deploy-invoice-ocr.ps1` — fetch/reset, `pip install -r requirements.txt`, restart `DasCncOcr`, hit `/health`.
+
+`Set-ExecutionPolicy RemoteSigned -Scope LocalMachine`
+
+**Why:** One script = same steps every time (pull, install, build, restore `web.config`, restart, health check). Less human error.
+
+### K2 — Your release ritual
+
+**Laptop:**
 
 ```powershell
 cd "E:\Chinmay_Projects\VS Files\das-cnc"
 git checkout production
 git merge main
 git push origin production
-ssh DEPLOY_USER@SERVER_VPN_IP "powershell -File C:\apps\tools\deploy-das-cnc.ps1"
-# or, if using bare remote:
-# git push production production
 ```
+
+**RDP into server → PowerShell:**
+
+```powershell
+powershell -File C:\apps\tools\deploy-das-cnc.ps1
+```
+
+**Why:** Laptop never needs direct file copy of the app. GitHub stores the version; RDP only runs the script and lets you watch logs if it fails.
+
+### K3 — Rollback
+
+On server via RDP: `git log`, `git reset --hard GOOD_COMMIT`, rebuild, copy `web.config`, restart API.
+
+**Checkpoint K**
+
+- [ ] One full push → RDP → deploy cycle works  
+- [ ] Rollback practiced once  
 
 ---
 
-## Summary
+## Phase L — Data go-live, monitoring, backups
 
-Deploy as **three layers on one hardened Windows host (2016+)**: IIS terminates TLS and serves the SPA; Node API and InvoiceOCR run as **localhost-only** auto-restart services; data stays in **Supabase**. Ship code with **Git** (`production` branch → server pull or VPN-only `git push` + `deploy-*.ps1`). Lock the static IP to **443**, manage the box over **VPN**, monitor `/health`, and keep `.env` / `.env.production` out of git with encrypted offsite backups. If the machine is truly Server 2008-era, put a **newer Windows Server VM** in front of the same static IP rather than running this stack on the old host OS.
+### L1 — Apply Supabase migrations + buckets
+
+**Why:** Code expects columns/tables/buckets that migrations create. Skipping = random 500 errors.
+
+### L2 — Create admin user and test
+
+Login, Socket.IO live page, image upload, one invoice OCR.
+
+### L3 — Health task every 5 minutes
+
+Script hits local `/health` and restarts services on failure. Optional: UptimeRobot on `https://PUBLIC_URL/health`.
+
+**Why:** You notice outages before users call you.
+
+### L4 — Backups
+
+| What | When |
+|------|------|
+| `.env` files (encrypted) | Every change |
+| Git tags on releases | Every production ship |
+| Disk/image backup | Weekly |
+| Supabase backups | Per plan in dashboard |
+
+**Checkpoint L**
+
+- [ ] Real user flows work  
+- [ ] Monitoring on  
+- [ ] Secrets backed up off-box  
+
+---
+
+## Phase M — Optional later (Tally / biometric)
+
+Only after core ERP is stable. Enable Tally/biometric env vars, restart API, test once. Keep those ports off the public internet.
+
+---
+
+# PART 4 — Final go-live checklist
+
+### Hardware / OS
+
+- [ ] New server (not the 10 GB 2016 box)  
+- [ ] ≥16 GB RAM, ≥256 GB SSD free headroom  
+- [ ] Patched Windows Server 2019/2022 (or solid 2016 if that’s what was bought — still OK if sized right)  
+
+### App
+
+- [ ] `DasCncApi` + `DasCncOcr` auto-start after reboot  
+- [ ] HTTPS site works  
+- [ ] Login + sockets + OCR + uploads work  
+- [ ] 3001/8000 not public  
+
+### Access
+
+- [ ] RDP locked (VPN or IP allowlist + NLA)  
+- [ ] Deploy ritual documented for a second person  
+
+### Ops
+
+- [ ] Health monitor green  
+- [ ] Backup of secrets + weekly machine backup  
+
+---
+
+# PART 5 — Everyday cheat sheet
+
+```powershell
+Get-Service DasCncApi, DasCncOcr
+Invoke-RestMethod http://127.0.0.1:3001/health
+Invoke-RestMethod http://127.0.0.1:8000/health
+Get-Content C:\apps\logs\api\stderr.log -Tail 80
+Get-Content C:\apps\logs\ocr\stderr.log -Tail 80
+Restart-Service DasCncApi
+Restart-Service DasCncOcr
+powershell -File C:\apps\tools\deploy-das-cnc.ps1
+```
+
+**Ship:** laptop `git push origin production` → RDP → run deploy script.
+
+---
+
+# PART 6 — If something breaks
+
+| Symptom | Likely cause | What to check |
+|---------|--------------|---------------|
+| Site old/blank after deploy | `web.config` missing from new `dist` | Copy from `C:\apps\tools\web.config` |
+| Login / CORS errors | `FRONTEND_URL` ≠ browser origin | Exact `https://host` no trailing slash |
+| IIS 502 | API service down | `Get-Service DasCncApi`, API stderr log |
+| Sockets dead | Missing `VITE_SOCKET_URL` or no rebuild | Fix `.env.production`, rebuild |
+| OCR timeouts | OCR down / ARR timeout / RAM | OCR health, ARR 300s, logs |
+| Service won’t start | Wrong password / no “log on as service” | NSSM stderr, secpol |
+| Can’t RDP | IP allowlist changed | Console/VPN; update firewall rule |
+| Disk filling | Logs / updates | Clean old logs; you sized disk properly this time |
+
+---
+
+# PART 7 — Timeline
+
+| When | Focus |
+|------|--------|
+| **Now (waiting for hardware)** | Part 2 — GitHub `production`, secrets inventory, Supabase prep, optional local build |
+| **Server delivery week — Day 1** | Part 3 B–C — OS, folders, IIS, Node, Python, Git, NSSM |
+| **Day 2** | D–H — clone, secrets, OCR, API, Windows services, reboot test |
+| **Day 3** | I–J — HTTPS, firewall, RDP harden |
+| **Day 4** | K–L — first Git deploy, data, monitors, UAT |
+| **Day 5** | Go live; watch logs; keep old 2016 box offline for prod |
+
+---
+
+## Bottom line
+
+1. **Don’t** put production on the laggy 10 GB / 8 GB RAM 2016 machine.  
+2. **Do** procure a server with **16–32 GB RAM** and **256–512 GB SSD**.  
+3. **Meanwhile** finish GitHub + secrets + Supabase prep on your laptop.  
+4. **When hardware arrives**, walk Part 3 top to bottom — each step has a reason, and each phase has a checkpoint so you always know what you’re doing and why.

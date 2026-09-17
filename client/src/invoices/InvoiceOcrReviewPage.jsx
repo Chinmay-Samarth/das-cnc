@@ -315,13 +315,19 @@ export default function InvoiceOcrReviewPage() {
     setError('');
     try {
       if (!String(header.invoice_number || '').trim()) {
-        setError('Invoice number is required.');
-        setSubmitting(false);
+        await appAlert({
+          title: 'Could not save',
+          message: 'Invoice number is required.',
+          tone: 'danger',
+        });
         return;
       }
       if (!supplierId) {
-        setError('Supplier is required.');
-        setSubmitting(false);
+        await appAlert({
+          title: 'Could not save',
+          message: 'Supplier is required.',
+          tone: 'danger',
+        });
         return;
       }
 
@@ -382,13 +388,24 @@ export default function InvoiceOcrReviewPage() {
       });
       navigate('/invoices');
     } catch (err) {
-      setError(err.response?.data?.error || 'Unable to confirm review.');
+      await appAlert({
+        title: 'Could not save',
+        message: err.response?.data?.error || 'Unable to confirm review.',
+        tone: 'danger',
+      });
     } finally {
       setSubmitting(false);
     }
   }
 
-  function handleCancel() {
+  async function handleCancel() {
+    try {
+      await api.post(`/invoices/${id}/abandon-review`);
+      if (queueJob) dismissJob(queueJob.id);
+    } catch (err) {
+      // Still leave the page; draft may already be gone or not abandonable
+      console.warn('Abandon OCR draft failed:', err.response?.data?.error || err.message);
+    }
     if (context === 'girn') {
       navigate(returnTo || '/girn/create');
       return;
@@ -455,7 +472,7 @@ export default function InvoiceOcrReviewPage() {
         }
       />
 
-      {error ? <AlertBanner tone="danger" title="Could not save">{error}</AlertBanner> : null}
+      {error ? <AlertBanner tone="danger" title="Could not load">{error}</AlertBanner> : null}
 
       {warnings.length ? (
         <AlertBanner
