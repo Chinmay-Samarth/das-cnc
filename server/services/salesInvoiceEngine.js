@@ -79,10 +79,12 @@ function indianFy(date = new Date()) {
   const y = date.getFullYear();
   const m = date.getMonth() + 1; // 1–12
   const startYear = m >= 4 ? y : y - 1;
+  const startYY = String(startYear % 100).padStart(2, '0');
   const endYY = String((startYear + 1) % 100).padStart(2, '0');
   return {
     sequenceYear: startYear,
-    label: `${startYear}-${endYY}`,
+    /** e.g. 26-27 for FY 2026–27 */
+    label: `${startYY}-${endYY}`,
   };
 }
 
@@ -144,10 +146,13 @@ function computeTax({ quantity, unitPrice, companyStateCode, customerStateCode }
   };
 }
 
-async function nextSalesInvoiceNumber(prefix = 'INV') {
+/**
+ * Allocate next sales invoice number for the current Indian FY.
+ * Format: YY-YY/####  e.g. 26-27/1127
+ */
+async function nextSalesInvoiceNumber(_prefixIgnored = 'INV') {
   const { sequenceYear, label } = indianFy();
   const docType = 'sales_invoice';
-  const safePrefix = cleanText(prefix) || 'INV';
 
   for (let attempt = 0; attempt < 8; attempt++) {
     const { data: existing, error: selErr } = await supabase
@@ -163,7 +168,7 @@ async function nextSalesInvoiceNumber(prefix = 'INV') {
         .from('document_sequences')
         .insert({ doc_type: docType, year: sequenceYear, last_value: 1 });
       if (!insErr) {
-        return `${safePrefix}/${label}/0001`;
+        return `${label}/0001`;
       }
       continue;
     }
@@ -179,7 +184,7 @@ async function nextSalesInvoiceNumber(prefix = 'INV') {
       .maybeSingle();
     if (upErr) throw upErr;
     if (updated) {
-      return `${safePrefix}/${label}/${String(nextVal).padStart(4, '0')}`;
+      return `${label}/${String(nextVal).padStart(4, '0')}`;
     }
   }
   throw httpError('Unable to allocate invoice number', 500);
@@ -1543,8 +1548,9 @@ async function issueInvoice(id, actorId) {
   }
 
   const company = await getCompanySettings();
-  const prefix = inv.company_snapshot?.invoice_prefix || company.invoice_prefix || 'INV';
-  const invoiceNumber = await nextSalesInvoiceNumber(prefix);
+  const invoiceNumber = await nextSalesInvoiceNumber(
+    inv.company_snapshot?.invoice_prefix || company.invoice_prefix || 'INV'
+  );
 
   const issuedAt = new Date().toISOString();
   const issueDate = todayYmd();

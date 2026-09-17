@@ -3,6 +3,11 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
+const {
+  hashPassword,
+  sanitizeEmployee,
+  assertPasswordPolicy,
+} = require('../services/passwordService');
 
 const router = express.Router();
 const supabase = createClient(
@@ -365,7 +370,7 @@ router.post('/', verifyEmployeeAuth, upload.fields([
       job_description,
       department_id: department_id || null,
       shift_id: shift_id || null,
-      password: password || null,
+      password: null,
       is_active: true,
       temporary_address: temporary_address|| null,
       permanent_address: permanent_address||null,
@@ -378,7 +383,18 @@ router.post('/', verifyEmployeeAuth, upload.fields([
       allowance: allowance || null,
       PT: PT || null,
       ESI_no: ESI_no || null,
+      must_change_password: true,
     };
+
+    const plainPassword = password != null && String(password).trim() !== '' ? String(password) : null;
+    if (plainPassword) {
+      try {
+        assertPasswordPolicy(plainPassword);
+      } catch (policyErr) {
+        return res.status(policyErr.status || 400).json({ error: policyErr.message });
+      }
+      insertPayload.password_hash = await hashPassword(plainPassword);
+    }
 
     const { data: newEmployee, error: insertError } = await supabase
       .from('employees')
@@ -429,7 +445,7 @@ router.post('/', verifyEmployeeAuth, upload.fields([
 
     return res.status(201).json({
       message: 'Employee created successfully',
-      employee: createdEmployee,
+      employee: sanitizeEmployee(createdEmployee),
     });
   } catch (err) {
     console.error('Employee creation error:', err);
@@ -493,7 +509,6 @@ router.put('/:id', verifyEmployeeAuth, upload.fields([
     if (job_description) updatePayload.job_description = job_description;
     if (department_id !== undefined) updatePayload.department_id = department_id || null;
     if (shift_id !== undefined) updatePayload.shift_id = shift_id || null;
-    if (password !== undefined) updatePayload.password = password || null;
     if (is_active !== undefined) updatePayload.is_active = parseBoolean(is_active);
     if(ESI_no !== undefined) updatePayload.ESI_no = ESI_no || null;
     if(temporary_address !== undefined) updatePayload.temporary_address = temporary_address || null;
@@ -506,6 +521,20 @@ router.put('/:id', verifyEmployeeAuth, upload.fields([
     if(PA!==undefined) updatePayload.PA = PA || null;
     if(PT!==undefined) updatePayload.PT = PT || null;
     if (allowance!== undefined) updatePayload.allowance = allowance || null;
+
+    const plainPassword =
+      password != null && String(password).trim() !== '' ? String(password).trim() : null;
+    if (plainPassword) {
+      try {
+        assertPasswordPolicy(plainPassword);
+      } catch (policyErr) {
+        return res.status(policyErr.status || 400).json({ error: policyErr.message });
+      }
+      updatePayload.password_hash = await hashPassword(plainPassword);
+      updatePayload.password = null;
+      updatePayload.must_change_password = true;
+      updatePayload.password_changed_at = null;
+    }
     
     const photo = req.files?.photo?.[0];
     const aadhar = req.files?.aadhar?.[0];
@@ -551,7 +580,7 @@ router.put('/:id', verifyEmployeeAuth, upload.fields([
 
     return res.json({
       message: 'Employee updated successfully',
-      employee: updatedEmployees[0],
+      employee: sanitizeEmployee(updatedEmployees[0]),
     });
   } catch (err) {
     console.error('Employee update error:', err);

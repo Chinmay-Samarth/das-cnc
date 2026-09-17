@@ -4,7 +4,7 @@ function normalizeRole(role) {
 
 /**
  * Map job_description → access level used across auth and workforce rules.
- * Roles: 'ADMIN' | 'MANAGER' | 'SUPERVISOR' | 'OPERATOR'
+ * Roles: 'ADMIN' | 'MANAGER' | 'SUPERVISOR' | 'OPERATOR' | 'FINANCE' | 'QC'
  */
 function computeAccessLevel(role) {
   const normalized = normalizeRole(role);
@@ -16,6 +16,8 @@ function computeAccessLevel(role) {
   ) {
     return 'ADMIN';
   }
+  if (normalized.includes('FINANCE')) return 'FINANCE';
+  if (normalized === 'QC' || normalized.includes('QUALITY')) return 'QC';
   if (normalized.includes('MANAGER')) return 'MANAGER';
   if (normalized.includes('SUPERVISOR')) return 'SUPERVISOR';
   return 'OPERATOR';
@@ -35,6 +37,14 @@ function isAdminJob(role) {
   return computeAccessLevel(role) === 'ADMIN';
 }
 
+function isFinanceUser(user) {
+  return accessLevelFromUser(user) === 'FINANCE';
+}
+
+function isQcUser(user) {
+  return accessLevelFromUser(user) === 'QC';
+}
+
 /** Active floor workforce: active and not ADMIN (MD / Admin job titles). */
 function isWorkforceEmployee(employee) {
   if (!employee) return false;
@@ -48,5 +58,7 @@ module.exports = {
   accessLevelFromUser,
   isAdminUser,
   isAdminJob,
+  isFinanceUser,
+  isQcUser,
   isWorkforceEmployee,
 };

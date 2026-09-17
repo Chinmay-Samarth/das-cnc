@@ -37,6 +37,11 @@ export function resolveParentPath(pathname, searchParams) {
 
   if (isSectionRoot(pathname)) return HOME;
 
+  // Account settings — back to role home (via GlobalBackButton home remap)
+  if (pathname === '/account/settings' || pathname.startsWith('/account/')) {
+    return HOME;
+  }
+
   // Masters config
   if (pathname.startsWith('/masters/config/')) return HOME;
 

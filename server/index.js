@@ -4,6 +4,8 @@ const http = require('http');
 const express    = require('express');
 const cron       = require('node-cron');
 const axios      = require('axios');
+const helmet     = require('helmet');
+const rateLimit  = require('express-rate-limit');
 const { markAbsentees } = require('./services/attendanceEngine');
 const { syncBiometricData } = require('./services/biometricSync');
 const { evaluateAttendanceAlerts } = require('./services/attendanceAlertEngine');
@@ -14,23 +16,43 @@ const { evaluateProductionAlerts } = require('./services/productionAlertEngine')
 const { evaluateReorderAlerts } = require('./services/reorderAlertEngine');
 const { evaluatePredictiveReorder } = require('./services/predictiveReorderEngine');
 const { applyCurrentWeek } = require('./services/nightShiftRosterEngine');
+const { migratePlaintextPasswords } = require('./services/passwordService');
 const cors = require('cors');
 const { initSocket, attachConnectionHandlers } = require('./socket');
 const { isTallyEnabled, tallyCompany, tallyUrl } = require('./services/tallyClient');
- 
-const app = express();
-app.use(express.json());
 
-app.use(cors())
- 
-// CORS — restrict to your frontend domain in production
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', process.env.FRONTEND_URL || '*');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, x-device-secret, Authorization');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE');
-  next();
+const isProduction = process.env.NODE_ENV === 'production';
+if (isProduction && (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'change-me-in-env')) {
+  console.error('FATAL: JWT_SECRET must be set to a strong value in production');
+  process.exit(1);
+}
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'change-me-in-env') {
+  console.warn('WARNING: JWT_SECRET is using the insecure default. Set JWT_SECRET in .env');
+}
+
+const app = express();
+app.set('trust proxy', 1);
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+app.use(express.json({ limit: '1mb' }));
+
+const frontendOrigin = process.env.FRONTEND_URL || null;
+app.use(
+  cors({
+    origin: frontendOrigin || true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'x-device-secret', 'Authorization'],
+  })
+);
+
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Slow down and try again.' },
 });
- 
+app.use('/api', apiLimiter);
+
 // Routes
 app.use('/api/auth', require('./login'));
 app.use('/api/attendance', require('./routes/attendance'));
@@ -202,6 +224,9 @@ server.listen(PORT, () => {
   console.log(`DasCNC API running on port ${PORT}`);
   console.log(
     `[tally] enabled=${isTallyEnabled()} company=${tallyCompany() || '(not set)'} url=${tallyUrl()}`
+  );
+  migratePlaintextPasswords().catch((err) =>
+    console.error('Password plaintext migration failed:', err.message)
   );
   // Warm custom invoice OCR (Render) so first upload is not stuck on cold start
   const ocrHealth =

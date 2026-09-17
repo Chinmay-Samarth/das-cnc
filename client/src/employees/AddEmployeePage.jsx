@@ -16,6 +16,8 @@ const JOB_DESCRIPTION_OPTIONS = [
   { value: 'OPERATOR', label: 'Operator' },
   { value: 'SUPERVISOR', label: 'Supervisor' },
   { value: 'MANAGER', label: 'Manager' },
+  { value: 'FINANCE', label: 'Finance' },
+  { value: 'QC', label: 'QC' },
   { value: 'ADMIN', label: 'Admin' },
 ];
 

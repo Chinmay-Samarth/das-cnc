@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, X } from 'lucide-react';
 import api from '../../api/client';
+import { useAuth } from '../../auth/authContext';
+import { searchPages } from '../../auth/searchablePages';
 
 export default function GlobalSearch() {
   const navigate = useNavigate();
+  const { canAccessPath } = useAuth();
   const containerRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -14,28 +17,36 @@ export default function GlobalSearch() {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
 
-  const runSearch = useCallback(async (value) => {
-    const trimmed = value.trim();
-    if (trimmed.length < 2) {
-      setResults([]);
-      setLoading(false);
-      return;
-    }
+  const runSearch = useCallback(
+    async (value) => {
+      const trimmed = value.trim();
+      if (trimmed.length < 2) {
+        setResults([]);
+        setLoading(false);
+        return;
+      }
 
-    setLoading(true);
-    try {
-      const { data } = await api.get('/search', {
-        params: { q: trimmed, limit: 5 },
-      });
-      setResults(data.results || []);
-      setActiveIndex(-1);
-    } catch (err) {
-      console.error('Global search failed', err);
-      setResults([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+      const pageHits = searchPages(trimmed, canAccessPath);
+      setLoading(true);
+      try {
+        const { data } = await api.get('/search', {
+          params: { q: trimmed, limit: 5 },
+        });
+        const entityHits = (data.results || []).filter((r) => {
+          if (!r?.path) return true;
+          return canAccessPath(r.path);
+        });
+        setResults([...pageHits, ...entityHits]);
+        setActiveIndex(-1);
+      } catch (err) {
+        console.error('Global search failed', err);
+        setResults(pageHits);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [canAccessPath]
+  );
 
   useEffect(() => {
     if (!open) return undefined;
@@ -90,66 +101,66 @@ export default function GlobalSearch() {
     <div className="global-search">
       <div className="global-search-wrap" ref={containerRef}>
         <div className="global-search-inner">
-        <Search size={15} className="global-search-icon" aria-hidden="true" />
-        <input
-          ref={inputRef}
-          type="search"
-          className="global-search-input"
-          placeholder="Search employees, suppliers, invoices, GIRNs…"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setOpen(true);
-          }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={handleKeyDown}
-          aria-label="Global search"
-          aria-expanded={showDropdown}
-          aria-autocomplete="list"
-          role="combobox"
-        />
-        {query ? (
-          <button
-            type="button"
-            className="global-search-clear"
-            onClick={() => {
-              setQuery('');
-              setResults([]);
-              inputRef.current?.focus();
+          <Search size={15} className="global-search-icon" aria-hidden="true" />
+          <input
+            ref={inputRef}
+            type="search"
+            className="global-search-input"
+            placeholder="Search pages, employees, suppliers, invoices…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setOpen(true);
             }}
-            aria-label="Clear search"
-          >
-            <X size={14} />
-          </button>
-        ) : null}
-      </div>
-
-      {showDropdown ? (
-        <div className="global-search-dropdown" role="listbox">
-          {loading ? (
-            <p className="global-search-status">Searching…</p>
-          ) : results.length === 0 ? (
-            <p className="global-search-status">No results for &ldquo;{query.trim()}&rdquo;</p>
-          ) : (
-            results.map((result, index) => (
-              <button
-                key={`${result.type}-${result.id}`}
-                type="button"
-                role="option"
-                aria-selected={index === activeIndex}
-                className={`global-search-result${index === activeIndex ? ' is-active' : ''}`}
-                onMouseEnter={() => setActiveIndex(index)}
-                onClick={() => selectResult(result)}
-              >
-                <span className="global-search-result-type">{result.typeLabel}</span>
-                <span className="global-search-result-title">{result.title}</span>
-                {result.subtitle ? (
-                  <span className="global-search-result-subtitle">{result.subtitle}</span>
-                ) : null}
-              </button>
-            ))
-          )}
+            onFocus={() => setOpen(true)}
+            onKeyDown={handleKeyDown}
+            aria-label="Global search"
+            aria-expanded={showDropdown}
+            aria-autocomplete="list"
+            role="combobox"
+          />
+          {query ? (
+            <button
+              type="button"
+              className="global-search-clear"
+              onClick={() => {
+                setQuery('');
+                setResults([]);
+                inputRef.current?.focus();
+              }}
+              aria-label="Clear search"
+            >
+              <X size={14} />
+            </button>
+          ) : null}
         </div>
+
+        {showDropdown ? (
+          <div className="global-search-dropdown" role="listbox">
+            {loading && results.length === 0 ? (
+              <p className="global-search-status">Searching…</p>
+            ) : results.length === 0 ? (
+              <p className="global-search-status">No results for &ldquo;{query.trim()}&rdquo;</p>
+            ) : (
+              results.map((result, index) => (
+                <button
+                  key={`${result.type}-${result.id}`}
+                  type="button"
+                  role="option"
+                  aria-selected={index === activeIndex}
+                  className={`global-search-result${index === activeIndex ? ' is-active' : ''}`}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => selectResult(result)}
+                >
+                  <span className="global-search-result-type">{result.typeLabel}</span>
+                  <span className="global-search-result-title">{result.title}</span>
+                  {result.subtitle ? (
+                    <span className="global-search-result-subtitle">{result.subtitle}</span>
+                  ) : null}
+                </button>
+              ))
+            )}
+          </div>
         ) : null}
       </div>
     </div>

@@ -11,7 +11,11 @@ const {
 } = require('../../services/inspectionResultEngine');
 const { assignLotToGirnItem } = require('../../services/componentLotEngine');
 const { emitGirnUpdated } = require('../../socket/emitter');
-const { maybeNotifyGirnReadyForApproval } = require('../../services/girnApprovalEngine');
+const {
+  isGirnReadyForApproval,
+  maybeNotifyGirnReadyForApproval,
+} = require('../../services/girnApprovalEngine');
+const { approvePendingGirn } = require('../../services/girnApproveService');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -287,16 +291,39 @@ router.post(
 
       const execution = await loadInspectionExecution(itemId);
 
-      emitGirnUpdated({ girnId, action: 'inspection', status: girn.status });
+      let autoApproved = false;
+      let girnStatus = girn.status;
 
-      await maybeNotifyGirnReadyForApproval(girnId).catch((e) =>
-        console.error('GIRN ready-for-approval notification failed:', e.message)
-      );
+      if (overallResult === 'pass' && (await isGirnReadyForApproval(girnId))) {
+        try {
+          const result = await approvePendingGirn({
+            girnId,
+            approvedBy: req.user?.sub || null,
+            auto: true,
+          });
+          autoApproved = true;
+          girnStatus = result.girn?.status || 'approved';
+        } catch (approveErr) {
+          console.error('GIRN auto-approve after inspection failed:', approveErr.message);
+          await maybeNotifyGirnReadyForApproval(girnId).catch((e) =>
+            console.error('GIRN ready-for-approval notification failed:', e.message)
+          );
+        }
+      } else {
+        emitGirnUpdated({ girnId, action: 'inspection', status: girn.status });
+        await maybeNotifyGirnReadyForApproval(girnId).catch((e) =>
+          console.error('GIRN ready-for-approval notification failed:', e.message)
+        );
+      }
 
       return res.json({
-        message: 'Inspection submitted successfully',
+        message: autoApproved
+          ? 'Inspection submitted — GIRN auto-approved'
+          : 'Inspection submitted successfully',
         execution,
         lot_number: lotNumber || null,
+        auto_approved: autoApproved,
+        girn_status: girnStatus,
       });
     } catch (err) {
       console.error('GIRN inspection POST error:', err);

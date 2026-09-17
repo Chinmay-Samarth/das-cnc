@@ -1,5 +1,6 @@
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/authContext';
+import { getRoleNavPaths, isRestrictedRole } from '../../auth/financeAccess';
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../api/client';
 import {
@@ -159,19 +160,21 @@ export default function Sidebar({ onNavigate }) {
   const [managesWorkCenter, setManagesWorkCenter] = useState(false);
   const [openSections, setOpenSections] = useState(() => readStoredOpen() || {});
   const floorOnly = isFloorOnly();
+  const restrictedOnly = isRestrictedRole(user?.accessLevel);
+  const restrictedNavPaths = getRoleNavPaths(user?.accessLevel);
 
   useEffect(() => {
-    if (floorOnly) {
+    if (floorOnly || restrictedOnly) {
       setMasters([]);
       return undefined;
     }
     api.get('/masters/sidebar').then((res) => {
       setMasters(res.data || []);
     });
-  }, [floorOnly]);
+  }, [floorOnly, restrictedOnly]);
 
   useEffect(() => {
-    if (floorOnly) {
+    if (floorOnly || restrictedOnly) {
       setManagesWorkCenter(false);
       return undefined;
     }
@@ -181,7 +184,7 @@ export default function Sidebar({ onNavigate }) {
         setManagesWorkCenter((data.work_centers || []).length > 0);
       })
       .catch(() => setManagesWorkCenter(false));
-  }, [floorOnly]);
+  }, [floorOnly, restrictedOnly]);
 
   const sections = useMemo(() => {
     if (floorOnly) {
@@ -203,24 +206,25 @@ export default function Sidebar({ onNavigate }) {
     return NAV_SECTIONS.map((section) => ({
       ...section,
       items: section.items.filter((item) => {
+        if (restrictedNavPaths && !restrictedNavPaths.has(item.to)) return false;
         if (item.managerOnly && !managesWorkCenter) return false;
         if (item.adminOrSupervisorOnly && !isReviewer) return false;
         if (item.adminOnly && !isAdmin()) return false;
         return true;
       }),
     })).filter((section) => section.items.length > 0);
-  }, [managesWorkCenter, floorOnly, user?.accessLevel]);
+  }, [managesWorkCenter, floorOnly, restrictedNavPaths, user?.accessLevel, isAdmin]);
 
   const masterItems = useMemo(
     () =>
-      floorOnly
+      floorOnly || restrictedOnly
         ? []
         : masters.map((m) => ({
             to: `/masters/${m.slug}`,
             label: m.name.replace(/\s*Master$/i, ''),
             icon: Database,
           })),
-    [masters, floorOnly]
+    [masters, floorOnly, restrictedOnly]
   );
 
   // Auto-open the section that owns the current route
@@ -308,7 +312,7 @@ export default function Sidebar({ onNavigate }) {
                 />
               ))}
 
-              {masterItems.length || isAdmin() ? (
+              {!restrictedOnly && (masterItems.length || isAdmin()) ? (
                 <CollapsibleSection
                   id="masters"
                   label="Masters"

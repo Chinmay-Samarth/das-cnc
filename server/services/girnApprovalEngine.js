@@ -6,15 +6,12 @@ const { createClient } = require('@supabase/supabase-js');
 const { ensureNotification } = require('./notificationStore');
 const { itemInspectionComplete } = require('./girnInspectionEngine');
 const { requiresInspection } = require('../config/girnCategoryConfig');
+const { accessLevelFromUser } = require('../utils/accessLevel');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
-
-function accessLevelFromUser(user) {
-  return String(user?.access_level || user?.accessLevel || user?.job_description || '').toUpperCase();
-}
 
 function canReviewGirn(user) {
   const level = accessLevelFromUser(user);
@@ -225,6 +222,45 @@ async function dismissGirnReadyNotification(girnId) {
   if (error) throw error;
 }
 
+async function notifyGirnApproved(girnId, { auto = false } = {}) {
+  const { data: girn, error } = await supabase
+    .from('girns')
+    .select(
+      `
+      id, girn_number, status, approved_at,
+      supplier:suppliers!girns_supplier_id_fkey(id, name)
+    `
+    )
+    .eq('id', girnId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!girn || girn.status !== 'approved') return { created: false };
+
+  const label = girn.girn_number || String(girn.id).slice(0, 8);
+  const supplierName = girn.supplier?.name || null;
+
+  return ensureNotification({
+    audience: 'admin',
+    category: 'inventory',
+    type: 'girn_approved',
+    severity: 'info',
+    priority: 2,
+    title: auto ? 'GIRN auto-approved' : 'GIRN approved',
+    body: `${label}${supplierName ? ` (${supplierName})` : ''} — inspection passed and GIRN approved${
+      auto ? ' automatically' : ''
+    }.`,
+    dedupe_key: `inv:girn_approved:${girnId}`,
+    payload: {
+      girn_id: girnId,
+      girn_number: girn.girn_number || null,
+      supplier_id: girn.supplier?.id || null,
+      vendor_name: supplierName,
+      auto_approved: Boolean(auto),
+    },
+  });
+}
+
 module.exports = {
   canReviewGirn,
   listGirnsForApproval,
@@ -232,4 +268,6 @@ module.exports = {
   notifyGirnReadyForApproval,
   maybeNotifyGirnReadyForApproval,
   dismissGirnReadyNotification,
+  notifyGirnApproved,
+  loadInspectionsForItems,
 };

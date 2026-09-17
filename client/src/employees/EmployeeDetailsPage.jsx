@@ -17,6 +17,8 @@ const JOB_DESCRIPTION_OPTIONS = [
   { value: 'OPERATOR', label: 'Operator' },
   { value: 'SUPERVISOR', label: 'Supervisor' },
   { value: 'MANAGER', label: 'Manager' },
+  { value: 'FINANCE', label: 'Finance' },
+  { value: 'QC', label: 'QC' },
   { value: 'ADMIN', label: 'Admin' },
 ];
 
@@ -412,7 +414,9 @@ export default function EmployeeDetailsPage() {
       payload.append('job_description',     formData.job_description);
       payload.append('department_id',       formData.department_id || '');
       payload.append('shift_id',            formData.shift_id || '');
-      payload.append('password',            formData.password || '');
+      if (formData.password && String(formData.password).trim()) {
+        payload.append('password', String(formData.password).trim());
+      }
       payload.append('is_active',           formData.is_active);
       payload.append('temporary_address',   formData.temporary_address || '');
       payload.append('permanent_address',   formData.permanent_address || '');

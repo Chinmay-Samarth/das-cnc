@@ -15,6 +15,7 @@ const TYPE_LABEL = {
   dispatch_shortfall_pending: 'Shortfall',
   girn_pending_inspection: 'GIRN inspection',
   girn_ready_for_approval: 'GIRN approval',
+  girn_approved: 'GIRN approved',
   invoice_overdue: 'Invoice',
   op1_schedule_delay: 'Op1 delay',
   outsource_lead_delay: 'Outsource',
@@ -34,6 +35,9 @@ function destFor(n) {
   if (n.type === 'insufficient_stock') return '/stock';
   if (n.type === 'dispatch_shortfall_pending' || n.type === 'girn_ready_for_approval') {
     return '/approvals';
+  }
+  if (n.type === 'girn_approved') {
+    return n.payload?.girn_id ? `/girn/${n.payload.girn_id}` : '/girn';
   }
   return '/notifications?priority=1';
 }

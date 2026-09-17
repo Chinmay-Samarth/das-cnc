@@ -314,6 +314,17 @@ export default function InvoiceOcrReviewPage() {
     setSubmitting(true);
     setError('');
     try {
+      if (!String(header.invoice_number || '').trim()) {
+        setError('Invoice number is required.');
+        setSubmitting(false);
+        return;
+      }
+      if (!supplierId) {
+        setError('Supplier is required.');
+        setSubmitting(false);
+        return;
+      }
+
       const normalizedTaxes = taxes
         .map((t) => ({
           kind: String(t.kind || '').toUpperCase(),
@@ -336,7 +347,7 @@ export default function InvoiceOcrReviewPage() {
 
       const payload = {
         supplier_id: supplierId,
-        invoice_number: header.invoice_number,
+        invoice_number: String(header.invoice_number).trim(),
         invoice_date: header.invoice_date,
         due_date: header.due_date,
         total_amount: reconciledTotal,
@@ -519,11 +530,12 @@ export default function InvoiceOcrReviewPage() {
               </label>
 
               <label>
-                Invoice number
+                Invoice number <span className="required-mark">*</span>
                 <input
                   value={header.invoice_number}
                   onChange={(e) => handleHeaderField('invoice_number', e.target.value)}
                   placeholder="As printed on the invoice"
+                  required
                 />
               </label>
 
@@ -612,7 +624,7 @@ export default function InvoiceOcrReviewPage() {
             <button
               type="button"
               className="primary-button"
-              disabled={submitting || !supplierId}
+              disabled={submitting || !supplierId || !String(header.invoice_number || '').trim()}
               onClick={handleConfirm}
             >
               <Check size={16} />

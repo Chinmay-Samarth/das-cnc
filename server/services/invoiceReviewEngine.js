@@ -359,7 +359,18 @@ async function confirmReview(invoiceId, body, actorId) {
     0
   );
 
-  const invoiceNumber = body.invoice_number ?? invoice.invoice_number;
+  const invoiceNumber = String(body.invoice_number ?? invoice.invoice_number ?? '').trim();
+  if (!invoiceNumber) {
+    const err = new Error('Invoice number is required before confirming review');
+    err.status = 400;
+    throw err;
+  }
+
+  await assertUniqueSupplierInvoiceNumber({
+    supplierId,
+    invoiceNumber,
+    excludeInvoiceId: invoiceId,
+  });
 
   const resolvedTaxAmount =
     body.tax_amount != null && body.tax_amount !== ''
@@ -409,6 +420,48 @@ async function confirmReview(invoiceId, body, actorId) {
   await upsertAliases(supplierId, normalizedLines, actorId);
 
   return getInvoice(invoiceId);
+}
+
+/**
+ * Block confirming/accepting a purchase invoice when the same supplier
+ * already has an active row with this invoice number (Tally / accounting safety).
+ */
+async function assertUniqueSupplierInvoiceNumber({
+  supplierId,
+  invoiceNumber,
+  excludeInvoiceId,
+}) {
+  const number = String(invoiceNumber || '').trim();
+  const sid = supplierId || null;
+  if (!sid || !number) return;
+
+  let query = supabase
+    .from('invoices')
+    .select('id, invoice_number, status, review_status')
+    .eq('supplier_id', sid)
+    .ilike('invoice_number', number)
+    .neq('status', 'cancelled')
+    .limit(5);
+
+  if (excludeInvoiceId) {
+    query = query.neq('id', excludeInvoiceId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  const conflict = (data || []).find((row) => {
+    if (String(row.review_status || '').toLowerCase() === 'superseded') return false;
+    return String(row.invoice_number || '').trim().toLowerCase() === number.toLowerCase();
+  });
+
+  if (conflict) {
+    const err = new Error(
+      `Invoice number "${number}" already exists for this supplier. Duplicate invoices are not allowed (Tally / accounting).`
+    );
+    err.status = 409;
+    throw err;
+  }
 }
 
 async function supersedeAbandonedReviewDrafts({ keepInvoiceId, invoiceNumber, now }) {
@@ -462,8 +515,32 @@ async function finalizeOcrReview(invoiceId, doc, invoiceDraft) {
     ocr_warnings: ocrWarnings,
   });
 
-  const reviewStatus = autoAccept ? 'auto_accepted' : 'needs_review';
-  const status = autoAccept ? 'pending' : 'needs_review';
+  let reviewStatus = autoAccept ? 'auto_accepted' : 'needs_review';
+  let status = autoAccept ? 'pending' : 'needs_review';
+
+  // Never auto-accept a duplicate supplier invoice number into the live AP list.
+  if (autoAccept && invoiceDraft.supplier_id && invoiceDraft.invoice_number) {
+    try {
+      await assertUniqueSupplierInvoiceNumber({
+        supplierId: invoiceDraft.supplier_id,
+        invoiceNumber: invoiceDraft.invoice_number,
+        excludeInvoiceId: invoiceId,
+      });
+    } catch (dupErr) {
+      if (dupErr.status === 409) {
+        reviewStatus = 'needs_review';
+        status = 'needs_review';
+        ocrWarnings.push({
+          code: 'duplicate_invoice_number',
+          field: 'invoice_number',
+          message: dupErr.message,
+          severity: 'error',
+        });
+      } else {
+        throw dupErr;
+      }
+    }
+  }
 
   const updatePayload = {
     ...invoiceDraft,
@@ -518,4 +595,5 @@ module.exports = {
   lookupAlias,
   enrichLineForReview,
   reconcileInvoiceTotals,
+  assertUniqueSupplierInvoiceNumber,
 };

@@ -8,12 +8,12 @@ const { ensureSupplier, supplierPayloadFromInvoice } = require('../services/girn
 const { buildDraftGirnFromInvoice } = require('../services/girnDraftEngine');
 const { getCategoryConfig, girnNeedsInspection, girnCanAutoApprove } = require('../config/girnCategoryConfig');
 const { applyStockForGirn, rollbackStock } = require('../services/girnStockEngine');
-const { validateGirnInspection } = require('../services/girnInspectionEngine');
 const {
   canReviewGirn,
   dismissGirnReadyNotification,
+  notifyGirnApproved,
 } = require('../services/girnApprovalEngine');
-const { assignLotToGirnItem } = require('../services/componentLotEngine');
+const { approvePendingGirn, postGirnApprovedHooks } = require('../services/girnApproveService');
 const { emitGirnUpdated, emitInventoryUpdated } = require('../socket/emitter');
 
 const router = express.Router();
@@ -169,18 +169,6 @@ function mapItemToDbRow(girnId, item) {
     total_amount: parseFloat(item.total_amount) || 0,
     purchase_order_line_id: item.purchase_order_line_id || null,
   };
-}
-
-async function postGirnApprovedHooks(girnId) {
-  const { rollupReceivedQtyFromGirn } = require('../services/purchaseOrderEngine');
-  const { seedToolInstancesFromGirn } = require('../services/toolLifeEngine');
-  const { triggerPredictiveReorderEvaluation } = require('../services/predictiveReorderEngine');
-
-  await rollupReceivedQtyFromGirn(girnId);
-  await seedToolInstancesFromGirn(girnId).catch((e) =>
-    console.error('Tool instance seed failed:', e.message)
-  );
-  triggerPredictiveReorderEvaluation();
 }
 
 async function resolveGirnSupplier(body) {
@@ -479,6 +467,9 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       try {
         await applyStockForGirn(newGirn.id, insertedItems || []);
         await postGirnApprovedHooks(newGirn.id);
+        await notifyGirnApproved(newGirn.id, { auto: true }).catch((e) =>
+          console.error('GIRN approved notification failed:', e.message)
+        );
       } catch (stockErr) {
         await supabase.from('girn_items').delete().eq('girn_id', newGirn.id);
         await supabase.from('girns').delete().eq('id', newGirn.id);
@@ -888,6 +879,9 @@ router.post('/:id/submit', verifyEmployeeAuth, async (req, res) => {
           emitInventoryUpdated({ action: 'girn_approved', girnId: id });
         }
         await postGirnApprovedHooks(id);
+        await notifyGirnApproved(id, { auto: true }).catch((e) =>
+          console.error('GIRN approved notification failed:', e.message)
+        );
         return res.json({ message: 'GIRN approved (no inspection required)', girn: approved });
       } catch (approveErr) {
         await rollbackStock(stockUpdates, ledgerIds);
@@ -916,107 +910,26 @@ router.post('/:id/submit', verifyEmployeeAuth, async (req, res) => {
 // ─── APPROVE ───────────────────────────────────────────────────────────────────
 router.post('/:id/approve', verifyEmployeeAuth, async (req, res) => {
   const { id } = req.params;
-  let stockUpdates = [];
-  let ledgerIds = [];
 
   try {
     if (!canReviewGirn(req.user)) {
       return res.status(403).json({ error: 'Only admins or supervisors can approve/reject GIRNs' });
     }
 
-    const { data: girn, error: girnError } = await supabase
-      .from('girns')
-      .select('id, status, source')
-      .eq('id', id)
-      .maybeSingle();
-
-    if (girnError) throw girnError;
-    if (!girn) return res.status(404).json({ error: 'GIRN not found' });
-    if (girn.status !== 'pending_inspection') {
-      return res.status(409).json({ error: 'Only GIRNs pending inspection can be approved' });
-    }
-
-    const { data: items, error: itemsError } = await supabase
-      .from('girn_items')
-      .select('*')
-      .eq('girn_id', id);
-
-    if (itemsError) throw itemsError;
-
-    const itemIds = (items || []).map((i) => i.id);
-    const inspectionsByItem = await loadInspectionsForItems(itemIds);
-
-    const itemsWithInspections = (items || []).map((item) => ({
-      ...item,
-      inspection: inspectionsByItem[item.id] || null,
-    }));
-
-    const inspectionError = await validateGirnInspection(itemsWithInspections);
-    if (inspectionError) {
-      return res.status(400).json({ error: inspectionError });
-    }
-
-    for (const item of itemsWithInspections) {
-      if (
-        item.item_category === 'component' &&
-        !item.lot_number &&
-        item.master_record_id &&
-        item.inspection?.overall_result === 'pass'
-      ) {
-        await assignLotToGirnItem(item.id, item.master_record_id);
-        const { data: refreshed } = await supabase
-          .from('girn_items')
-          .select('lot_number')
-          .eq('id', item.id)
-          .single();
-        item.lot_number = refreshed?.lot_number || item.lot_number;
-      }
-    }
-
-    if (girn.source !== 'outsource_return') {
-      const stockResult = await applyStockForGirn(id, itemsWithInspections);
-      stockUpdates = stockResult.stockUpdates;
-      ledgerIds = stockResult.ledgerIds;
-    }
-
-    const now = new Date().toISOString();
-    const { data: approved, error: approveError } = await supabase
-      .from('girns')
-      .update({
-        status: 'approved',
-        approved_by: req.user?.sub || null,
-        approved_at: now,
-        rejected_by: null,
-        rejected_at: null,
-      })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (approveError) throw approveError;
-
-    await dismissGirnReadyNotification(id).catch((e) =>
-      console.error('Dismiss GIRN ready notification failed:', e.message)
-    );
-
-    emitGirnUpdated({ girnId: id, action: 'approved', status: 'approved' });
-    if (girn.source !== 'outsource_return') {
-      emitInventoryUpdated({ action: 'girn_approved', girnId: id });
-    }
-
-    await postGirnApprovedHooks(id);
+    const result = await approvePendingGirn({
+      girnId: id,
+      approvedBy: req.user?.sub || null,
+      auto: false,
+    });
 
     return res.json({
-      message:
-        girn.source === 'outsource_return'
-          ? 'GIRN approved (outsource return — no stock posting)'
-          : 'GIRN approved and stock updated',
-      girn: approved,
+      message: result.message,
+      girn: result.girn,
     });
   } catch (err) {
     console.error('GIRN approve error — rolling back:', err);
-    await rollbackStock(stockUpdates, ledgerIds).catch((e) => console.error('Rollback failed:', e));
-    return res.status(500).json({ error: err.message || 'Unable to approve GIRN' });
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message || 'Unable to approve GIRN' });
   }
 });
 

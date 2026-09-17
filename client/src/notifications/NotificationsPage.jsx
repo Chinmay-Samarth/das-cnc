@@ -49,6 +49,7 @@ const TYPE_META = {
   tool_life_low: { icon: Wrench, label: 'Tool life low', category: 'inventory' },
   girn_pending_inspection: { icon: ClipboardCheck, label: 'GIRN inspection', category: 'inventory' },
   girn_ready_for_approval: { icon: ClipboardCheck, label: 'GIRN approval', category: 'inventory' },
+  girn_approved: { icon: ClipboardCheck, label: 'GIRN approved', category: 'inventory' },
   invoice_overdue: { icon: FileText, label: 'Invoice overdue', category: 'finance' },
   op1_schedule_delay: { icon: Timer, label: 'Op1 delay', category: 'production' },
   outsource_lead_delay: { icon: Truck, label: 'Outsource delay', category: 'production' },
@@ -193,6 +194,9 @@ export default function NotificationsPage() {
         navigate('/approvals?tab=dispatch&status=pending');
       } else if (n.type === 'girn_ready_for_approval') {
         navigate('/approvals?tab=girn&status=ready');
+      } else if (n.type === 'girn_approved') {
+        const girnId = n.payload?.girn_id;
+        navigate(girnId ? `/girn/${girnId}` : '/girn');
       } else if (n.employee_id && n.type !== 'leave_request_pending') {
         navigate(`/employees/${n.employee_id}`);
       } else if (n.type === 'girn_pending_inspection') {

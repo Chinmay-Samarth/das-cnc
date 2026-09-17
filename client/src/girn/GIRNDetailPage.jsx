@@ -1,12 +1,28 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import { FileText } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import {
+  CheckCircle2,
+  ChevronDown,
+  ClipboardCheck,
+  FileText,
+  Package,
+  ShieldAlert,
+  XCircle,
+} from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
 import { useSocket } from '../socket/socketContext';
 import { getCategoryConfig, requiresInspection } from './girnCategoryConfig';
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
-import { PageHeader, StatusBadge, AlertBanner } from '../components/mes';
+import {
+  AlertBanner,
+  EmptyState,
+  FilePicker,
+  MetricCard,
+  PageHeader,
+  ProgressBar,
+  StatusBadge,
+} from '../components/mes';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val))
@@ -27,17 +43,22 @@ function girnStatusTone(status) {
   return 'draft';
 }
 
+function resultTone(result) {
+  if (result === 'pass') return 'completed';
+  if (result === 'fail') return 'overdue';
+  return 'draft';
+}
+
 function DetailItem({ label, value }) {
   return (
-    <div>
+    <div className="girn-detail-field">
       <p className="employee-detail-label">{label}</p>
       <p className="employee-detail-value">{value || '—'}</p>
     </div>
   );
 }
 
-// ─── Overview Tab ──────────────────────────────────────────────────────────────
-function OverviewTab({ girn, onAction, actionLoading, canReview }) {
+function OverviewTab({ girn, onAction, actionLoading, canReview, inspectionProgress }) {
   const [rejectNotes, setRejectNotes] = useState('');
   const [showReject, setShowReject] = useState(false);
 
@@ -52,11 +73,58 @@ function OverviewTab({ girn, onAction, actionLoading, canReview }) {
     : null;
 
   return (
-    <div>
-      <div
-        className="girn-detail-grid"
-        style={{ marginBottom: 20 }}
-      >
+    <div className="girn-detail-overview">
+      <div className="mes-metric-grid girn-detail-metrics">
+        <MetricCard
+          label="Grand total"
+          value={`₹${fmt(girn.grand_total)}`}
+          hint={girn.supplier_name || 'Supplier'}
+          icon={Package}
+          tone="info"
+        />
+        <MetricCard
+          label="Status"
+          value={STATUS_LABELS[girn.status] || girn.status}
+          hint={formatDisplayDate(girn.received_date)}
+          icon={ClipboardCheck}
+          tone={
+            girn.status === 'approved'
+              ? 'success'
+              : girn.status === 'rejected'
+                ? 'danger'
+                : girn.status === 'pending_inspection'
+                  ? 'amber'
+                  : 'neutral'
+          }
+        />
+        {inspectionProgress.total > 0 ? (
+          <MetricCard
+            label="Inspection"
+            value={`${inspectionProgress.passed}/${inspectionProgress.total}`}
+            hint={
+              inspectionProgress.ready
+                ? 'All items passed'
+                : isPending
+                  ? 'In progress'
+                  : 'Complete'
+            }
+            icon={CheckCircle2}
+            tone={inspectionProgress.ready || girn.status === 'approved' ? 'success' : 'amber'}
+          />
+        ) : null}
+      </div>
+
+      {inspectionProgress.total > 0 && isPending ? (
+        <div className="girn-detail-progress">
+          <ProgressBar
+            value={inspectionProgress.passed}
+            max={inspectionProgress.total}
+            label="Inspection progress"
+          />
+        </div>
+      ) : null}
+
+      <div className="girn-detail-grid">
         <DetailItem label="GIRN Number" value={girn.girn_number} />
         <DetailItem label="Supplier" value={girn.supplier_name} />
         <DetailItem label="Received Date" value={formatDisplayDate(girn.received_date)} />
@@ -68,19 +136,23 @@ function OverviewTab({ girn, onAction, actionLoading, canReview }) {
               : null
           }
         />
-        <div>
-          <p className="component-detail-label">Purchase order</p>
+        <div className="girn-detail-field">
+          <p className="employee-detail-label">Purchase order</p>
           {girn.purchase_order_id ? (
-            <Link to={`/purchase-orders/${girn.purchase_order_id}`} className="neutral-button" style={{ display: 'inline-flex', width: 'fit-content', gap: 6, alignItems: 'center' }}>
+            <Link
+              to={`/purchase-orders/${girn.purchase_order_id}`}
+              className="neutral-button"
+              style={{ display: 'inline-flex', width: 'fit-content', gap: 6, alignItems: 'center' }}
+            >
               <FileText size={16} />
               {girn.purchase_order_number || girn.po_reference || 'Open PO'}
             </Link>
           ) : (
-            <p className="component-detail-value">{girn.po_reference || '—'}</p>
+            <p className="employee-detail-value">{girn.po_reference || '—'}</p>
           )}
         </div>
-        <div>
-          <p className="component-detail-label">Source Invoice</p>
+        <div className="girn-detail-field">
+          <p className="employee-detail-label">Source Invoice</p>
           {girn.invoice_id ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <button
@@ -98,13 +170,12 @@ function OverviewTab({ girn, onAction, actionLoading, canReview }) {
               ) : null}
             </div>
           ) : (
-            <p className="component-detail-value">—</p>
+            <p className="employee-detail-value">—</p>
           )}
         </div>
         <DetailItem label="CSR" value={girn.csr} />
-        <DetailItem label="Grand Total" value={`₹${fmt(girn.grand_total)}`} />
-        <div>
-          <p className="component-detail-label">Status</p>
+        <div className="girn-detail-field">
+          <p className="employee-detail-label">Status</p>
           <StatusBadge status={girnStatusTone(girn.status)}>
             {STATUS_LABELS[girn.status] || girn.status}
           </StatusBadge>
@@ -125,18 +196,16 @@ function OverviewTab({ girn, onAction, actionLoading, canReview }) {
       </div>
 
       {!isFinished ? (
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
+        <div className="girn-detail-actions">
           {isDraft ? (
-            <>
-              <button
-                type="button"
-                className="primary-button"
-                disabled={actionLoading}
-                onClick={() => onAction('submit')}
-              >
-                {actionLoading ? 'Submitting...' : 'Submit for Inspection'}
-              </button>
-            </>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={actionLoading}
+              onClick={() => onAction('submit')}
+            >
+              {actionLoading ? 'Submitting…' : 'Submit for Inspection'}
+            </button>
           ) : null}
 
           {isPending && canReview ? (
@@ -147,7 +216,7 @@ function OverviewTab({ girn, onAction, actionLoading, canReview }) {
                 disabled={actionLoading}
                 onClick={() => onAction('approve')}
               >
-                {actionLoading ? 'Approving...' : 'Approve'}
+                {actionLoading ? 'Approving…' : 'Approve'}
               </button>
               <button
                 type="button"
@@ -160,50 +229,32 @@ function OverviewTab({ girn, onAction, actionLoading, canReview }) {
             </>
           ) : null}
           {isPending && !canReview ? (
-            <p className="muted" style={{ margin: 0 }}>
-              Awaiting admin approval — see the{' '}
-              <Link to="/approvals?tab=girn&status=ready">Approvals</Link> page once inspections are
-              complete.
-            </p>
+            <AlertBanner tone="info">
+              Inspections that pass will auto-approve this GIRN. Admins are notified when it is approved.
+            </AlertBanner>
           ) : null}
         </div>
       ) : null}
 
       {showReject ? (
-        <div
-          style={{
-            marginTop: 16,
-            padding: 16,
-            border: '1px solid #fca5a5',
-            borderRadius: 8,
-            background: '#fff7f7',
-          }}
-        >
-          <label style={{ fontWeight: 600, marginBottom: 8, display: 'block' }}>
-            Rejection reason (optional)
-          </label>
+        <div className="girn-reject-panel mes-card">
+          <label className="girn-reject-label">Rejection reason (optional)</label>
           <textarea
             rows={3}
             value={rejectNotes}
             onChange={(e) => setRejectNotes(e.target.value)}
-            placeholder="Describe why this GIRN is being rejected..."
-            style={{ marginBottom: 12 }}
+            placeholder="Describe why this GIRN is being rejected…"
           />
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="girn-detail-actions">
             <button
               type="button"
-              className="primary-button"
-              style={{ background: '#dc2626' }}
+              className="primary-button girn-reject-confirm"
               disabled={actionLoading}
               onClick={() => onAction('reject', { notes: rejectNotes })}
             >
-              {actionLoading ? 'Rejecting...' : 'Confirm Reject'}
+              {actionLoading ? 'Rejecting…' : 'Confirm Reject'}
             </button>
-            <button
-              type="button"
-              className="cancel-button"
-              onClick={() => setShowReject(false)}
-            >
+            <button type="button" className="cancel-button" onClick={() => setShowReject(false)}>
               Cancel
             </button>
           </div>
@@ -213,9 +264,12 @@ function OverviewTab({ girn, onAction, actionLoading, canReview }) {
   );
 }
 
-// ─── Items Tab ─────────────────────────────────────────────────────────────────
 function ItemsTab({ items }) {
   const grandTotal = items.reduce((sum, i) => sum + (parseFloat(i.total_amount) || 0), 0);
+
+  if (!items.length) {
+    return <EmptyState title="No items" description="No line items recorded on this GIRN." />;
+  }
 
   return (
     <div className="employees-table-wrap">
@@ -238,25 +292,31 @@ function ItemsTab({ items }) {
           {items.map((item, idx) => {
             const cfg = getCategoryConfig(item.item_category || 'raw_material');
             return (
-            <tr key={item.id}>
-              <td>{idx + 1}</td>
-              <td>{cfg.label}</td>
-              <td>{item.master_record_label || item.raw_material_label || item.item_description || '—'}</td>
-              <td><strong>{item.item_code || item.rm_code || '—'}</strong></td>
-              <td>{item.lot_number || '—'}</td>
-              <td>
-                {item.item_category === 'gauge'
-                  ? `${item.quantity_ok ?? '—'} / ${item.quantity_not_ok ?? '—'}`
-                  : '—'}
-              </td>
-              <td>{item.unit || (cfg.quantityType === 'kg' ? 'kg' : 'nos')}</td>
-              <td>{item.quantity}</td>
-              <td>₹{fmt(item.unit_rate)}</td>
-              <td><strong>₹{fmt(item.total_amount)}</strong></td>
-            </tr>
+              <tr key={item.id}>
+                <td>{idx + 1}</td>
+                <td>{cfg.label}</td>
+                <td>
+                  {item.master_record_label || item.raw_material_label || item.item_description || '—'}
+                </td>
+                <td>
+                  <strong>{item.item_code || item.rm_code || '—'}</strong>
+                </td>
+                <td>{item.lot_number || '—'}</td>
+                <td>
+                  {item.item_category === 'gauge'
+                    ? `${item.quantity_ok ?? '—'} / ${item.quantity_not_ok ?? '—'}`
+                    : '—'}
+                </td>
+                <td>{item.unit || (cfg.quantityType === 'kg' ? 'kg' : 'nos')}</td>
+                <td>{item.quantity}</td>
+                <td>₹{fmt(item.unit_rate)}</td>
+                <td>
+                  <strong>₹{fmt(item.total_amount)}</strong>
+                </td>
+              </tr>
             );
           })}
-          <tr className='total-row'>
+          <tr className="total-row">
             <td colSpan={9} style={{ textAlign: 'right', fontWeight: 700, paddingRight: 16 }}>
               Grand Total
             </td>
@@ -264,15 +324,10 @@ function ItemsTab({ items }) {
           </tr>
         </tbody>
       </table>
-
-      {items.length === 0 ? (
-        <p className="muted" style={{ padding: '12px 0' }}>No items recorded.</p>
-      ) : null}
     </div>
   );
 }
 
-// ─── Inspection Tab ────────────────────────────────────────────────────────────
 function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspection }) {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -280,6 +335,7 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
   const [loadError, setLoadError] = useState(null);
   const [loadingPlan, setLoadingPlan] = useState(false);
   const [lotNumber, setLotNumber] = useState(item.lot_number || '');
+  const [autoApprovedMsg, setAutoApprovedMsg] = useState('');
 
   const category = item.item_category || 'raw_material';
   const cfg = getCategoryConfig(category);
@@ -294,6 +350,7 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
   const [quantityNotOk, setQuantityNotOk] = useState(item.quantity_not_ok ?? '');
 
   const submitted = Boolean(execution);
+  const resultLabel = execution?.overall_result;
 
   useEffect(() => {
     if (!open || !girnId || !item.id) return undefined;
@@ -302,7 +359,8 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
     setLoadingPlan(true);
     setLoadError(null);
 
-    api.get(`/girn/${girnId}/items/${item.id}/inspection`)
+    api
+      .get(`/girn/${girnId}/items/${item.id}/inspection`)
       .then(({ data }) => {
         if (cancelled) return;
         setPlan(data.plan);
@@ -336,7 +394,9 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
         if (!cancelled) setLoadingPlan(false);
       });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [open, girnId, item.id, initialInspection]);
 
   function updateValue(paramId, field, value) {
@@ -349,13 +409,15 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
   async function handleSubmit() {
     setSaving(true);
     setSaveError(null);
+    setAutoApprovedMsg('');
     try {
       const formData = new FormData();
       const values = (plan?.parameters || []).map((param) => ({
         plan_parameter_id: param.id,
-        measured_value: valueInputs[param.id]?.measured_value === ''
-          ? null
-          : parseFloat(valueInputs[param.id]?.measured_value),
+        measured_value:
+          valueInputs[param.id]?.measured_value === ''
+            ? null
+            : parseFloat(valueInputs[param.id]?.measured_value),
         result: valueInputs[param.id]?.result || 'fail',
         remarks: valueInputs[param.id]?.remarks || null,
       }));
@@ -374,6 +436,9 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
       const { data } = await onSave(item.id, formData);
       if (data?.execution) setExecution(data.execution);
       if (data?.lot_number) setLotNumber(data.lot_number);
+      if (data?.auto_approved) {
+        setAutoApprovedMsg('All inspections passed — GIRN was auto-approved and admin was notified.');
+      }
     } catch (err) {
       setSaveError(err.response?.data?.error || 'Unable to submit inspection.');
     } finally {
@@ -381,80 +446,112 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
     }
   }
 
-  const itemLabel = item.master_record_label || item.raw_material_label || item.item_description || item.item_code || `Item ${item.id}`;
-  const resultLabel = execution?.overall_result;
-  const resultColor = resultLabel === 'pass' ? '#166534' : resultLabel === 'fail' ? '#991b1b' : '#854d0e';
+  const itemLabel =
+    item.master_record_label ||
+    item.raw_material_label ||
+    item.item_description ||
+    item.item_code ||
+    `Item ${item.id}`;
+
+  const paramCount = plan?.parameters?.length || 0;
+  const passedParams = useMemo(() => {
+    if (!plan?.parameters) return 0;
+    return plan.parameters.filter((p) => valueInputs[p.id]?.result === 'pass').length;
+  }, [plan, valueInputs]);
 
   return (
-    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, marginBottom: 12, overflow: 'hidden' }}>
+    <div className={`girn-inspect-panel mes-card${open ? ' is-open' : ''}`}>
       <button
         type="button"
+        className="girn-inspect-header"
         onClick={() => setOpen((v) => !v)}
-        style={{
-          width: '100%', background: '#f9fafb', border: 'none', padding: '12px 16px',
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          cursor: 'pointer', textAlign: 'left',
-        }}
+        aria-expanded={open}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-      
-          
-          <div className="" style={{display: 'flex', flexDirection: 'column', gap: '10px'}}>
-            <div className="" style={{display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '10px'}}>
-              <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: '#e0e7ff', color: '#3730a3' }}>
-                {cfg.label}
-              </span>
-              <p style={{ fontWeight: 600, color: 'blue', fontSize: '20px'}}>{itemLabel}</p>
-            </div>
-          {lotNumber ? (
-            <span style={{ fontSize: 12, fontWeight: 600, color: '#166534' }}>LOT: {lotNumber}</span>
-          ) : null}
+        <div className="girn-inspect-header-main">
+          <StatusBadge status="draft">{cfg.label}</StatusBadge>
+          <div className="girn-inspect-titles">
+            <p className="girn-inspect-title">{itemLabel}</p>
+            <p className="girn-inspect-meta">
+              Qty {item.quantity}
+              {lotNumber ? ` · LOT ${lotNumber}` : ''}
+              {paramCount ? ` · ${paramCount} checks` : ''}
+            </p>
           </div>
-          {resultLabel ? (
-            <span style={{ padding: '2px 8px', borderRadius: 99, fontSize: 11, fontWeight: 600, color: resultColor, background: '#f3f4f6', marginLeft: 'auto' }}>
-              {resultLabel.toUpperCase()}
-            </span>
-          ) : null}
         </div>
-        <span>{open ? '▲' : '▼'}</span>
+        <div className="girn-inspect-header-aside">
+          {resultLabel ? (
+            <StatusBadge status={resultTone(resultLabel)}>
+              {resultLabel === 'pass' ? (
+                <>
+                  <CheckCircle2 size={12} /> Pass
+                </>
+              ) : resultLabel === 'fail' ? (
+                <>
+                  <XCircle size={12} /> Fail
+                </>
+              ) : (
+                resultLabel
+              )}
+            </StatusBadge>
+          ) : isPending ? (
+            <StatusBadge status="running">Pending</StatusBadge>
+          ) : null}
+          <ChevronDown size={18} className="girn-inspect-chevron" aria-hidden />
+        </div>
       </button>
 
       {open ? (
-        <div style={{ padding: 16 }}>
-          {loadingPlan ? <p className="muted">Loading inspection plan...</p> : null}
-          {loadError ? <p className="error-message" style={{ marginBottom: 12 }}>{loadError}</p> : null}
+        <div className="girn-inspect-body">
+          {loadingPlan ? <p className="muted">Loading inspection plan…</p> : null}
+          {loadError ? <AlertBanner tone="danger">{loadError}</AlertBanner> : null}
+          {autoApprovedMsg ? <AlertBanner tone="success">{autoApprovedMsg}</AlertBanner> : null}
 
           {!loadingPlan && !loadError && plan ? (
             <>
-              <div style={{ display: 'grid', gap: 16, marginBottom: 16, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', whiteSpace: 'wrap' }}>
-                <div>
-                  <p className="employee-detail-label">Plan</p>
-                  <p className="employee-detail-value">{plan.plan_code} (rev {plan.revision})</p>
-                </div>
-                <div>
-                  <p className="employee-detail-label">Lot Qty</p>
-                  <p className="employee-detail-value">{item.quantity}</p>
-                </div>
-                <div>
-                  <p className="employee-detail-label">Sample Size</p>
-                  <p className="employee-detail-value">{sampleSize ?? '—'}</p>
-                </div>
+              <div className="mes-metric-grid girn-inspect-metrics">
+                <MetricCard label="Plan" value={plan.plan_code} hint={`Rev ${plan.revision}`} />
+                <MetricCard label="Lot qty" value={item.quantity} />
+                <MetricCard label="Sample size" value={sampleSize ?? '—'} />
+                {submitted || !isPending ? (
+                  <MetricCard
+                    label="Result"
+                    value={(resultLabel || '—').toUpperCase()}
+                    tone={resultLabel === 'pass' ? 'success' : resultLabel === 'fail' ? 'danger' : 'neutral'}
+                    icon={resultLabel === 'pass' ? CheckCircle2 : resultLabel === 'fail' ? ShieldAlert : ClipboardCheck}
+                  />
+                ) : (
+                  <MetricCard
+                    label="Checks set"
+                    value={`${passedParams}/${paramCount || 0}`}
+                    tone="amber"
+                  />
+                )}
               </div>
 
               {category === 'gauge' && isPending && !submitted ? (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
+                <div className="girn-inspect-gauge-grid">
                   <label>
                     OK Qty
-                    <input type="number" min="0" value={quantityOk} onChange={(e) => setQuantityOk(e.target.value)} />
+                    <input
+                      type="number"
+                      min="0"
+                      value={quantityOk}
+                      onChange={(e) => setQuantityOk(e.target.value)}
+                    />
                   </label>
                   <label>
                     Not OK Qty
-                    <input type="number" min="0" value={quantityNotOk} onChange={(e) => setQuantityNotOk(e.target.value)} />
+                    <input
+                      type="number"
+                      min="0"
+                      value={quantityNotOk}
+                      onChange={(e) => setQuantityNotOk(e.target.value)}
+                    />
                   </label>
                 </div>
               ) : null}
 
-              <div className="employee-table-wrap" style={{ marginBottom: 16 }}>
+              <div className="employees-table-wrap">
                 <table className="app-table">
                   <thead>
                     <tr>
@@ -468,32 +565,42 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
                   </thead>
                   <tbody>
                     {(plan.parameters || []).map((param) => {
-                      const spec = param.check_type === 'dimensional'
-                        ? `${param.nominal_value ?? '—'} ${param.unit || ''} (+${param.tol_plus ?? 0}/-${param.tol_minus ?? 0})`
-                        : param.instrument_required || '—';
+                      const spec =
+                        param.check_type === 'dimensional'
+                          ? `${param.nominal_value ?? '—'} ${param.unit || ''} (+${param.tol_plus ?? 0}/-${param.tol_minus ?? 0})`
+                          : param.instrument_required || '—';
                       const input = valueInputs[param.id] || {};
                       return (
                         <tr key={param.id}>
-                          <td>{param.parameter_name}{param.is_mandatory ? ' *' : ''}</td>
+                          <td>
+                            {param.parameter_name}
+                            {param.is_mandatory ? ' *' : ''}
+                          </td>
                           <td>{param.check_type}</td>
                           <td>{spec}</td>
                           <td>
                             {param.check_type === 'dimensional' ? (
-                              submitted ? (input.measured_value ?? '—') : (
+                              submitted ? (
+                                input.measured_value ?? '—'
+                              ) : (
                                 <input
                                   type="number"
                                   value={input.measured_value}
-                                  onChange={(e) => updateValue(param.id, 'measured_value', e.target.value)}
-                                  style={{ width: 80 }}
+                                  onChange={(e) =>
+                                    updateValue(param.id, 'measured_value', e.target.value)
+                                  }
+                                  style={{ width: 88 }}
                                 />
                               )
-                            ) : '—'}
+                            ) : (
+                              '—'
+                            )}
                           </td>
                           <td>
                             {submitted || param.check_type === 'dimensional' ? (
-                              <span style={{ fontWeight: 600, color: input.result === 'pass' ? '#16a34a' : '#dc2626' }}>
+                              <StatusBadge status={resultTone(input.result)}>
                                 {(input.result || '—').toUpperCase()}
-                              </span>
+                              </StatusBadge>
                             ) : (
                               <select
                                 value={input.result || 'pass'}
@@ -506,7 +613,9 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
                             )}
                           </td>
                           <td>
-                            {submitted ? (input.remarks || '—') : (
+                            {submitted ? (
+                              input.remarks || '—'
+                            ) : (
                               <input
                                 type="text"
                                 value={input.remarks || ''}
@@ -523,47 +632,72 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
               </div>
 
               {(plan.documents || []).length > 0 ? (
-                <div style={{ marginBottom: 16 }}>
-                  <h4 style={{ margin: '0 0 8px' }}>Documents</h4>
-                  {(plan.documents || []).map((doc) => {
-                    const saved = execution?.documents?.find((d) => d.document_type === doc.document_type);
-                    return (
-                      <div key={doc.document_type} style={{ marginBottom: 10, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <span style={{ minWidth: 140, fontWeight: 500 }}>
-                          {doc.document_type}{doc.is_mandatory ? ' *' : ''}
-                        </span>
-                        {submitted ? (
-                          saved ? (
-                            <a href={saved.file_url} target="_blank" rel="noopener noreferrer">View file</a>
-                          ) : '—'
-                        ) : (
-                          <>
-                            <input
-                              type="file"
-                              onChange={(e) => setDocFiles((prev) => ({ ...prev, [doc.document_type]: e.target.files?.[0] || null }))}
-                            />
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <input
-                                type="checkbox"
-                                checked={docVerified[doc.document_type] || false}
-                                onChange={(e) => setDocVerified((prev) => ({ ...prev, [doc.document_type]: e.target.checked }))}
+                <div className="girn-inspect-docs">
+                  <h4 className="girn-inspect-docs-title">Documents</h4>
+                  <div className="girn-inspect-docs-list">
+                    {(plan.documents || []).map((doc) => {
+                      const saved = execution?.documents?.find(
+                        (d) => d.document_type === doc.document_type
+                      );
+                      return (
+                        <div key={doc.document_type} className="girn-inspect-doc-row">
+                          <span className="girn-inspect-doc-name">
+                            {doc.document_type}
+                            {doc.is_mandatory ? ' *' : ''}
+                          </span>
+                          {submitted ? (
+                            saved ? (
+                              <a href={saved.file_url} target="_blank" rel="noopener noreferrer">
+                                View file
+                              </a>
+                            ) : (
+                              '—'
+                            )
+                          ) : (
+                            <div className="girn-inspect-doc-controls">
+                              <FilePicker
+                                label="Upload"
+                                accept="*/*"
+                                onChange={(file) =>
+                                  setDocFiles((prev) => ({
+                                    ...prev,
+                                    [doc.document_type]: file || null,
+                                  }))
+                                }
                               />
-                              Verified
-                            </label>
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
+                              <label className="girn-inspect-verify">
+                                <input
+                                  type="checkbox"
+                                  checked={docVerified[doc.document_type] || false}
+                                  onChange={(e) =>
+                                    setDocVerified((prev) => ({
+                                      ...prev,
+                                      [doc.document_type]: e.target.checked,
+                                    }))
+                                  }
+                                />
+                                Verified
+                              </label>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               ) : null}
 
               {isPending && !submitted ? (
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <button type="button" className="primary-button" disabled={saving} onClick={handleSubmit}>
-                    {saving ? 'Submitting...' : 'Submit Inspection'}
+                <div className="girn-detail-actions">
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={saving}
+                    onClick={handleSubmit}
+                  >
+                    {saving ? 'Submitting…' : 'Submit Inspection'}
                   </button>
-                  {saveError ? <span className="error-message" style={{ fontSize: 13 }}>{saveError}</span> : null}
+                  {saveError ? <AlertBanner tone="danger">{saveError}</AlertBanner> : null}
                 </div>
               ) : null}
             </>
@@ -576,31 +710,49 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
 
 function InspectionTab({ girn, items, onSaveInspection }) {
   const isPending = girn.status === 'pending_inspection';
-  const inspectableItems = items.filter((item) => requiresInspection(item.item_category || 'raw_material'));
+  const inspectableItems = items.filter((item) =>
+    requiresInspection(item.item_category || 'raw_material')
+  );
+  const passed = inspectableItems.filter((i) => i.inspection?.overall_result === 'pass').length;
 
   if (!isPending && girn.status !== 'approved' && girn.status !== 'rejected') {
     return (
-      <p className="muted">
-        Inspection is available after the GIRN is submitted for inspection.
-      </p>
+      <EmptyState
+        title="Inspection not started"
+        description="Submit the GIRN for inspection to run quality checks."
+      />
     );
   }
 
   if (inspectableItems.length === 0) {
-    return <p className="muted">No items require inspection on this GIRN.</p>;
+    return (
+      <EmptyState
+        title="No inspection required"
+        description="Oil and Others lines are excluded from inspection."
+      />
+    );
   }
 
   return (
-    <div>
-      {!isPending ? (
-        <p className="muted" style={{ marginBottom: 16 }}>
-          This GIRN has been {girn.status}. Inspection records are shown below (read-only).
-        </p>
+    <div className="girn-inspect-tab">
+      {isPending ? (
+        <div className="girn-detail-progress">
+          <ProgressBar
+            value={passed}
+            max={inspectableItems.length}
+            label="Items inspected"
+          />
+          <p className="muted girn-inspect-hint">
+            Complete each item against its active master plan. When all mandatory checks pass, this
+            GIRN is auto-approved and admin is alerted.
+          </p>
+        </div>
       ) : (
-        <p className="muted" style={{ marginBottom: 16 }}>
-          Complete inspection using the active plan for each item&apos;s master record. Oil and Others lines are excluded.
-        </p>
+        <AlertBanner tone={girn.status === 'approved' ? 'success' : 'danger'}>
+          This GIRN is {girn.status}. Inspection records below are read-only.
+        </AlertBanner>
       )}
+
       {inspectableItems.map((item) => (
         <ItemInspectionPanel
           key={item.id}
@@ -615,13 +767,10 @@ function InspectionTab({ girn, items, onSaveInspection }) {
   );
 }
 
-// ─── Main Component ────────────────────────────────────────────────────────────
 export default function GIRNDetailPage() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const { user } = useAuth();
-  const canReview =
-    user?.accessLevel === 'ADMIN' || user?.accessLevel === 'SUPERVISOR';
+  const canReview = user?.accessLevel === 'ADMIN' || user?.accessLevel === 'SUPERVISOR';
   const [girn, setGirn] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -678,69 +827,95 @@ export default function GIRNDetailPage() {
 
   async function handleSaveInspection(itemId, payload) {
     const isFormData = payload instanceof FormData;
-    const { data } = await api.post(`/girn/${id}/items/${itemId}/inspection`, payload, isFormData ? {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    } : undefined);
+    const { data } = await api.post(
+      `/girn/${id}/items/${itemId}/inspection`,
+      payload,
+      isFormData
+        ? {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          }
+        : undefined
+    );
     await loadGirn();
     return { data };
   }
 
   const items = girn?.items || [];
+  const inspectionProgress = useMemo(() => {
+    const inspectable = items.filter((item) =>
+      requiresInspection(item.item_category || 'raw_material')
+    );
+    const passed = inspectable.filter((i) => i.inspection?.overall_result === 'pass').length;
+    return {
+      total: inspectable.length,
+      passed,
+      ready: inspectable.length > 0 && passed === inspectable.length,
+    };
+  }, [items]);
 
   return (
     <main className="mes-shell">
       <PageHeader
         eyebrow="Procurement"
         title={girn ? girn.girn_number : 'GIRN Detail'}
-        subtitle={girn ? `${girn.supplier_name} · ${formatDisplayDate(girn.received_date)}` : ''}
+        subtitle={
+          girn ? `${girn.supplier_name || 'Supplier'} · ${formatDisplayDate(girn.received_date)}` : ''
+        }
+        actions={
+          girn ? (
+            <StatusBadge status={girnStatusTone(girn.status)}>
+              {STATUS_LABELS[girn.status] || girn.status}
+            </StatusBadge>
+          ) : null
+        }
       />
 
-      <div className="pill-tabs" style={{ marginBottom: 16 }}>
-        {['overview', 'items', 'inspection'].map((t) => (
+      <div className="mes-view-toggle" role="tablist" aria-label="GIRN sections">
+        {[
+          { id: 'overview', label: 'Overview' },
+          { id: 'items', label: `Items${items.length ? ` (${items.length})` : ''}` },
+          {
+            id: 'inspection',
+            label:
+              inspectionProgress.total > 0
+                ? `Inspection (${inspectionProgress.passed}/${inspectionProgress.total})`
+                : 'Inspection',
+          },
+        ].map((t) => (
           <button
-            key={t}
+            key={t.id}
             type="button"
-            className={`pill-tab ${tab === t ? 'pill-tab-active' : ''}`}
-            onClick={() => setTab(t)}
-            aria-selected={tab === t}
             role="tab"
+            aria-selected={tab === t.id}
+            className={`mes-view-toggle-btn${tab === t.id ? ' is-active' : ''}`}
+            onClick={() => setTab(t.id)}
           >
-            {t.charAt(0).toUpperCase() + t.slice(1)}
-            {t === 'items' && items.length > 0 ? (
-              <span className="count-chip" style={{ marginLeft: 6 }}>
-                {items.length}
-              </span>
-            ) : null}
+            {t.label}
           </button>
         ))}
       </div>
 
       <section className="mes-card form-card">
-        {actionError ? (
-          <AlertBanner tone="danger">{actionError}</AlertBanner>
-        ) : null}
+        {actionError ? <AlertBanner tone="danger">{actionError}</AlertBanner> : null}
 
         {loading ? (
-          <p className="muted">Loading GIRN...</p>
+          <p className="muted">Loading GIRN…</p>
         ) : error ? (
           <AlertBanner tone="danger">{error}</AlertBanner>
         ) : !girn ? (
-          <p className="muted">GIRN not found.</p>
+          <EmptyState title="Not found" description="This GIRN could not be loaded." />
         ) : tab === 'overview' ? (
           <OverviewTab
             girn={girn}
             onAction={handleAction}
             actionLoading={actionLoading}
             canReview={canReview}
+            inspectionProgress={inspectionProgress}
           />
         ) : tab === 'items' ? (
           <ItemsTab items={items} />
         ) : (
-          <InspectionTab
-            girn={girn}
-            items={items}
-            onSaveInspection={handleSaveInspection}
-          />
+          <InspectionTab girn={girn} items={items} onSaveInspection={handleSaveInspection} />
         )}
       </section>
     </main>

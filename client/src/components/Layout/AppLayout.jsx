@@ -5,6 +5,7 @@ import Sidebar from './Sidebar';
 import GlobalSearch from './GlobalSearch';
 import GlobalBackButton from './GlobalBackButton';
 import NotificationBell from './NotificationBell';
+import AccountSettingsMenu from './AccountSettingsMenu';
 import InvoiceUploadQueueStatus from '../../invoices/InvoiceUploadQueueStatus';
 
 export default function AppLayout() {
@@ -33,6 +34,7 @@ export default function AppLayout() {
           <img src="/dascnclogo1.png" alt="DAS CNC" className="brand-logo mobile-logo" />
         </Link>
         <div className="mobile-top-actions">
+          <AccountSettingsMenu />
           {floorOnly ? null : <NotificationBell />}
         </div>
       </header>
@@ -56,9 +58,12 @@ export default function AppLayout() {
       <div className="app-main">
         <div className="app-top-chrome">
           <GlobalBackButton />
-          {floorOnly ? null : (
+          {floorOnly ? (
+            <AccountSettingsMenu />
+          ) : (
             <>
               <GlobalSearch />
+              <AccountSettingsMenu />
               <NotificationBell />
             </>
           )}

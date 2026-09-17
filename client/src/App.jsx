@@ -1,4 +1,4 @@
-import { Navigate, Outlet, Route, Routes, useParams } from 'react-router-dom';
+import { Navigate, Outlet, Route, Routes, useParams, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/authContext';
 import { DialogProvider } from './components/dialog';
 import { SocketProvider } from './socket/socketContext';
@@ -56,6 +56,8 @@ import AddSalesInvoiceWizard from './salesInvoices/AddSalesInvoiceWizard';
 import SalesPaymentsPage from './salesInvoices/SalesPaymentsPage';
 import PurchasePaymentsPage from './invoices/PurchasePaymentsPage';
 import CompanySettingsPage from './salesInvoices/CompanySettingsPage';
+import AccountSettingsPage from './auth/AccountSettingsPage';
+import ForcePasswordChangeGate from './auth/ForcePasswordChangeGate';
 import NotFoundPage from './pages/NotFoundPage';
 import PurchaseOrderDetailPage from './procurement/PurchaseOrderDetailPage';
 import CreatePurchaseOrderWizard from './procurement/CreatePurchaseOrderWizard';
@@ -84,6 +86,10 @@ function RequireAuth() {
     return <Navigate to="/auth/login" replace />;
   }
 
+  if (user.must_change_password) {
+    return <ForcePasswordChangeGate />;
+  }
+
   return <Outlet />;
 }
 
@@ -101,7 +107,7 @@ function RequireAdmin() {
   return <Outlet />;
 }
 
-/** Full ERP shell — ADMIN & SUPERVISOR. MANAGER/OPERATOR → My Today only. */
+/** Full ERP shell — ADMIN, SUPERVISOR, FINANCE, QC. MANAGER/OPERATOR → My Today only. */
 function RequireFullApp() {
   const { loading, isFloorOnly } = useAuth();
 
@@ -111,6 +117,22 @@ function RequireFullApp() {
 
   if (isFloorOnly()) {
     return <Navigate to="/production/today" replace />;
+  }
+
+  return <Outlet />;
+}
+
+/** Finance / QC may only open their allowlisted pages. */
+function RequireRestrictedPages() {
+  const { loading, user, canAccessPath, defaultHomePath } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return <MesLoading />;
+  }
+
+  if (user && !canAccessPath(location.pathname)) {
+    return <Navigate to={defaultHomePath()} replace />;
   }
 
   return <Outlet />;
@@ -175,6 +197,7 @@ export default function App() {
             }
           >
             <Route element={<RequireFullApp />}>
+              <Route element={<RequireRestrictedPages />}>
               <Route element={<RequireAdmin />}>
                 <Route path="/home" element={<HomePage />} />
                 <Route path="/notifications" element={<NotificationsPage />} />
@@ -238,11 +261,13 @@ export default function App() {
               <Route path="/production" element={<ProductionBoardPage />} />
               <Route path="/production/cards/:id" element={<ProductionCardTrackingPage />} />
               <Route path="/production/commitments/:id" element={<CommitmentToCardRedirect />} />
+              </Route>
             </Route>
 
             {/* Shop-floor only: My Today + Leave (MANAGER / OPERATOR). */}
             <Route path="/production/today" element={<MyTodayPage />} />
             <Route path="/leave-requests" element={<LeaveRequestPage />} />
+            <Route path="/account/settings" element={<AccountSettingsPage />} />
             <Route path="/production/wc-command/:id" element={<WCCommandRedirect />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>

@@ -1,13 +1,20 @@
-import { createContext, useContext, useState, useEffect, useMemo } from 'react'
+import { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react'
 import api from '../api/client'
+import {
+  getRoleHomePath,
+  isRestrictedRole,
+  isRoleAllowedPath,
+} from './financeAccess'
 
 const AuthContext = createContext(null)
 
-/** Operator < Supervisor < Manager < Admin */
+/** Operator < Supervisor < Manager < Admin (Finance/QC are peer roles, not in this ladder). */
 const LEVELS = ['OPERATOR', 'SUPERVISOR', 'MANAGER', 'ADMIN']
 
 function normalizeAccessLevel(raw) {
   const value = String(raw || '').toUpperCase().trim()
+  if (value === 'FINANCE' || value.includes('FINANCE')) return 'FINANCE'
+  if (value === 'QC' || value.includes('QUALITY')) return 'QC'
   if (LEVELS.includes(value)) return value
   if (
     value.includes('ADMIN') ||
@@ -21,9 +28,30 @@ function normalizeAccessLevel(raw) {
   return 'OPERATOR'
 }
 
+function buildUserFromEmployee(employee, token) {
+  return {
+    id: employee.id,
+    name: employee.full_name,
+    code: employee.employee_code,
+    job_description: employee.job_description,
+    shift: employee.shift_name,
+    department: employee.department,
+    token,
+    accessLevel: normalizeAccessLevel(employee.access_level || employee.job_description),
+    is_active: employee.is_active !== false,
+    must_change_password: Boolean(employee.must_change_password),
+  }
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+
+  const persistUser = useCallback((userData) => {
+    setUser(userData)
+    localStorage.setItem('dascnc_user', JSON.stringify(userData))
+    api.defaults.headers.common['Authorization'] = `Bearer ${userData.token}`
+  }, [])
 
   useEffect(() => {
     let mounted = true
@@ -41,20 +69,7 @@ export function AuthProvider({ children }) {
         const { data } = await api.get('/auth/me')
 
         if (!mounted) return
-        const accessLevel = normalizeAccessLevel(
-          data.employee.access_level || data.employee.job_description
-        )
-        setUser({
-          ...parsed,
-          id: data.employee.id,
-          name: data.employee.full_name,
-          code: data.employee.employee_code,
-          job_description: data.employee.job_description,
-          shift: data.employee.shift_name,
-          department: data.employee.department,
-          accessLevel,
-          is_active: data.employee.is_active !== false,
-        })
+        persistUser(buildUserFromEmployee(data.employee, parsed.token))
       } catch {
         localStorage.removeItem('dascnc_user')
         delete api.defaults.headers.common['Authorization']
@@ -69,27 +84,12 @@ export function AuthProvider({ children }) {
     return () => {
       mounted = false
     }
-  }, [])
+  }, [persistUser])
 
   async function login(employeeCode, password) {
     const { data } = await api.post('/auth/login', { employeeCode, password })
-    const accessLevel = normalizeAccessLevel(
-      data.employee.access_level || data.employee.job_description
-    )
-    const userData = {
-      id: data.employee.id,
-      name: data.employee.full_name,
-      code: data.employee.employee_code,
-      job_description: data.employee.job_description,
-      shift: data.employee.shift_name,
-      department: data.employee.department,
-      token: data.token,
-      accessLevel,
-      is_active: data.employee.is_active !== false,
-    }
-    setUser(userData)
-    localStorage.setItem('dascnc_user', JSON.stringify(userData))
-    api.defaults.headers.common['Authorization'] = `Bearer ${data.token}`
+    const userData = buildUserFromEmployee(data.employee, data.token)
+    persistUser(userData)
     return userData
   }
 
@@ -99,12 +99,28 @@ export function AuthProvider({ children }) {
     delete api.defaults.headers.common['Authorization']
   }
 
+  async function changePassword({ currentPassword, newPassword, confirmPassword }) {
+    const { data } = await api.post('/auth/change-password', {
+      currentPassword,
+      newPassword,
+      confirmPassword,
+    })
+    setUser((prev) => {
+      if (!prev) return prev
+      const next = { ...prev, must_change_password: false }
+      localStorage.setItem('dascnc_user', JSON.stringify(next))
+      return next
+    })
+    return data
+  }
+
   function hasAccess(required) {
     if (!user) return false
+    if (isRestrictedRole(user.accessLevel)) return false
     return LEVELS.indexOf(user.accessLevel) >= LEVELS.indexOf(required)
   }
 
-  /** MANAGER + OPERATOR: shop-floor shell (My Today only). ADMIN + SUPERVISOR: full app. */
+  /** MANAGER + OPERATOR: shop-floor shell. Restricted roles get the full shell with page allowlists. */
   function isFloorOnly() {
     if (!user) return false
     return user.accessLevel === 'MANAGER' || user.accessLevel === 'OPERATOR'
@@ -114,14 +130,43 @@ export function AuthProvider({ children }) {
     return user?.accessLevel === 'ADMIN'
   }
 
+  function isFinance() {
+    return user?.accessLevel === 'FINANCE'
+  }
+
+  function isQc() {
+    return user?.accessLevel === 'QC'
+  }
+
+  function canAccessPath(pathname) {
+    if (!user) return false
+    if (!isRestrictedRole(user.accessLevel)) return true
+    return isRoleAllowedPath(user.accessLevel, pathname)
+  }
+
   function defaultHomePath() {
     if (!user) return '/auth/login'
     if (user.accessLevel === 'ADMIN') return '/home'
+    const roleHome = getRoleHomePath(user.accessLevel)
+    if (roleHome) return roleHome
     return '/production/today'
   }
 
   const value = useMemo(
-    () => ({ user, loading, login, logout, hasAccess, isFloorOnly, isAdmin, defaultHomePath }),
+    () => ({
+      user,
+      loading,
+      login,
+      logout,
+      changePassword,
+      hasAccess,
+      isFloorOnly,
+      isAdmin,
+      isFinance,
+      isQc,
+      canAccessPath,
+      defaultHomePath,
+    }),
     [user, loading]
   )
 
