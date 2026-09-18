@@ -10916,15 +10916,15 @@ button:hover:not(:disabled) {
 .payroll-table-shell {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .payroll-table-totals {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 16px;
-  font-size: 13px;
+  gap: 14px;
+  font-size: 12px;
   color: #64748b;
 }
 
@@ -10940,10 +10940,10 @@ button:hover:not(:disabled) {
 
 .payroll-table-scroller {
   width: 100%;
-  max-height: calc(100vh - 260px);
+  max-height: calc(100vh - 220px);
   overflow: auto;
   border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  border-radius: 8px;
   background: #fff;
   -webkit-overflow-scrolling: touch;
   cursor: grab;
@@ -10977,37 +10977,43 @@ button:hover:not(:disabled) {
   min-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  font-size: 12.5px;
+  font-size: 11.5px;
   table-layout: fixed;
 }
 
-.payroll-table thead th {
+.payroll-table thead th,
+.payroll-table-compact thead th {
   position: sticky;
   top: 0;
   z-index: 3;
   background: #f8fafc;
   color: #475569;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 650;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   text-transform: uppercase;
   white-space: nowrap;
-  padding: 8px 8px;
+  padding: 4px 5px;
   border-bottom: 1px solid #e2e8f0;
   box-shadow: 0 1px 0 #e2e8f0;
-  min-width: 100px;
+  min-width: 54px;
+  max-width: 86px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .payroll-col-wide {
-  min-width: 168px;
+  min-width: 120px;
 }
 
-.payroll-table td {
-  padding: 5px 8px;
+.payroll-table td,
+.payroll-table-compact td {
+  padding: 2px 4px;
   border-bottom: 1px solid #f1f5f9;
   white-space: nowrap;
   vertical-align: middle;
   background: #fff;
+  font-variant-numeric: tabular-nums;
 }
 
 .payroll-table tbody tr:hover td {
@@ -11031,16 +11037,17 @@ button:hover:not(:disabled) {
 
 .payroll-col-code {
   left: 0;
-  min-width: 72px;
-  width: 72px;
+  min-width: 48px !important;
+  max-width: 52px;
+  width: 50px;
   box-shadow: 1px 0 0 #e2e8f0;
 }
 
 .payroll-col-name {
-  left: 72px;
-  min-width: 140px;
-  width: 140px;
-  max-width: 140px;
+  left: 50px;
+  min-width: 96px !important;
+  width: 104px;
+  max-width: 110px;
   overflow: hidden;
   text-overflow: ellipsis;
   box-shadow: 2px 0 6px -2px rgba(15, 23, 42, 0.08);
@@ -11058,19 +11065,28 @@ button:hover:not(:disabled) {
   color: #047857;
 }
 
+.payroll-cell-editable {
+  background: #f0fdf4 !important;
+}
+
+.payroll-table tbody tr:hover .payroll-cell-editable {
+  background: #dcfce7 !important;
+}
+
 .payroll-input {
-  width: 64px;
+  width: 70px;
   max-width: 100%;
-  padding: 3px 5px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  font-size: 12.5px;
+  padding: 2px 4px;
+  border: 1px solid #86efac;
+  border-radius: 4px;
+  font-size: 11.5px;
   text-align: right;
   background: #fff;
+  font-variant-numeric: tabular-nums;
 }
 
 .payroll-input-money {
-  width: 88px;
+  width: 74px;
 }
 
 .payroll-input.is-override {
@@ -11085,31 +11101,35 @@ button:hover:not(:disabled) {
 
 .payroll-input:focus {
   outline: none;
-  border-color: #94a3b8;
-  box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.25);
+  border-color: #059669;
+  box-shadow: 0 0 0 2px rgba(5, 150, 105, 0.2);
 }
 
 .payroll-col-action {
-  width: 56px;
-  min-width: 56px;
+  width: 48px;
+  min-width: 48px !important;
   text-align: center;
+  position: sticky;
+  right: 0;
+  background: #fff;
+  z-index: 2;
 }
 
 .payroll-save-btn {
-  padding: 2px 8px !important;
-  font-size: 11px !important;
+  padding: 2px 6px !important;
+  font-size: 10px !important;
   min-height: 0;
 }
 
 @media (max-width: 900px) {
   .payroll-table-scroller {
-    max-height: calc(100vh - 220px);
+    max-height: calc(100vh - 200px);
   }
 
   .payroll-col-name {
-    min-width: 110px;
-    width: 110px;
-    max-width: 110px;
+    min-width: 84px !important;
+    width: 90px;
+    max-width: 90px;
   }
 }
 

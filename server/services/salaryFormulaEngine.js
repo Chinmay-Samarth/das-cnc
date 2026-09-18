@@ -2,15 +2,18 @@
  * Safe salary formula evaluator + Excel-baseline compute helpers.
  * Supports arithmetic, comparisons, parentheses, and IF(cond, a, b).
  *
- * Excel payroll model (no double LOP):
- * - Basic Earned = basic / wage_period × (days_worked + paid_leave + earned_leave)
- * - Absent Deduction = basic/30 × absent_days + basic/30 × unauthorized_absent_days × 1.5
- *   (shown for accounting; NOT subtracted again from Net because Basic Earned already
- *   excludes unpaid days)
- * - OT Hourly Rate = basic / 170
- * - Regular Earnings = Basic Earned + Allowance + Incentive + Production Allowance
- * - Gross (total_earned) = Regular Earnings + OT Pay
- * - ESI on gross @ 0.75%; PF on basic_earned+allowance (capped); PT on gross
+ * Dual basic model:
+ * - basic = company / "our" basic (manual / employee master)
+ * - esi_basic = ESI submission basic (blank until entered manually)
+ *
+ * - Basic Earned = esi_basic / wage_period × (days_worked + paid_leave + earned_leave) (no OT)
+ * - Allowance = 15% of Basic Earned
+ * - Production Allowance = (company basic − Basic Earned) + Allowance
+ * - Absent Deduction = company basic/30 × absent (+ unauthorized × 1.5) — accounting only
+ * - OT Hourly Rate = company basic / 170
+ * - Total Earned = company basic + overtime_pay − absent_deduction (leave cut)
+ * - ESI on total_earned @ 0.75%; PF on basic_earned+allowance (capped); PT on total_earned
+ * - Net Paid = total_earned − ESI − PF − PT
  */
 
 const INPUT_KEYS = [
@@ -22,18 +25,19 @@ const INPUT_KEYS = [
   'earned_leave',
   'overtime_hours',
   'basic',
+  'esi_basic',
   'incentive_paid',
-  'production_allowance',
 ];
 
 const OUTPUT_KEYS = [
-  'basic_earned',
   'absent_deduction',
-  'allowance',
-  'inc_plus_prod_all',
-  'allowance_plus_pa',
   'overtime_hourly_rate',
   'overtime_pay',
+  'basic_earned',
+  'allowance',
+  'production_allowance',
+  'inc_plus_prod_all',
+  'allowance_plus_pa',
   'regular_earnings',
   'total_earned',
   'esi',
@@ -46,29 +50,27 @@ const OUTPUT_KEYS = [
 const COMPUTE_ORDER = [...OUTPUT_KEYS];
 
 const DEFAULT_FORMULAS = {
-  // Paid/worked days only — do NOT use basic - absent_deduction
-  basic_earned:
-    'IF(wage_period > 0, basic / wage_period * (days_worked + paid_leave + earned_leave), 0)',
-  // Excel LOP cut uses fixed /30 divisor; unauthorized days at 1.5x
+  // Company basic → LOP cut (accounting only)
   absent_deduction:
     'basic / 30 * absent_days + basic / 30 * unauthorized_absent_days * 1.5',
-  allowance: 'basic_earned * 0.15',
-  inc_plus_prod_all: 'incentive_paid + production_allowance',
-  allowance_plus_pa: 'allowance + production_allowance',
   overtime_hourly_rate: 'basic / 170',
   overtime_pay: 'overtime_hours * overtime_hourly_rate',
-  // Regular earnings exclude OT; total_earned is gross (regular + OT)
+  // ESI basic → pro-rata paid days (worked + paid leave + earned leave); OT not included
+  basic_earned:
+    'IF(wage_period > 0, IF(esi_basic > 0, esi_basic / wage_period * (days_worked + paid_leave + earned_leave), 0), 0)',
+  allowance: 'basic_earned * 0.15',
+  // PA = (company basic − basic earned) + allowance
+  production_allowance: 'basic - basic_earned + allowance',
+  inc_plus_prod_all: 'incentive_paid + production_allowance',
+  allowance_plus_pa: 'allowance + production_allowance',
   regular_earnings:
     'basic_earned + allowance + production_allowance + incentive_paid',
-  total_earned: 'regular_earnings + overtime_pay',
-  // ESI wage base = gross including OT
+  // Company basic + OT − leave (absent) deductions — not ESI basic
+  total_earned: 'basic + overtime_pay - absent_deduction',
   esi: 'total_earned * 0.75 / 100',
-  // PF wages = basic_earned + allowance only (no OT), capped at 15000
   pf: 'IF((basic_earned + allowance) <= 15000, (basic_earned + allowance) * 0.12, 15000 * 0.12)',
   pt: 'IF(total_earned > 25000, 200, 0)',
-  // Statutory deductions only — absent_deduction is NOT subtracted again
   total_deductions: 'esi + pf + pt',
-  // Excel: Net Paid = Total Earned − ESI − PF − PT
   net_paid: 'total_earned - esi - pf - pt',
 };
 
@@ -80,7 +82,7 @@ function httpError(message, status = 400) {
   return err;
 }
 
-/** Excel OT rate: Basic / 170 */
+/** Company OT rate: Basic / 170 */
 function overtimeHourlyRateFromBasic(basic) {
   const b = toNumber(basic, 0);
   if (b <= 0) return 0;
@@ -134,12 +136,17 @@ function tokenize(expr) {
         id += src[i];
         i += 1;
       }
-      const upper = id.toUpperCase();
-      if (upper === 'IF') tokens.push({ type: 'if' });
-      else tokens.push({ type: 'id', value: id.toLowerCase() });
+      if (id.toUpperCase() === 'IF') {
+        tokens.push({ type: 'if' });
+      } else {
+        if (!ALLOWED_IDENTIFIERS.has(id)) {
+          throw httpError(`Unknown identifier: ${id}`);
+        }
+        tokens.push({ type: 'id', value: id });
+      }
       continue;
     }
-    throw httpError(`Invalid character in formula: ${ch}`);
+    throw httpError(`Unexpected character: ${ch}`);
   }
   return tokens;
 }
@@ -150,104 +157,100 @@ function parseExpression(tokens) {
   function peek() {
     return tokens[pos];
   }
-
-  function consume(expected) {
+  function consume() {
     const t = tokens[pos];
-    if (!t) throw httpError('Unexpected end of formula');
-    if (expected) {
-      const ok =
-        typeof expected === 'string'
-          ? t.type === expected
-          : expected.includes(t.type);
-      if (!ok) throw httpError(`Expected ${expected} in formula`);
-    }
     pos += 1;
     return t;
+  }
+  function expect(type) {
+    const t = peek();
+    if (!t || t.type !== type) throw httpError(`Expected ${type}`);
+    return consume();
   }
 
   function parsePrimary() {
     const t = peek();
     if (!t) throw httpError('Unexpected end of formula');
-
     if (t.type === 'number') {
       consume();
-      return { kind: 'number', value: t.value };
+      return { type: 'number', value: t.value };
     }
     if (t.type === 'id') {
       consume();
-      if (!ALLOWED_IDENTIFIERS.has(t.value)) {
-        throw httpError(`Unknown variable in formula: ${t.value}`);
-      }
-      return { kind: 'id', name: t.value };
-    }
-    if (t.type === 'if') {
-      consume();
-      consume('(');
-      const cond = parseComparison();
-      consume(',');
-      const thenBranch = parseComparison();
-      consume(',');
-      const elseBranch = parseComparison();
-      consume(')');
-      return { kind: 'if', cond, thenBranch, elseBranch };
+      return { type: 'id', value: t.value };
     }
     if (t.type === '(') {
       consume();
-      const inner = parseComparison();
-      consume(')');
-      return inner;
+      const expr = parseCmp();
+      expect(')');
+      return expr;
+    }
+    if (t.type === 'if') {
+      consume();
+      expect('(');
+      const cond = parseCmp();
+      expect(',');
+      const thenBranch = parseCmp();
+      expect(',');
+      const elseBranch = parseCmp();
+      expect(')');
+      return { type: 'if', cond, thenBranch, elseBranch };
     }
     if (t.type === '-' || t.type === '+') {
       const op = consume().type;
       const arg = parsePrimary();
-      return op === '-' ? { kind: 'unary', op: '-', arg } : arg;
+      return op === '-' ? { type: 'unary', op: '-', arg } : arg;
     }
-    throw httpError('Invalid formula expression');
+    throw httpError(`Unexpected token: ${t.type}`);
   }
 
-  function parseMulDiv() {
+  function parseMul() {
     let left = parsePrimary();
     while (peek() && (peek().type === '*' || peek().type === '/')) {
       const op = consume().type;
       const right = parsePrimary();
-      left = { kind: 'binary', op, left, right };
+      left = { type: 'binary', op, left, right };
     }
     return left;
   }
 
-  function parseAddSub() {
-    let left = parseMulDiv();
+  function parseAdd() {
+    let left = parseMul();
     while (peek() && (peek().type === '+' || peek().type === '-')) {
       const op = consume().type;
-      const right = parseMulDiv();
-      left = { kind: 'binary', op, left, right };
+      const right = parseMul();
+      left = { type: 'binary', op, left, right };
     }
     return left;
   }
 
-  function parseComparison() {
-    let left = parseAddSub();
-    while (peek() && peek().type === 'op') {
+  function parseCmp() {
+    let left = parseAdd();
+    while (
+      peek() &&
+      peek().type === 'op' &&
+      ['>', '<', '>=', '<=', '==', '!=', '===', '!=='].includes(peek().value)
+    ) {
       const op = consume().value;
-      const right = parseAddSub();
-      left = { kind: 'cmp', op, left, right };
+      const right = parseAdd();
+      left = { type: 'cmp', op, left, right };
     }
     return left;
   }
 
-  const ast = parseComparison();
-  if (pos < tokens.length) throw httpError('Unexpected tokens in formula');
+  const ast = parseCmp();
+  if (pos < tokens.length) throw httpError('Unexpected trailing tokens');
   return ast;
 }
 
 function evalAst(ast, vars) {
-  switch (ast.kind) {
+  switch (ast.type) {
     case 'number':
       return ast.value;
     case 'id':
-      return toNumber(vars[ast.name], 0);
+      return toNumber(vars[ast.value], 0);
     case 'unary':
-      return -evalAst(ast.arg, vars);
+      return ast.op === '-' ? -evalAst(ast.arg, vars) : evalAst(ast.arg, vars);
     case 'binary': {
       const a = evalAst(ast.left, vars);
       const b = evalAst(ast.right, vars);
@@ -291,7 +294,6 @@ function evaluateFormula(expr, vars) {
 function normalizeFormulas(formulas) {
   const merged = { ...DEFAULT_FORMULAS, ...(formulas || {}) };
 
-  // Force-upgrade known outdated Excel-mismatched formulas stored in older versions
   const storedRate = String(merged.overtime_hourly_rate || '').trim();
   if (
     !storedRate ||
@@ -318,11 +320,13 @@ function normalizeFormulas(formulas) {
   }
 
   const storedBasic = String(merged.basic_earned || '').trim();
-  // Reject "basic - absent_deduction" LOP-as-basic model
   if (
     !storedBasic ||
     storedBasic.includes('absent_deduction') ||
-    !storedBasic.includes('days_worked')
+    !storedBasic.includes('days_worked') ||
+    !/\besi_basic\b/.test(storedBasic) ||
+    !/\bpaid_leave\b/.test(storedBasic) ||
+    /\bovertime_pay\b/.test(storedBasic)
   ) {
     merged.basic_earned = DEFAULT_FORMULAS.basic_earned;
   }
@@ -331,16 +335,38 @@ function normalizeFormulas(formulas) {
     merged.regular_earnings = DEFAULT_FORMULAS.regular_earnings;
   }
 
+  const storedPa = String(merged.production_allowance || '').trim();
+  if (
+    !storedPa ||
+    storedPa === '0' ||
+    storedPa.includes('absent_deduction') ||
+    storedPa.includes('overtime_pay') ||
+    !storedPa.includes('basic_earned') ||
+    !storedPa.includes('allowance')
+  ) {
+    merged.production_allowance = DEFAULT_FORMULAS.production_allowance;
+  }
+
   const totalExpr = String(merged.total_earned || '').trim();
   if (
     !totalExpr ||
-    !/\bregular_earnings\b/.test(totalExpr) ||
-    !/\bovertime_pay\b/.test(totalExpr)
+    /\bregular_earnings\b/.test(totalExpr) ||
+    !/\bbasic\b/.test(totalExpr) ||
+    !/\bovertime_pay\b/.test(totalExpr) ||
+    !/\babsent_deduction\b/.test(totalExpr)
   ) {
     merged.total_earned = DEFAULT_FORMULAS.total_earned;
   }
 
-  // Ensure absent_deduction is never baked into net/total_deductions
+  const storedPf = String(merged.pf || '').trim();
+  if (
+    !storedPf ||
+    !/\b15000\b/.test(storedPf) ||
+    !/\bbasic_earned\b/.test(storedPf)
+  ) {
+    merged.pf = DEFAULT_FORMULAS.pf;
+  }
+
   const dedExpr = String(merged.total_deductions || '');
   if (
     !dedExpr ||
@@ -382,7 +408,7 @@ function computeLine(inputs, formulas, options = {}) {
   for (const key of INPUT_KEYS) {
     vars[key] = toNumber(inputs[key], 0);
   }
-  // Guard: wage_period zero → basic_earned becomes 0 via division guard in evaluator
+  // esi_basic stays blank/0 until entered manually — do not fall back to company basic
   if (vars.wage_period <= 0) {
     vars.wage_period = 0;
   }

@@ -23,17 +23,7 @@ const supabase = createClient(
 const PRESENT_FAMILY = new Set(['PRESENT', 'COMPLETED', 'LATE', 'HALF_DAY']);
 /** A full working day is 8.5 hours; anything beyond it on the same day is overtime. */
 const FULL_DAY_MINUTES = 8.5 * 60;
-const EDITABLE_INPUT_KEYS = [
-  'days_worked',
-  'absent_days',
-  'unauthorized_absent_days',
-  'paid_leave',
-  'earned_leave',
-  'overtime_hours',
-  'incentive_paid',
-  'production_allowance',
-  'basic',
-];
+const EDITABLE_INPUT_KEYS = ['basic', 'esi_basic'];
 
 const OPTIONAL_LINE_COLUMNS = [
   'inc_plus_prod_all',
@@ -45,9 +35,13 @@ const OPTIONAL_LINE_COLUMNS = [
   'overtime_hourly_rate',
   'overtime_pay',
 ];
+// esi_basic is required for dual-basic payroll — never treat as optional/strippable
 
-const EDITABLE_OUTPUT_KEYS = [...OUTPUT_KEYS];
-const EDITABLE_LINE_KEYS = [...EDITABLE_INPUT_KEYS, ...EDITABLE_OUTPUT_KEYS];
+/** Outputs are formula-driven — never accept manual output patches from the grid. */
+const EDITABLE_OUTPUT_KEYS = [];
+const EDITABLE_LINE_KEYS = [...EDITABLE_INPUT_KEYS];
+
+const MANUAL_OVERRIDE_KEYS = new Set(['basic', 'esi_basic']);
 
 function httpError(message, status = 400) {
   const err = new Error(message);
@@ -73,31 +67,70 @@ function monthBounds(year, month) {
 
 /** Derived money fields that must stay formula-driven (never freeze via stale overrides). */
 const DERIVED_GROSS_NET_KEYS = [
+  'absent_deduction',
+  'basic_earned',
+  'allowance',
+  'production_allowance',
+  'inc_plus_prod_all',
+  'allowance_plus_pa',
   'regular_earnings',
   'total_earned',
+  'overtime_hourly_rate',
+  'overtime_pay',
   'esi',
+  'pf',
   'pt',
   'total_deductions',
   'net_paid',
 ];
 
 function applyGrossAndNetGuarantees(row) {
-  // Always rebuild gross → statutory → net from current components.
-  // Stale manual_overrides previously froze Net Paid on regular-only gross.
-  const regular =
-    toNumber(row.regular_earnings) ||
+  // Accounting column: always show LOP cut (not applied again to Net)
+  row.absent_deduction =
+    (toNumber(row.basic) / 30) * toNumber(row.absent_days) +
+    (toNumber(row.basic) / 30) * toNumber(row.unauthorized_absent_days) * 1.5;
+
+  const wage = toNumber(row.wage_period);
+  const esiBasic = toNumber(row.esi_basic, 0);
+  // Basic Earned = ESI basic / wage × paid days (no OT) — always resync
+  if (wage > 0 && esiBasic > 0) {
+    row.basic_earned =
+      (esiBasic / wage) *
+      (toNumber(row.days_worked) + toNumber(row.paid_leave) + toNumber(row.earned_leave));
+  } else {
+    row.basic_earned = 0;
+  }
+  row.allowance = toNumber(row.basic_earned) * 0.15;
+
+  // PA = (company basic − basic earned) + allowance
+  row.production_allowance =
+    toNumber(row.basic) - toNumber(row.basic_earned) + toNumber(row.allowance);
+
+  row.inc_plus_prod_all =
+    toNumber(row.incentive_paid) + toNumber(row.production_allowance);
+  row.allowance_plus_pa =
+    toNumber(row.allowance) + toNumber(row.production_allowance);
+
+  const otRate = overtimeHourlyRateFromBasic(row.basic);
+  row.overtime_hourly_rate = otRate;
+  row.overtime_pay = toNumber(row.overtime_hours) * otRate;
+
+  // Gross for ESI / Net = company basic + OT − leave deductions
+  row.regular_earnings =
     toNumber(row.basic_earned) +
-      toNumber(row.allowance) +
-      toNumber(row.incentive_paid) +
-      toNumber(row.production_allowance);
-  row.regular_earnings = regular;
-  row.total_earned = regular + toNumber(row.overtime_pay);
+    toNumber(row.allowance) +
+    toNumber(row.production_allowance) +
+    toNumber(row.incentive_paid);
+  row.total_earned =
+    toNumber(row.basic) + toNumber(row.overtime_pay) - toNumber(row.absent_deduction);
+
+  const pfBase = toNumber(row.basic_earned) + toNumber(row.allowance);
+  row.pf = pfBase <= 15000 ? pfBase * 0.12 : 15000 * 0.12;
 
   const gross = toNumber(row.total_earned);
   row.esi = (gross * 0.75) / 100;
   row.pt = gross > 25000 ? 200 : 0;
   row.total_deductions = toNumber(row.esi) + toNumber(row.pf) + toNumber(row.pt);
-  // Excel: Net Paid = Total Earned − ESI − PF − PT
   row.net_paid =
     toNumber(row.total_earned) -
     toNumber(row.esi) -
@@ -109,7 +142,8 @@ function applyGrossAndNetGuarantees(row) {
 
 function stripDerivedOverrides(overrides) {
   const list = Array.isArray(overrides) ? overrides : [];
-  return list.filter((k) => !DERIVED_GROSS_NET_KEYS.includes(k));
+  // Only Basic / ESI Basic may remain as manual overrides; everything else is auto
+  return list.filter((k) => MANUAL_OVERRIDE_KEYS.has(k));
 }
 
 function hydratePayrollLine(row) {
@@ -118,7 +152,10 @@ function hydratePayrollLine(row) {
   const snapshotOut = row.computed_snapshot?.outputs || {};
   const overrides = stripDerivedOverrides(parseOverrides(row.manual_overrides));
   row.manual_overrides = overrides;
-  const formulas = row.computed_snapshot?.formulas || DEFAULT_FORMULAS;
+  // Always normalize — ignore stale snapshot formulas that still use company basic
+  const formulas = normalizeFormulas(
+    row.computed_snapshot?.formulas || DEFAULT_FORMULAS
+  );
 
   if (row.inc_plus_prod_all == null) {
     row.inc_plus_prod_all = toNumber(
@@ -134,6 +171,9 @@ function hydratePayrollLine(row) {
   }
   if (row.unauthorized_absent_days == null) {
     row.unauthorized_absent_days = toNumber(snapshotIn.unauthorized_absent_days, 0);
+  }
+  if (row.esi_basic == null) {
+    row.esi_basic = toNumber(snapshotIn.esi_basic, 0);
   }
   if (row.absent_deduction == null) {
     row.absent_deduction = toNumber(snapshotOut.absent_deduction, 0);
@@ -153,11 +193,8 @@ function hydratePayrollLine(row) {
     earned_leave: toNumber(row.earned_leave, snapshotIn.earned_leave),
     overtime_hours: toNumber(row.overtime_hours, snapshotIn.overtime_hours),
     basic: toNumber(row.basic, snapshotIn.basic),
+    esi_basic: toNumber(row.esi_basic, toNumber(snapshotIn.esi_basic, 0)),
     incentive_paid: toNumber(row.incentive_paid, snapshotIn.incentive_paid),
-    production_allowance: toNumber(
-      row.production_allowance,
-      snapshotIn.production_allowance
-    ),
   };
 
   const overrideValues = {};
@@ -197,8 +234,26 @@ function stripUnknownColumn(payload, column) {
 }
 
 function isMissingColumnError(error, column) {
-  const msg = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
-  return error?.code === 'PGRST204' || error?.code === '42703' || msg.includes(column);
+  const msg = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+  const col = String(column || '').toLowerCase();
+  if (!col) return false;
+  // Must mention this column — do NOT treat every PGRST204 as a match for every optional field
+  // (that previously stripped esi_basic while retrying unrelated missing columns).
+  const mentionsColumn =
+    msg.includes(`'${col}'`) ||
+    msg.includes(`"${col}"`) ||
+    msg.includes(`.${col}`) ||
+    msg.includes(` ${col} `) ||
+    msg.includes(`column ${col}`) ||
+    msg.endsWith(col);
+  if (!mentionsColumn) return false;
+  return (
+    error?.code === 'PGRST204' ||
+    error?.code === '42703' ||
+    msg.includes('does not exist') ||
+    msg.includes('could not find') ||
+    msg.includes('schema cache')
+  );
 }
 
 function missingOptionalColumn(error, payload) {
@@ -549,8 +604,9 @@ function buildLinePayload({
     earned_leave: toNumber(inputs.earned_leave),
     overtime_hours: toNumber(inputs.overtime_hours),
     basic: toNumber(inputs.basic),
+    esi_basic: toNumber(inputs.esi_basic, 0),
     incentive_paid: toNumber(inputs.incentive_paid),
-    production_allowance: toNumber(inputs.production_allowance),
+    production_allowance: toNumber(outputs.production_allowance),
     basic_earned: toNumber(outputs.basic_earned),
     allowance: toNumber(outputs.allowance),
     inc_plus_prod_all: toNumber(outputs.inc_plus_prod_all),
@@ -632,19 +688,30 @@ async function persistLiveAttendanceStats(lines) {
     await Promise.all(
       chunk.map(async (line) => {
         if (!line?.id) return;
-        const payload = {
+        // Do NOT write esi_basic / basic here — those are manual inputs.
+        // Refresh derived amounts + drop stale derived overrides / snapshot formulas.
+        const cleanedOverrides = stripDerivedOverrides(parseOverrides(line.manual_overrides));
+        const inputs = {
+          wage_period: toNumber(line.wage_period),
           days_worked: toNumber(line.days_worked),
           absent_days: toNumber(line.absent_days),
           unauthorized_absent_days: toNumber(line.unauthorized_absent_days),
           paid_leave: toNumber(line.paid_leave),
+          earned_leave: toNumber(line.earned_leave),
           overtime_hours: toNumber(line.overtime_hours),
+          basic: toNumber(line.basic),
+          esi_basic: toNumber(line.esi_basic, 0),
+          incentive_paid: toNumber(line.incentive_paid),
+        };
+        const outputs = {
           absent_deduction: toNumber(line.absent_deduction),
-          basic_earned: toNumber(line.basic_earned),
-          allowance: toNumber(line.allowance),
-          inc_plus_prod_all: toNumber(line.inc_plus_prod_all),
-          allowance_plus_pa: toNumber(line.allowance_plus_pa),
           overtime_hourly_rate: toNumber(line.overtime_hourly_rate),
           overtime_pay: toNumber(line.overtime_pay),
+          basic_earned: toNumber(line.basic_earned),
+          allowance: toNumber(line.allowance),
+          production_allowance: toNumber(line.production_allowance),
+          inc_plus_prod_all: toNumber(line.inc_plus_prod_all),
+          allowance_plus_pa: toNumber(line.allowance_plus_pa),
           regular_earnings: toNumber(line.regular_earnings),
           total_earned: toNumber(line.total_earned),
           esi: toNumber(line.esi),
@@ -652,6 +719,34 @@ async function persistLiveAttendanceStats(lines) {
           pt: toNumber(line.pt),
           total_deductions: toNumber(line.total_deductions),
           net_paid: toNumber(line.net_paid),
+        };
+        const payload = {
+          days_worked: inputs.days_worked,
+          absent_days: inputs.absent_days,
+          unauthorized_absent_days: inputs.unauthorized_absent_days,
+          paid_leave: inputs.paid_leave,
+          overtime_hours: inputs.overtime_hours,
+          absent_deduction: outputs.absent_deduction,
+          production_allowance: outputs.production_allowance,
+          basic_earned: outputs.basic_earned,
+          allowance: outputs.allowance,
+          inc_plus_prod_all: outputs.inc_plus_prod_all,
+          allowance_plus_pa: outputs.allowance_plus_pa,
+          overtime_hourly_rate: outputs.overtime_hourly_rate,
+          overtime_pay: outputs.overtime_pay,
+          regular_earnings: outputs.regular_earnings,
+          total_earned: outputs.total_earned,
+          esi: outputs.esi,
+          pf: outputs.pf,
+          pt: outputs.pt,
+          total_deductions: outputs.total_deductions,
+          net_paid: outputs.net_paid,
+          manual_overrides: cleanedOverrides,
+          computed_snapshot: {
+            inputs,
+            outputs,
+            formulas: normalizeFormulas(DEFAULT_FORMULAS),
+          },
           updated_at: now,
         };
         let body = payload;
@@ -736,8 +831,8 @@ async function attachLiveAttendanceStats(lines, bounds, formulas = DEFAULT_FORMU
       earned_leave: toNumber(next.earned_leave),
       overtime_hours: toNumber(next.overtime_hours),
       basic: toNumber(next.basic),
+      esi_basic: toNumber(next.esi_basic, 0),
       incentive_paid: toNumber(next.incentive_paid),
-      production_allowance: toNumber(next.production_allowance),
     };
 
     const overrideValues = {};
@@ -788,12 +883,22 @@ async function generatePayroll(year, month, { preserveOverrides = true } = {}) {
 
   const { data: employees, error: empErr } = await supabase
     .from('employees')
-    .select('id, full_name, employee_code, basic_salary, is_active')
+    .select('id, full_name, employee_code, basic_salary, esi_basic_salary, is_active')
     .eq('is_active', true)
     .order('employee_code', { ascending: true });
-  if (empErr) throw empErr;
+  let employeeRows = employees;
+  if (empErr) {
+    // Older DBs may not have esi_basic_salary yet
+    const retry = await supabase
+      .from('employees')
+      .select('id, full_name, employee_code, basic_salary, is_active')
+      .eq('is_active', true)
+      .order('employee_code', { ascending: true });
+    if (retry.error) throw empErr;
+    employeeRows = retry.data;
+  }
 
-  const employeeIds = (employees || []).map((e) => e.id);
+  const employeeIds = (employeeRows || []).map((e) => e.id);
   const existingLines = await listLinesForRun(run.id);
   const existingByEmp = Object.fromEntries(existingLines.map((l) => [l.employee_id, l]));
 
@@ -801,7 +906,7 @@ async function generatePayroll(year, month, { preserveOverrides = true } = {}) {
   const leaveMap = await loadLeaveRequestsByEmployee(employeeIds, bounds.start, bounds.end);
 
   const upserts = [];
-  for (const emp of employees || []) {
+  for (const emp of employeeRows || []) {
     const existing = existingByEmp[emp.id];
     const overrides = stripDerivedOverrides(
       preserveOverrides ? parseOverrides(existing?.manual_overrides) : []
@@ -828,6 +933,8 @@ async function generatePayroll(year, month, { preserveOverrides = true } = {}) {
     const autoAbsentDays = leaveStats.absent_days;
     const autoPaidLeave = leaveStats.paid_leave;
     const autoBasic = toNumber(emp.basic_salary, 0);
+    // ESI basic is manual — only use employee master if explicitly set; else leave blank (0)
+    const autoEsiBasic = toNumber(emp.esi_basic_salary, 0);
     const autoOvertimeHours = sumOvertimeHours(monthRecords);
 
     const inputs = {
@@ -851,12 +958,17 @@ async function generatePayroll(year, month, { preserveOverrides = true } = {}) {
         ? toNumber(existing?.overtime_hours, 0)
         : autoOvertimeHours,
       basic: overrides.includes('basic') ? toNumber(existing.basic) : autoBasic,
+      esi_basic: (() => {
+        if (overrides.includes('esi_basic')) {
+          return toNumber(existing?.esi_basic, 0);
+        }
+        const stored = toNumber(existing?.esi_basic, 0);
+        if (stored > 0) return stored;
+        return autoEsiBasic;
+      })(),
       incentive_paid: overrides.includes('incentive_paid')
         ? toNumber(existing?.incentive_paid, 0)
         : toNumber(existing?.incentive_paid, 0),
-      production_allowance: overrides.includes('production_allowance')
-        ? toNumber(existing?.production_allowance, 0)
-        : toNumber(existing?.production_allowance, 0),
     };
 
     // Always refresh wage_period for the month
@@ -872,7 +984,7 @@ async function generatePayroll(year, month, { preserveOverrides = true } = {}) {
       overrides,
       values: overrideValues,
     });
-    const synced = applyGrossAndNetGuarantees({ ...outputs });
+    const synced = applyGrossAndNetGuarantees({ ...inputs, ...outputs });
     const payload = buildLinePayload({
       runId: run.id,
       employeeId: emp.id,
@@ -946,8 +1058,8 @@ async function updatePayrollLine(lineId, patch, userId) {
     earned_leave: toNumber(line.earned_leave),
     overtime_hours: toNumber(line.overtime_hours),
     basic: toNumber(line.basic),
+    esi_basic: toNumber(line.esi_basic, 0),
     incentive_paid: toNumber(line.incentive_paid),
-    production_allowance: toNumber(line.production_allowance),
   };
 
   for (const key of EDITABLE_INPUT_KEYS) {
@@ -962,42 +1074,30 @@ async function updatePayrollLine(lineId, patch, userId) {
   const overrideValues = {};
   for (const key of OUTPUT_KEYS) {
     overrideValues[key] = toNumber(line[key], 0);
-    if (patch[key] !== undefined) {
-      overrideValues[key] = toNumber(patch[key], 0);
-      overrides.add(key);
-    }
+    // Outputs are never manually patched — always formula / guarantee driven
   }
 
-  // Recalculate derived earnings/net unless the user explicitly edited those cells
-  if (patch.total_earned === undefined) {
-    overrides.delete('total_earned');
-  }
-  if (patch.regular_earnings === undefined) {
-    overrides.delete('regular_earnings');
-  }
-  if (patch.net_paid === undefined) {
-    overrides.delete('net_paid');
-  }
-  if (patch.total_deductions === undefined) {
-    overrides.delete('total_deductions');
-  }
-  if (patch.esi === undefined) {
-    overrides.delete('esi');
-  }
-  if (patch.pt === undefined) {
-    overrides.delete('pt');
-  }
+  // Recalculate all derived fields (nothing stays frozen except basic / esi_basic)
 
   const { outputs, formulas } = computeLine(inputs, formulaVersion.formulas, {
     overrides: [...overrides],
     values: overrideValues,
   });
-  const synced = applyGrossAndNetGuarantees({ ...outputs });
+  const synced = applyGrossAndNetGuarantees({
+    ...inputs,
+    ...outputs,
+  });
+  // Prefer explicit patch / inputs for company + ESI basic (guarantees only touch derived $)
+  synced.basic = toNumber(inputs.basic);
+  synced.esi_basic = toNumber(inputs.esi_basic, 0);
   const payload = buildLinePayload({
     runId: line.run_id,
     employeeId: line.employee_id,
     formulaVersionId: formulaVersion.id,
-    inputs,
+    inputs: {
+      ...inputs,
+      esi_basic: synced.esi_basic,
+    },
     outputs: synced,
     overrides: [...overrides],
     formulas,
@@ -1021,9 +1121,45 @@ async function updatePayrollLine(lineId, patch, userId) {
     lastErr = uErr;
     const missing = missingOptionalColumn(uErr, body);
     if (!missing) break;
+    // Never drop esi_basic / basic on optional-column retry — those must persist
+    if (missing === 'esi_basic' || missing === 'basic') break;
     body = stripUnknownColumn(body, missing);
   }
   if (lastErr) throw lastErr;
+
+  // Hard guarantee: basics + overrides always land even if a prior select omit/schema glitch
+  const forcedBasics = {
+    basic: toNumber(synced.basic),
+    esi_basic: toNumber(synced.esi_basic, 0),
+    manual_overrides: [...overrides],
+    computed_snapshot: payload.computed_snapshot,
+    updated_at: new Date().toISOString(),
+  };
+  {
+    const { data: forced, error: forceErr } = await supabase
+      .from('salary_payroll_lines')
+      .update(forcedBasics)
+      .eq('id', lineId)
+      .select('*')
+      .single();
+    if (forceErr) {
+      console.error('payroll forced basic/esi_basic write failed:', forceErr.message || forceErr);
+      throw httpError(
+        forceErr.message || 'Could not save Basic / ESI Basic — check database schema',
+        500
+      );
+    }
+    updated = forced || updated;
+  }
+
+  // Keep employee master ESI basic in sync when payroll line saves it
+  if (patch.esi_basic !== undefined && line.employee_id) {
+    const esiVal = toNumber(synced.esi_basic);
+    await supabase
+      .from('employees')
+      .update({ esi_basic_salary: esiVal > 0 ? esiVal : null })
+      .eq('id', line.employee_id);
+  }
 
   await supabase
     .from('salary_payroll_runs')
@@ -1031,7 +1167,20 @@ async function updatePayrollLine(lineId, patch, userId) {
     .eq('id', line.run_id);
 
   void userId;
-  return hydratePayrollLine(updated);
+  return hydratePayrollLine({
+    ...updated,
+    esi_basic: toNumber(
+      updated?.esi_basic !== undefined && updated?.esi_basic !== null
+        ? updated.esi_basic
+        : synced.esi_basic,
+      synced.esi_basic
+    ),
+    basic: toNumber(
+      updated?.basic !== undefined && updated?.basic !== null ? updated.basic : synced.basic,
+      synced.basic
+    ),
+    manual_overrides: [...overrides],
+  });
 }
 
 async function lockPayroll(year, month, lockedBy) {
@@ -1091,24 +1240,24 @@ async function exportPayrollWorkbook(year, month) {
     { header: 'Earned Leave', key: 'earned_leave', width: 12 },
     { header: 'Absent Days', key: 'absent_days', width: 12 },
     { header: 'Unauthorized Absent', key: 'unauthorized_absent_days', width: 16 },
-    { header: 'Absent Deduction', key: 'absent_deduction', width: 16 },
-    { header: 'Total Overtime (hrs)', key: 'overtime_hours', width: 16 },
+    { header: 'Overtime Hourly Rate', key: 'overtime_hourly_rate', width: 16 },
+    { header: 'Total Overtime (hrs)', key: 'overtime_hours', width: 14 },
     { header: 'Basic', key: 'basic', width: 12 },
-    { header: 'Basic Earned', key: 'basic_earned', width: 14 },
+    { header: 'Absent Deduction', key: 'absent_deduction', width: 14 },
+    { header: 'Overtime Pay', key: 'overtime_pay', width: 12 },
+    { header: 'Total Earned', key: 'total_earned', width: 12 },
+    { header: 'ESI Basic', key: 'esi_basic', width: 12 },
+    { header: 'Basic Earned', key: 'basic_earned', width: 12 },
     { header: 'Allowance', key: 'allowance', width: 12 },
-    { header: 'Incentive Paid', key: 'incentive_paid', width: 14 },
-    { header: 'Production Allowance', key: 'production_allowance', width: 18 },
-    { header: 'Inc+ Prod All', key: 'inc_plus_prod_all', width: 14 },
-    { header: 'Allowance + Production Allowance', key: 'allowance_plus_pa', width: 22 },
-    { header: 'Overtime Hourly Rate', key: 'overtime_hourly_rate', width: 18 },
-    { header: 'Overtime Pay', key: 'overtime_pay', width: 14 },
-    { header: 'Regular Earnings', key: 'regular_earnings', width: 14 },
-    { header: 'Total Earned', key: 'total_earned', width: 14 },
-    { header: 'ESI', key: 'esi', width: 12 },
-    { header: 'PF', key: 'pf', width: 12 },
-    { header: 'PT', key: 'pt', width: 10 },
-    { header: 'Total', key: 'total_deductions', width: 12 },
-    { header: 'Net Paid', key: 'net_paid', width: 14 },
+    { header: 'Incentive Paid', key: 'incentive_paid', width: 12 },
+    { header: 'Production Allowance', key: 'production_allowance', width: 16 },
+    { header: 'Inc+ Prod All', key: 'inc_plus_prod_all', width: 12 },
+    { header: 'Allowance + Production Allowance', key: 'allowance_plus_pa', width: 20 },
+    { header: 'ESI', key: 'esi', width: 10 },
+    { header: 'PF', key: 'pf', width: 10 },
+    { header: 'PT', key: 'pt', width: 8 },
+    { header: 'Total', key: 'total_deductions', width: 10 },
+    { header: 'Net Paid', key: 'net_paid', width: 12 },
   ];
 
   payload.lines.forEach((line, idx) => {
@@ -1125,6 +1274,7 @@ async function exportPayrollWorkbook(year, month) {
       absent_deduction: Number(line.absent_deduction),
       overtime_hours: Number(line.overtime_hours),
       basic: Number(line.basic),
+      esi_basic: Number(line.esi_basic),
       basic_earned: Number(line.basic_earned),
       allowance: Number(line.allowance),
       incentive_paid: Number(line.incentive_paid),
@@ -1133,7 +1283,6 @@ async function exportPayrollWorkbook(year, month) {
       allowance_plus_pa: Number(line.allowance_plus_pa),
       overtime_hourly_rate: Number(line.overtime_hourly_rate),
       overtime_pay: Number(line.overtime_pay),
-      regular_earnings: Number(line.regular_earnings),
       total_earned: Number(line.total_earned),
       esi: Number(line.esi),
       pf: Number(line.pf),

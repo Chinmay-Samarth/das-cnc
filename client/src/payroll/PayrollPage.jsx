@@ -14,51 +14,82 @@ import {
 } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 
-const ATTENDANCE_EDITABLE_KEYS = [
-  'days_worked',
-  'paid_leave',
-  'earned_leave',
-  'absent_days',
-  'unauthorized_absent_days',
-  'overtime_hours',
+const ATTENDANCE_COLUMNS = [
+  { key: 'wage_period', label: 'Wage Period', title: 'Wage period (days in month)', money: false },
+  { key: 'days_worked', label: 'Days Worked', title: 'Days worked (from attendance)', money: false },
+  { key: 'paid_leave', label: 'Paid Leave', title: 'Paid leave (from leave requests)', money: false },
+  { key: 'earned_leave', label: 'Earned Leave', title: 'Earned leave', money: false },
+  { key: 'absent_days', label: 'Absent Days', title: 'Normal unpaid absent days', money: false },
+  {
+    key: 'unauthorized_absent_days',
+    label: 'Unauthorized Absent',
+    title: 'Unauthorized absent days (1.5× in absent deduction)',
+    money: false,
+  },
+  {
+    key: 'overtime_hourly_rate',
+    label: 'Overtime Hourly Rate',
+    title: 'company basic / 170',
+    money: true,
+  },
+  {
+    key: 'overtime_hours',
+    label: 'Total Overtime (hrs)',
+    title: 'Total overtime hours for this month',
+    money: false,
+  },
 ];
 
 const SALARY_COLUMNS = [
-  { key: 'basic', label: 'Basic', title: 'Basic salary' },
+  {
+    key: 'basic',
+    label: 'Basic',
+    title: 'Company basic — editable',
+  },
   {
     key: 'absent_deduction',
     label: 'Absent Deduction',
-    title: 'basic/30 × absent + basic/30 × unauthorized × 1.5 (accounting; not re-cut from net)',
+    title: 'company basic/30 × absent + unauthorized × 1.5',
+  },
+  { key: 'overtime_pay', label: 'Overtime Pay', title: 'Overtime hours × overtime hourly rate' },
+  {
+    key: 'total_earned',
+    label: 'Total Earned',
+    title: 'company basic + OT pay − absent deduction',
+  },
+  {
+    key: 'esi_basic',
+    label: 'ESI Basic',
+    title: 'ESI submission basic — editable; leave blank until entered',
   },
   {
     key: 'basic_earned',
     label: 'Basic Earned',
-    title: 'basic / wage period × (days worked + paid leave + earned leave)',
+    title: 'esi basic / wage × (days worked + paid leave + earned leave)',
   },
-  { key: 'allowance', label: 'Allowance', title: 'Allowance' },
-  { key: 'incentive_paid', label: 'Incentive Paid', title: 'Incentive paid' },
-  { key: 'production_allowance', label: 'Production Allowance', title: 'Production allowance' },
-  { key: 'inc_plus_prod_all', label: 'Inc+ Prod All', title: 'Incentive + Production Allowance' },
-  { key: 'allowance_plus_pa', label: 'Allowance + Production Allowance', title: 'Allowance + Production Allowance' },
-  { key: 'overtime_hourly_rate', label: 'Overtime Hourly Rate', title: 'basic / 170' },
-  { key: 'overtime_pay', label: 'Overtime Pay', title: 'Overtime hours × overtime hourly rate' },
+  { key: 'allowance', label: 'Allowance', title: '15% of basic earned' },
+  { key: 'incentive_paid', label: 'Incentive Paid', title: 'Incentive paid (from payroll data)' },
   {
-    key: 'regular_earnings',
-    label: 'Regular Earnings',
-    title: 'Basic earned + allowance + incentive + production allowance',
+    key: 'production_allowance',
+    label: 'Production Allowance',
+    title: '(company basic − basic earned) + allowance',
   },
-  { key: 'total_earned', label: 'Total Earned', title: 'Regular earnings + overtime pay (gross)' },
-  { key: 'esi', label: 'ESI', title: 'ESI on gross @ 0.75%' },
-  { key: 'pf', label: 'PF', title: 'PF on basic earned + allowance (no OT)' },
+  { key: 'inc_plus_prod_all', label: 'Inc+ Prod All', title: 'Incentive + Production Allowance' },
+  {
+    key: 'allowance_plus_pa',
+    label: 'Allowance + Production Allowance',
+    title: 'Allowance + Production Allowance',
+  },
+  { key: 'esi', label: 'ESI', title: 'ESI on Total Earned @ 0.75%' },
+  { key: 'pf', label: 'PF', title: '12% of Basic Earned + Allowance (capped at ₹15,000 wage)' },
   { key: 'pt', label: 'PT', title: 'Professional tax' },
   { key: 'total_deductions', label: 'Total', title: 'ESI + PF + PT' },
   { key: 'net_paid', label: 'Net Paid', title: 'Total Earned − ESI − PF − PT' },
 ];
 
-const EDITABLE_KEYS = [
-  ...ATTENDANCE_EDITABLE_KEYS,
-  ...SALARY_COLUMNS.map((col) => col.key),
-];
+/** Only company Basic and ESI Basic can be typed in the grid. */
+const MANUAL_EDITABLE_KEYS = ['basic', 'esi_basic'];
+const EDITABLE_KEYS = MANUAL_EDITABLE_KEYS;
 
 const FORMULA_KEYS = [
   'absent_deduction',
@@ -66,9 +97,9 @@ const FORMULA_KEYS = [
   'overtime_hourly_rate',
   'overtime_pay',
   'allowance',
+  'production_allowance',
   'inc_plus_prod_all',
   'allowance_plus_pa',
-  'regular_earnings',
   'total_earned',
   'esi',
   'pf',
@@ -77,15 +108,15 @@ const FORMULA_KEYS = [
   'net_paid',
 ];
 
-const FORMULA_LABELS = {
+  const FORMULA_LABELS = {
   absent_deduction: 'Absent Deduction',
-  basic_earned: 'Basic Earned',
+  basic_earned: 'Basic Earned (ESI Basic)',
   overtime_hourly_rate: 'Overtime Hourly Rate',
   overtime_pay: 'Overtime Pay',
   allowance: 'Allowance',
+  production_allowance: 'Production Allowance',
   inc_plus_prod_all: 'Inc+ Prod All',
   allowance_plus_pa: 'Allowance + Production Allowance',
-  regular_earnings: 'Regular Earnings',
   total_earned: 'Total Earned',
   esi: 'ESI',
   pf: 'PF',
@@ -283,7 +314,11 @@ export default function PayrollPage() {
       return Number.isFinite(n) ? n : 0;
     };
     const basic = readNum('basic');
+    const esiBasic = readNum('esi_basic'); // blank/0 until manually entered — do not fall back to company basic
     const hours = readNum('overtime_hours');
+    const liveAbsentDeduction =
+      (basic / 30) * readNum('absent_days') +
+      (basic / 30) * readNum('unauthorized_absent_days') * 1.5;
     const liveRate = (() => {
       if (overrides.includes('overtime_hourly_rate')) return readNum('overtime_hourly_rate');
       const fromBasic = overtimeHourlyRateFromBasic(basic);
@@ -292,45 +327,65 @@ export default function PayrollPage() {
     const liveOtPay = overrides.includes('overtime_pay')
       ? readNum('overtime_pay')
       : hours * liveRate;
-    const liveRegular = overrides.includes('regular_earnings')
-      ? readNum('regular_earnings')
-      : readNum('basic_earned') +
-        readNum('allowance') +
-        readNum('incentive_paid') +
-        readNum('production_allowance');
+    const liveBasicEarned =
+      draft?.basic_earned !== undefined || overrides.includes('basic_earned')
+        ? readNum('basic_earned')
+        : esiBasic > 0 && readNum('wage_period') > 0
+          ? (esiBasic / readNum('wage_period')) *
+            (readNum('days_worked') + readNum('paid_leave') + readNum('earned_leave'))
+          : 0;
+    const liveAllowance =
+      draft?.allowance !== undefined || overrides.includes('allowance')
+        ? readNum('allowance')
+        : liveBasicEarned * 0.15;
+    // PA = (company basic − basic earned) + allowance
+    const livePaRaw = basic - liveBasicEarned + liveAllowance;
+    const livePa =
+      draft?.production_allowance !== undefined || overrides.includes('production_allowance')
+        ? readNum('production_allowance')
+        : livePaRaw;
+    // Total Earned = company basic + OT − leave deductions
+    const liveTotalEarned =
+      draft?.total_earned !== undefined || overrides.includes('total_earned')
+        ? readNum('total_earned')
+        : basic + liveOtPay - liveAbsentDeduction;
 
+    if (key === 'esi_basic') {
+      if (draft && draft.esi_basic !== undefined) return draft.esi_basic;
+      const v = line.esi_basic;
+      if (v == null || v === '' || Number(v) === 0) return '';
+      return v;
+    }
+
+    if (key === 'absent_deduction') {
+      return liveAbsentDeduction;
+    }
     if (key === 'overtime_hourly_rate' && !overrides.includes(key)) {
       if (liveRate > 0) return liveRate;
     }
     if (key === 'overtime_pay' && !overrides.includes(key)) {
       return liveOtPay;
     }
-    if (key === 'regular_earnings') {
-      if (
-        !draft ||
-        (!draft.basic_earned && !draft.allowance && !draft.incentive_paid && !draft.production_allowance)
-      ) {
-        const stored = Number(line.regular_earnings);
-        if (Number.isFinite(stored) && stored > 0) return stored;
-      }
-      return liveRegular;
+    if (key === 'basic_earned' && !overrides.includes(key)) {
+      return liveBasicEarned;
     }
-    if (key === 'total_earned') {
-      const regular =
-        Number(line.regular_earnings) > 0 &&
-        !(draft && (draft.basic_earned !== undefined || draft.allowance !== undefined))
-          ? readNum('regular_earnings')
-          : liveRegular;
-      return regular + liveOtPay;
+    if (key === 'allowance' && !overrides.includes(key)) {
+      return liveAllowance;
     }
-    // Always derive Net from the same Total Earned the grid shows
+    if (key === 'production_allowance' && !overrides.includes(key)) {
+      return livePa;
+    }
+    if (key === 'inc_plus_prod_all' && !overrides.includes(key)) {
+      return readNum('incentive_paid') + livePa;
+    }
+    if (key === 'allowance_plus_pa' && !overrides.includes(key)) {
+      return liveAllowance + livePa;
+    }
+    if (key === 'total_earned' && !overrides.includes(key)) {
+      return liveTotalEarned;
+    }
     if (key === 'esi' || key === 'pt' || key === 'total_deductions' || key === 'net_paid') {
-      const regular =
-        Number(line.regular_earnings) > 0 &&
-        !(draft && (draft.basic_earned !== undefined || draft.allowance !== undefined))
-          ? readNum('regular_earnings')
-          : liveRegular;
-      const gross = regular + liveOtPay;
+      const gross = liveTotalEarned;
       const esi = (gross * 0.75) / 100;
       const pf = readNum('pf');
       const pt = gross > 25000 ? 200 : 0;
@@ -365,18 +420,56 @@ export default function PayrollPage() {
     }
   }
 
-  async function saveLine(line) {
+  async function saveLine(line, extraPatch = null) {
     if (locked) return;
-    const patch = drafts[line.id];
-    if (!patch || !Object.keys(patch).length) return;
+    const patch = {
+      ...(drafts[line.id] || {}),
+      ...(extraPatch || {}),
+    };
+    if (!Object.keys(patch).length) return;
+    const body = {};
+    for (const key of EDITABLE_KEYS) {
+      if (patch[key] === undefined) continue;
+      // Allow clearing ESI Basic to blank (0); other empties stay skipped
+      if (patch[key] === '' && key !== 'esi_basic') continue;
+      const n = Number(patch[key] === '' ? 0 : patch[key]);
+      if (Number.isFinite(n)) body[key] = n;
+    }
+    if (!Object.keys(body).length) {
+      setDrafts((prev) => {
+        const next = { ...prev };
+        delete next[line.id];
+        return next;
+      });
+      return;
+    }
     setBusy(true);
     try {
-      const body = {};
-      for (const key of EDITABLE_KEYS) {
-        if (patch[key] !== undefined) body[key] = Number(patch[key]);
-      }
       const { data } = await api.patch(`/payroll/lines/${line.id}`, body);
-      setLines((prev) => prev.map((l) => (l.id === line.id ? { ...l, ...data.line } : l)));
+      const saved = data.line || {};
+      setLines((prev) =>
+        prev.map((l) =>
+          l.id === line.id
+            ? {
+                ...l,
+                ...saved,
+                // Prefer explicit saved basics so UI never flashes the old value
+                esi_basic:
+                  body.esi_basic !== undefined
+                    ? body.esi_basic
+                    : saved.esi_basic !== undefined
+                      ? saved.esi_basic
+                      : l.esi_basic,
+                basic:
+                  body.basic !== undefined
+                    ? body.basic
+                    : saved.basic !== undefined
+                      ? saved.basic
+                      : l.basic,
+              }
+            : l
+        )
+      );
       setDrafts((prev) => {
         const next = { ...prev };
         delete next[line.id];
@@ -449,13 +542,60 @@ export default function PayrollPage() {
     try {
       const { data } = await api.get('/payroll/formulas');
       setFormulaVersions(data.versions || []);
+      const defaults = data.defaults || {};
+      const currentFormulas = { ...(data.current?.formulas || {}) };
+      // Always show Basic Earned from ESI Basic in the formulas sheet
+      if (
+        !currentFormulas.basic_earned ||
+        !String(currentFormulas.basic_earned).includes('esi_basic') ||
+        !String(currentFormulas.basic_earned).includes('paid_leave') ||
+        String(currentFormulas.basic_earned).includes('overtime_pay')
+      ) {
+        currentFormulas.basic_earned =
+          defaults.basic_earned ||
+          'IF(wage_period > 0, IF(esi_basic > 0, esi_basic / wage_period * (days_worked + paid_leave + earned_leave), 0), 0)';
+      }
+      if (
+        !currentFormulas.absent_deduction ||
+        String(currentFormulas.absent_deduction).includes('basic_salary') ||
+        String(currentFormulas.absent_deduction).includes('wage_period') ||
+        !String(currentFormulas.absent_deduction).includes('unauthorized_absent_days')
+      ) {
+        currentFormulas.absent_deduction =
+          defaults.absent_deduction ||
+          'basic / 30 * absent_days + basic / 30 * unauthorized_absent_days * 1.5';
+      }
+      if (
+        !currentFormulas.overtime_hourly_rate ||
+        String(currentFormulas.overtime_hourly_rate).includes('basic_salary') ||
+        String(currentFormulas.overtime_hourly_rate).includes('8.5')
+      ) {
+        currentFormulas.overtime_hourly_rate =
+          defaults.overtime_hourly_rate || 'basic / 170';
+      }
+      if (
+        !currentFormulas.production_allowance ||
+        String(currentFormulas.production_allowance).includes('absent_deduction') ||
+        String(currentFormulas.production_allowance).includes('overtime_pay')
+      ) {
+        currentFormulas.production_allowance =
+          defaults.production_allowance || 'basic - basic_earned + allowance';
+      }
+      if (
+        !currentFormulas.total_earned ||
+        String(currentFormulas.total_earned).includes('regular_earnings') ||
+        !String(currentFormulas.total_earned).includes('absent_deduction')
+      ) {
+        currentFormulas.total_earned =
+          defaults.total_earned || 'basic + overtime_pay - absent_deduction';
+      }
       const current = {
         ...FORMULA_KEYS.reduce((acc, key) => {
           acc[key] = '';
           return acc;
         }, {}),
-        ...(data.defaults || {}),
-        ...(data.current?.formulas || {}),
+        ...defaults,
+        ...currentFormulas,
       };
       setFormulaDraft({ ...current });
       setFormulaLabel(`Version ${(data.current?.version_number || 0) + 1}`);
@@ -573,7 +713,7 @@ export default function PayrollPage() {
         <EmptyState
           icon={Banknote}
           title="No payroll lines yet"
-          description={`Generate payroll for ${monthLabel(year, month)} to pull days worked, paid leave, and salary from Basic through Net Paid.`}
+          description={`Generate payroll for ${monthLabel(year, month)}. Attendance is pulled automatically; only Basic and ESI Basic are editable.`}
         />
       ) : null}
 
@@ -600,24 +740,22 @@ export default function PayrollPage() {
             if (dragRef.current.active) endTableDrag(e);
           }}
         >
-          <table className="app-table payroll-table">
+          <table className="app-table payroll-table payroll-table-compact">
             <thead>
               <tr>
-                <th className="payroll-col-sticky payroll-col-code" title="Employee code">Code</th>
-                <th className="payroll-col-sticky payroll-col-name" title="Employee name">Name</th>
-                <th title="Wage period (days in month)">Wage Period</th>
-                <th title="Days worked">Days Worked</th>
-                <th title="Paid leave from approved leave requests">Paid Leave</th>
-                <th title="Earned leave">Earned Leave</th>
-                <th title="Normal unpaid absent days">Absent Days</th>
-                <th title="Unauthorized absent days (1.5× in absent deduction)">Unauthorized Absent</th>
-                <th title="Total overtime hours for this month only">Total Overtime (hrs)</th>
+                <th className="payroll-col-sticky payroll-col-code" title="Employee code">
+                  Code
+                </th>
+                <th className="payroll-col-sticky payroll-col-name" title="Employee name">
+                  Name
+                </th>
+                {ATTENDANCE_COLUMNS.map((col) => (
+                  <th key={col.key} title={col.title}>
+                    {col.label}
+                  </th>
+                ))}
                 {SALARY_COLUMNS.map((col) => (
-                  <th
-                    key={col.key}
-                    title={col.title}
-                    className={col.key === 'allowance_plus_pa' ? 'payroll-col-wide' : undefined}
-                  >
+                  <th key={col.key} title={col.title}>
                     {col.label}
                   </th>
                 ))}
@@ -628,13 +766,25 @@ export default function PayrollPage() {
               {lines.map((line) => {
                 const dirty = Boolean(drafts[line.id] && Object.keys(drafts[line.id]).length);
                 const overrides = overrideList(line);
-                const renderInput = (key, { money = false, net = false } = {}) => {
+                const isManual = (key) => MANUAL_EDITABLE_KEYS.includes(key);
+                const renderCell = (key, { money = false, net = false } = {}) => {
                   const overridden = overrides.includes(key);
-                  if (locked) {
-                    const text = money ? formatInr(line[key]) : formatNum(line[key]);
+                  const display = money
+                    ? formatInr(cellValue(line, key))
+                    : formatNum(cellValue(line, key));
+                  if (locked || !isManual(key)) {
                     return (
-                      <span className={net ? 'payroll-net' : undefined} title={overridden ? 'Manual override' : undefined}>
-                        {text}
+                      <span
+                        className={net ? 'payroll-net' : undefined}
+                        title={
+                          overridden && isManual(key)
+                            ? 'Manual value'
+                            : isManual(key)
+                              ? undefined
+                              : 'Calculated / from attendance'
+                        }
+                      >
+                        {display}
                       </span>
                     );
                   }
@@ -642,34 +792,68 @@ export default function PayrollPage() {
                     <input
                       type="number"
                       step="any"
-                      className={`payroll-input${money ? ' payroll-input-money' : ''}${overridden ? ' is-override' : ''}${net ? ' payroll-input-net' : ''}`}
+                      className={`payroll-input payroll-input-money${overridden ? ' is-override' : ''}`}
                       value={cellValue(line, key)}
                       disabled={busy}
                       onChange={(e) => setDraftValue(line.id, key, e.target.value)}
+                      onBlur={(e) => {
+                        const raw = e.target.value;
+                        const current = Number(line[key]);
+                        const next = raw === '' ? 0 : Number(raw);
+                        const unchanged =
+                          (raw === '' && (line[key] == null || Number(line[key]) === 0)) ||
+                          (Number.isFinite(next) && Number.isFinite(current) && next === current);
+                        const hasOtherDraft =
+                          drafts[line.id] &&
+                          Object.keys(drafts[line.id]).some((k) => k !== key);
+                        if (unchanged && !hasOtherDraft) {
+                          if (drafts[line.id]?.[key] !== undefined) {
+                            setDrafts((prev) => {
+                              const row = { ...(prev[line.id] || {}) };
+                              delete row[key];
+                              const nextDrafts = { ...prev };
+                              if (Object.keys(row).length) nextDrafts[line.id] = row;
+                              else delete nextDrafts[line.id];
+                              return nextDrafts;
+                            });
+                          }
+                          return;
+                        }
+                        void saveLine(line, { [key]: raw });
+                      }}
                       aria-label={key}
-                      title={overridden ? 'Manual override — save to keep this value' : undefined}
+                      title="Editable — Tab / click away to save"
                     />
                   );
                 };
                 return (
                   <tr key={line.id} className={dirty ? 'is-dirty' : undefined}>
-                    <td className="payroll-col-sticky payroll-col-code">{line.employee_code || '—'}</td>
-                    <td className="payroll-col-sticky payroll-col-name" title={line.employee_name || ''}>
+                    <td className="payroll-col-sticky payroll-col-code">
+                      {line.employee_code || '—'}
+                    </td>
+                    <td
+                      className="payroll-col-sticky payroll-col-name"
+                      title={line.employee_name || ''}
+                    >
                       {line.employee_name || '—'}
                     </td>
-                    <td className="payroll-num">{formatNum(line.wage_period)}</td>
-                    <td className="payroll-num">{renderInput('days_worked')}</td>
-                    <td className="payroll-num">{renderInput('paid_leave')}</td>
-                    <td className="payroll-num">{renderInput('earned_leave')}</td>
-                    <td className="payroll-num">{renderInput('absent_days')}</td>
-                    <td className="payroll-num">{renderInput('unauthorized_absent_days')}</td>
-                    <td className="payroll-num">{renderInput('overtime_hours')}</td>
+                    {ATTENDANCE_COLUMNS.map((col) => (
+                      <td
+                        key={col.key}
+                        className={col.money ? 'payroll-money' : 'payroll-num'}
+                      >
+                        {renderCell(col.key, { money: col.money })}
+                      </td>
+                    ))}
                     {SALARY_COLUMNS.map((col) => (
                       <td
                         key={col.key}
-                        className={`payroll-money${col.key === 'net_paid' ? ' payroll-net' : ''}`}
+                        className={`payroll-money${col.key === 'net_paid' ? ' payroll-net' : ''}${isManual(col.key) ? ' payroll-cell-editable' : ''}`}
                       >
-                        {renderInput(col.key, { money: true, net: col.key === 'net_paid' })}
+                        {renderCell(col.key, {
+                          money: true,
+                          net: col.key === 'net_paid',
+                        })}
                       </td>
                     ))}
                     {!locked ? (
@@ -725,12 +909,15 @@ export default function PayrollPage() {
               <div>
                 <h2 style={{ margin: 0, fontSize: 18 }}>Salary formulas</h2>
                 <p className="muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
-                  Basic Earned = basic / wage period × (days worked + paid leave + earned leave).
-                  Absent Deduction = basic/30 × absent + basic/30 × unauthorized × 1.5 (shown for
-                  accounting; not subtracted again from Net). OT rate = basic / 170. Gross (Total
-                  Earned) = regular earnings + OT. ESI on gross; PF on basic earned + allowance.
-                  Net Paid = Total Earned − ESI − PF − PT. Saving creates a new version. Locked
-                  months keep prior formulas.
+                  ESI Basic stays blank until entered. Basic Earned ={' '}
+                  <code>
+                    esi_basic / wage_period × (days_worked + paid_leave + earned_leave)
+                  </code>{' '}
+                  (no OT). Allowance = 15% of Basic Earned. Production Allowance ={' '}
+                  <code>(company basic − basic_earned) + allowance</code>. Company Basic drives
+                  absent cut and OT rate. Total Earned ={' '}
+                  <code>basic + overtime_pay − absent_deduction</code>. Net = Total Earned − ESI −
+                  PF − PT. Saving creates a new version.
                 </p>
               </div>
               <button type="button" className="mes-btn mes-btn-secondary" onClick={() => setShowFormulas(false)}>
