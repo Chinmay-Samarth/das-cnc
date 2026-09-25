@@ -17,7 +17,13 @@ import { appAlert, appConfirm } from '../components/dialog';
 const ATTENDANCE_COLUMNS = [
   { key: 'wage_period', label: 'Wage Period', title: 'Wage period (days in month)', money: false },
   { key: 'days_worked', label: 'Days Worked', title: 'Days worked (from attendance)', money: false },
-  { key: 'paid_leave', label: 'Paid Leave', title: 'Paid leave (from leave requests)', money: false },
+  {
+    key: 'paid_leave',
+    label: 'Paid Leave',
+    title:
+      'Approved paid leave_requests — counts toward Basic Earned like attendance, does not increase Days Worked',
+    money: false,
+  },
   { key: 'earned_leave', label: 'Earned Leave', title: 'Earned leave', money: false },
   { key: 'absent_days', label: 'Absent Days', title: 'Normal unpaid absent days', money: false },
   {
@@ -72,7 +78,7 @@ const SALARY_COLUMNS = [
   {
     key: 'production_allowance',
     label: 'Production Allowance',
-    title: '(company basic − basic earned) + allowance',
+    title: 'total earned − basic earned − allowance',
   },
   { key: 'inc_plus_prod_all', label: 'Inc+ Prod All', title: 'Incentive + Production Allowance' },
   {
@@ -97,10 +103,10 @@ const FORMULA_KEYS = [
   'overtime_hourly_rate',
   'overtime_pay',
   'allowance',
+  'total_earned',
   'production_allowance',
   'inc_plus_prod_all',
   'allowance_plus_pa',
-  'total_earned',
   'esi',
   'pf',
   'pt',
@@ -108,7 +114,7 @@ const FORMULA_KEYS = [
   'net_paid',
 ];
 
-  const FORMULA_LABELS = {
+const FORMULA_LABELS = {
   absent_deduction: 'Absent Deduction',
   basic_earned: 'Basic Earned (ESI Basic)',
   overtime_hourly_rate: 'Overtime Hourly Rate',
@@ -338,17 +344,17 @@ export default function PayrollPage() {
       draft?.allowance !== undefined || overrides.includes('allowance')
         ? readNum('allowance')
         : liveBasicEarned * 0.15;
-    // PA = (company basic − basic earned) + allowance
-    const livePaRaw = basic - liveBasicEarned + liveAllowance;
-    const livePa =
-      draft?.production_allowance !== undefined || overrides.includes('production_allowance')
-        ? readNum('production_allowance')
-        : livePaRaw;
     // Total Earned = company basic + OT − leave deductions
     const liveTotalEarned =
       draft?.total_earned !== undefined || overrides.includes('total_earned')
         ? readNum('total_earned')
         : basic + liveOtPay - liveAbsentDeduction;
+    // PA = Total Earned − Basic Earned − Allowance
+    const livePaRaw = liveTotalEarned - liveBasicEarned - liveAllowance;
+    const livePa =
+      draft?.production_allowance !== undefined || overrides.includes('production_allowance')
+        ? readNum('production_allowance')
+        : livePaRaw;
 
     if (key === 'esi_basic') {
       if (draft && draft.esi_basic !== undefined) return draft.esi_basic;
@@ -575,11 +581,12 @@ export default function PayrollPage() {
       }
       if (
         !currentFormulas.production_allowance ||
-        String(currentFormulas.production_allowance).includes('absent_deduction') ||
-        String(currentFormulas.production_allowance).includes('overtime_pay')
+        !String(currentFormulas.production_allowance).includes('total_earned') ||
+        !String(currentFormulas.production_allowance).includes('basic_earned') ||
+        !String(currentFormulas.production_allowance).includes('allowance')
       ) {
         currentFormulas.production_allowance =
-          defaults.production_allowance || 'basic - basic_earned + allowance';
+          defaults.production_allowance || 'total_earned - basic_earned - allowance';
       }
       if (
         !currentFormulas.total_earned ||
@@ -913,11 +920,11 @@ export default function PayrollPage() {
                   <code>
                     esi_basic / wage_period × (days_worked + paid_leave + earned_leave)
                   </code>{' '}
-                  (no OT). Allowance = 15% of Basic Earned. Production Allowance ={' '}
-                  <code>(company basic − basic_earned) + allowance</code>. Company Basic drives
-                  absent cut and OT rate. Total Earned ={' '}
-                  <code>basic + overtime_pay − absent_deduction</code>. Net = Total Earned − ESI −
-                  PF − PT. Saving creates a new version.
+                  (no OT). Allowance = 15% of Basic Earned. Total Earned ={' '}
+                  <code>basic + overtime_pay − absent_deduction</code>. Production Allowance ={' '}
+                  <code>total_earned − basic_earned − allowance</code>. Company Basic drives
+                  absent cut and OT rate. Net = Total Earned − ESI − PF − PT. Saving creates a
+                  new version.
                 </p>
               </div>
               <button type="button" className="mes-btn mes-btn-secondary" onClick={() => setShowFormulas(false)}>

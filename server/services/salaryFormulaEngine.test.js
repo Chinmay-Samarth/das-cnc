@@ -19,7 +19,7 @@ function approxEqual(actual, expected, eps = 1e-6) {
 }
 
 describe('Excel payroll formulas', () => {
-  it('ESI basic blank → Basic Earned 0; PA = company basic + 0', () => {
+  it('ESI basic blank → Basic Earned 0; PA = Total Earned − BE − allowance', () => {
     const { outputs } = computeLine(
       {
         wage_period: 30,
@@ -35,11 +35,12 @@ describe('Excel payroll formulas', () => {
       },
       DEFAULT_FORMULAS
     );
+    const otPay = 5 * (17000 / 170);
     approxEqual(outputs.basic_earned, 0);
     approxEqual(outputs.allowance, 0);
-    approxEqual(outputs.production_allowance, 17000);
-    approxEqual(outputs.overtime_pay, 5 * (17000 / 170));
-    approxEqual(outputs.total_earned, 17000 + 5 * (17000 / 170));
+    approxEqual(outputs.overtime_pay, otPay);
+    approxEqual(outputs.production_allowance, 17000 + otPay);
+    approxEqual(outputs.total_earned, 17000 + otPay);
   });
 
   it('Swathi: BE = esi/wage × (days_worked + paid_leave), no OT', () => {
@@ -63,8 +64,8 @@ describe('Excel payroll formulas', () => {
     const absent = (16000 / 30) * 3;
     const be = (16500 / 30) * (23 + 1);
     const allowance = be * 0.15;
-    const pa = 16000 - be + allowance;
     const totalEarned = 16000 + otPay - absent;
+    const pa = totalEarned - be - allowance;
 
     approxEqual(outputs.overtime_pay, otPay);
     approxEqual(outputs.absent_deduction, absent);
@@ -73,6 +74,38 @@ describe('Excel payroll formulas', () => {
     approxEqual(outputs.production_allowance, pa);
     approxEqual(outputs.total_earned, totalEarned);
     approxEqual(outputs.net_paid, totalEarned - outputs.esi - outputs.pf - outputs.pt);
+  });
+
+  it('Swathi screenshot: PA ≈ 1595 from Total Earned − BE − allowance', () => {
+    const { outputs } = computeLine(
+      {
+        wage_period: 31,
+        days_worked: 21,
+        paid_leave: 0,
+        earned_leave: 0,
+        absent_days: 10,
+        unauthorized_absent_days: 0,
+        overtime_hours: 44.1,
+        basic: 13500,
+        esi_basic: 14000,
+        incentive_paid: 0,
+      },
+      DEFAULT_FORMULAS
+    );
+
+    const otPay = 44.1 * (13500 / 170);
+    const absent = (13500 / 30) * 10;
+    const be = (14000 / 31) * 21;
+    const allowance = be * 0.15;
+    const totalEarned = 13500 + otPay - absent;
+    const pa = totalEarned - be - allowance;
+
+    approxEqual(outputs.basic_earned, be);
+    approxEqual(outputs.allowance, allowance);
+    approxEqual(outputs.absent_deduction, 4500);
+    approxEqual(outputs.total_earned, totalEarned);
+    approxEqual(outputs.production_allowance, pa);
+    assert.ok(Math.abs(pa - 1595) < 1, `expected PA ~1595, got ${pa}`);
   });
 
   it('Basic Earned excludes OT; Total Earned includes OT', () => {
@@ -93,15 +126,17 @@ describe('Excel payroll formulas', () => {
     );
 
     const otPay = 10 * (14000 / 170);
+    const absent = (14000 / 30) * 3;
     const be = (14500 / 31) * 28;
     const allowance = be * 0.15;
-    const pa = 14000 - be + allowance;
+    const totalEarned = 14000 + otPay - absent;
+    const pa = totalEarned - be - allowance;
 
     approxEqual(outputs.overtime_pay, otPay);
     approxEqual(outputs.basic_earned, be);
     approxEqual(outputs.allowance, allowance);
     approxEqual(outputs.production_allowance, pa);
-    approxEqual(outputs.total_earned, 14000 + otPay - (14000 / 30) * 3);
+    approxEqual(outputs.total_earned, totalEarned);
   });
 
   it('does not fall back esi_basic to company basic', () => {
@@ -170,6 +205,7 @@ describe('Excel payroll formulas', () => {
     assert.equal(merged.basic_earned, DEFAULT_FORMULAS.basic_earned);
     assert.ok(merged.basic_earned.includes('paid_leave'));
     assert.ok(!merged.basic_earned.includes('overtime_pay'));
+    assert.equal(merged.production_allowance, DEFAULT_FORMULAS.production_allowance);
     assert.equal(merged.total_earned, DEFAULT_FORMULAS.total_earned);
   });
 

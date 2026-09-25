@@ -102,27 +102,30 @@ function applyGrossAndNetGuarantees(row) {
   }
   row.allowance = toNumber(row.basic_earned) * 0.15;
 
-  // PA = (company basic − basic earned) + allowance
+  const otRate = overtimeHourlyRateFromBasic(row.basic);
+  row.overtime_hourly_rate = otRate;
+  row.overtime_pay = toNumber(row.overtime_hours) * otRate;
+
+  // Gross for ESI / Net = company basic + OT − leave deductions
+  row.total_earned =
+    toNumber(row.basic) + toNumber(row.overtime_pay) - toNumber(row.absent_deduction);
+
+  // PA = Total Earned − Basic Earned − Allowance
   row.production_allowance =
-    toNumber(row.basic) - toNumber(row.basic_earned) + toNumber(row.allowance);
+    toNumber(row.total_earned) -
+    toNumber(row.basic_earned) -
+    toNumber(row.allowance);
 
   row.inc_plus_prod_all =
     toNumber(row.incentive_paid) + toNumber(row.production_allowance);
   row.allowance_plus_pa =
     toNumber(row.allowance) + toNumber(row.production_allowance);
 
-  const otRate = overtimeHourlyRateFromBasic(row.basic);
-  row.overtime_hourly_rate = otRate;
-  row.overtime_pay = toNumber(row.overtime_hours) * otRate;
-
-  // Gross for ESI / Net = company basic + OT − leave deductions
   row.regular_earnings =
     toNumber(row.basic_earned) +
     toNumber(row.allowance) +
     toNumber(row.production_allowance) +
     toNumber(row.incentive_paid);
-  row.total_earned =
-    toNumber(row.basic) + toNumber(row.overtime_pay) - toNumber(row.absent_deduction);
 
   const pfBase = toNumber(row.basic_earned) + toNumber(row.allowance);
   row.pf = pfBase <= 15000 ? pfBase * 0.12 : 15000 * 0.12;
@@ -403,7 +406,9 @@ function eachDateInclusive(startYmd, endYmd) {
 }
 
 /**
- * Paid leave from approved leave_requests (pay_type=paid).
+ * Paid leave from approved leave_requests (pay_type=paid, defaulting like leave approve).
+ * Those days count as attended for Basic Earned / LOP residual, but never increase days_worked.
+ * Days already PRESENT-family are dropped from paid_leave so BE does not double-count.
  * Absent days:
  *  1) explicit ABSENT / unpaid LEAVE attendance, plus
  *  2) LOP residual when those status rows are missing:
@@ -425,7 +430,8 @@ function computeLeaveAndAbsent(
     const rangeStart = row.start_date > monthStart ? row.start_date : monthStart;
     const rangeEnd = row.end_date < monthEnd ? row.end_date : monthEnd;
     const dates = eachDateInclusive(rangeStart, rangeEnd);
-    const payType = String(row.pay_type || '').toLowerCase();
+    // Match leaveRequestEngine: anything other than explicit unpaid is paid
+    const payType = String(row.pay_type || '').toLowerCase() === 'unpaid' ? 'unpaid' : 'paid';
     const target = payType === 'paid' ? paidLeaveDates : unpaidLeaveDates;
     for (const d of dates) target.add(d);
   }
@@ -433,6 +439,12 @@ function computeLeaveAndAbsent(
   const absentAttendance = collectDatesByStatus(records, ['ABSENT']);
   const leaveAttendance = collectDatesByStatus(records, ['LEAVE']);
   const presentDates = collectDatesByStatus(records, [...PRESENT_FAMILY]);
+
+  // Paid leave supplements attendance only — never stack on a day already worked
+  for (const d of presentDates) {
+    paidLeaveDates.delete(d);
+    unpaidLeaveDates.delete(d);
+  }
 
   const absentDates = new Set();
   for (const d of absentAttendance) {
@@ -1222,80 +1234,207 @@ async function getEmployeePayroll(employeeId, year, month) {
   return { run, line: hydratePayrollLine(line), bounds };
 }
 
+/**
+ * Export payroll as .xlsx matching the current Payroll grid formulas:
+ *   OT rate = basic/170
+ *   Absent cut = basic/30 × absent (+ unauthorized × 1.5)
+ *   OT pay = hours × rate
+ *   Total Earned = basic + OT pay − absent cut
+ *   Basic Earned = esi_basic / wage × (worked + paid leave + earned leave)
+ *   Allowance = BE × 15%
+ *   PA = total_earned − basic_earned − allowance
+ *   Net = total_earned − ESI − PF − PT
+ * Calculated cells carry live Excel formulas (with cached values).
+ */
 async function exportPayrollWorkbook(year, month) {
   let payload = await getPayroll(year, month);
   if (!payload.lines.length) {
     payload = await generatePayroll(year, month);
   }
 
-  const workbook = new ExcelJS.Workbook();
-  const sheet = workbook.addWorksheet('Payroll');
-  sheet.columns = [
-    { header: 'SL.No', key: 'sl', width: 10 },
-    { header: 'Name', key: 'name', width: 24 },
-    { header: 'Employee Code', key: 'code', width: 14 },
-    { header: 'Wage Period', key: 'wage_period', width: 12 },
-    { header: 'Days Worked', key: 'days_worked', width: 12 },
-    { header: 'Paid Leave', key: 'paid_leave', width: 12 },
-    { header: 'Earned Leave', key: 'earned_leave', width: 12 },
-    { header: 'Absent Days', key: 'absent_days', width: 12 },
-    { header: 'Unauthorized Absent', key: 'unauthorized_absent_days', width: 16 },
-    { header: 'Overtime Hourly Rate', key: 'overtime_hourly_rate', width: 16 },
-    { header: 'Total Overtime (hrs)', key: 'overtime_hours', width: 14 },
-    { header: 'Basic', key: 'basic', width: 12 },
-    { header: 'Absent Deduction', key: 'absent_deduction', width: 14 },
-    { header: 'Overtime Pay', key: 'overtime_pay', width: 12 },
-    { header: 'Total Earned', key: 'total_earned', width: 12 },
-    { header: 'ESI Basic', key: 'esi_basic', width: 12 },
-    { header: 'Basic Earned', key: 'basic_earned', width: 12 },
-    { header: 'Allowance', key: 'allowance', width: 12 },
-    { header: 'Incentive Paid', key: 'incentive_paid', width: 12 },
-    { header: 'Production Allowance', key: 'production_allowance', width: 16 },
-    { header: 'Inc+ Prod All', key: 'inc_plus_prod_all', width: 12 },
-    { header: 'Allowance + Production Allowance', key: 'allowance_plus_pa', width: 20 },
-    { header: 'ESI', key: 'esi', width: 10 },
-    { header: 'PF', key: 'pf', width: 10 },
-    { header: 'PT', key: 'pt', width: 8 },
-    { header: 'Total', key: 'total_deductions', width: 10 },
-    { header: 'Net Paid', key: 'net_paid', width: 12 },
-  ];
+  const lines = (payload.lines || []).map((line) =>
+    applyGrossAndNetGuarantees({ ...line })
+  );
 
-  payload.lines.forEach((line, idx) => {
-    sheet.addRow({
-      sl: idx + 1,
-      name: line.employee_name || '',
-      code: line.employee_code || '',
-      wage_period: Number(line.wage_period),
-      days_worked: Number(line.days_worked),
-      paid_leave: Number(line.paid_leave),
-      earned_leave: Number(line.earned_leave),
-      absent_days: Number(line.absent_days),
-      unauthorized_absent_days: Number(line.unauthorized_absent_days),
-      absent_deduction: Number(line.absent_deduction),
-      overtime_hours: Number(line.overtime_hours),
-      basic: Number(line.basic),
-      esi_basic: Number(line.esi_basic),
-      basic_earned: Number(line.basic_earned),
-      allowance: Number(line.allowance),
-      incentive_paid: Number(line.incentive_paid),
-      production_allowance: Number(line.production_allowance),
-      inc_plus_prod_all: Number(line.inc_plus_prod_all),
-      allowance_plus_pa: Number(line.allowance_plus_pa),
-      overtime_hourly_rate: Number(line.overtime_hourly_rate),
-      overtime_pay: Number(line.overtime_pay),
-      total_earned: Number(line.total_earned),
-      esi: Number(line.esi),
-      pf: Number(line.pf),
-      pt: Number(line.pt),
-      total_deductions: Number(line.total_deductions),
-      net_paid: Number(line.net_paid),
-    });
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'DasCNC';
+  workbook.created = new Date();
+  const sheet = workbook.addWorksheet('Payroll', {
+    views: [{ state: 'frozen', xSplit: 3, ySplit: 1 }],
   });
+
+  // Column order matches PayrollPage ATTENDANCE_COLUMNS + SALARY_COLUMNS
+  const headers = [
+    'SL.No',
+    'Name',
+    'Employee Code',
+    'Wage Period',
+    'Days Worked',
+    'Paid Leave',
+    'Earned Leave',
+    'Absent Days',
+    'Unauthorized Absent',
+    'Overtime Hourly Rate',
+    'Total Overtime (hrs)',
+    'Basic',
+    'Absent Deduction',
+    'Overtime Pay',
+    'Total Earned',
+    'ESI Basic',
+    'Basic Earned',
+    'Allowance',
+    'Incentive Paid',
+    'Production Allowance',
+    'Inc+ Prod All',
+    'Allowance + Production Allowance',
+    'ESI',
+    'PF',
+    'PT',
+    'Total',
+    'Net Paid',
+  ];
+  sheet.addRow(headers);
+  sheet.getRow(1).font = { bold: true };
+  sheet.getRow(1).alignment = { vertical: 'middle', wrapText: true };
+
+  const widths = [
+    8, 24, 14, 12, 12, 12, 12, 12, 14, 14, 14, 12, 14, 12, 12, 12, 12, 12, 12, 16,
+    12, 18, 10, 10, 8, 10, 12,
+  ];
+  widths.forEach((w, i) => {
+    sheet.getColumn(i + 1).width = w;
+  });
+
+  lines.forEach((line, idx) => {
+    const r = idx + 2; // Excel row (row 1 = headers)
+    const row = sheet.getRow(r);
+
+    // Inputs / attendance (values)
+    row.getCell(1).value = idx + 1; // A SL.No
+    row.getCell(2).value = line.employee_name || ''; // B Name
+    row.getCell(3).value = line.employee_code || ''; // C Code
+    row.getCell(4).value = toNumber(line.wage_period); // D Wage Period
+    row.getCell(5).value = toNumber(line.days_worked); // E Days Worked
+    row.getCell(6).value = toNumber(line.paid_leave); // F Paid Leave
+    row.getCell(7).value = toNumber(line.earned_leave); // G Earned Leave
+    row.getCell(8).value = toNumber(line.absent_days); // H Absent Days
+    row.getCell(9).value = toNumber(line.unauthorized_absent_days); // I Unauth
+    row.getCell(11).value = toNumber(line.overtime_hours); // K OT hours
+    row.getCell(12).value = toNumber(line.basic); // L Basic
+    row.getCell(16).value = toNumber(line.esi_basic, 0); // P ESI Basic
+    row.getCell(19).value = toNumber(line.incentive_paid); // S Incentive
+
+    // Formulas (current methodology) — result cached for offline openers
+    // J Overtime Hourly Rate = basic / 170
+    row.getCell(10).value = { formula: `IF(L${r}>0,L${r}/170,0)`, result: toNumber(line.overtime_hourly_rate) };
+    // M Absent Deduction = basic/30*absent + basic/30*unauth*1.5
+    row.getCell(13).value = {
+      formula: `L${r}/30*H${r}+L${r}/30*I${r}*1.5`,
+      result: toNumber(line.absent_deduction),
+    };
+    // N Overtime Pay = hours × rate
+    row.getCell(14).value = {
+      formula: `K${r}*J${r}`,
+      result: toNumber(line.overtime_pay),
+    };
+    // O Total Earned = basic + OT − absent
+    row.getCell(15).value = {
+      formula: `L${r}+N${r}-M${r}`,
+      result: toNumber(line.total_earned),
+    };
+    // Q Basic Earned = esi_basic / wage × (worked + paid + earned)
+    row.getCell(17).value = {
+      formula: `IF(AND(D${r}>0,P${r}>0),P${r}/D${r}*(E${r}+F${r}+G${r}),0)`,
+      result: toNumber(line.basic_earned),
+    };
+    // R Allowance = BE * 15%
+    row.getCell(18).value = {
+      formula: `Q${r}*0.15`,
+      result: toNumber(line.allowance),
+    };
+    // T Production Allowance = total_earned − basic_earned − allowance
+    row.getCell(20).value = {
+      formula: `O${r}-Q${r}-R${r}`,
+      result: toNumber(line.production_allowance),
+    };
+    // U Inc+ Prod All
+    row.getCell(21).value = {
+      formula: `S${r}+T${r}`,
+      result: toNumber(line.inc_plus_prod_all),
+    };
+    // V Allowance + Production Allowance
+    row.getCell(22).value = {
+      formula: `R${r}+T${r}`,
+      result: toNumber(line.allowance_plus_pa),
+    };
+    // W ESI = total_earned * 0.75%
+    row.getCell(23).value = {
+      formula: `O${r}*0.75/100`,
+      result: toNumber(line.esi),
+    };
+    // X PF (capped)
+    row.getCell(24).value = {
+      formula: `IF((Q${r}+R${r})<=15000,(Q${r}+R${r})*0.12,15000*0.12)`,
+      result: toNumber(line.pf),
+    };
+    // Y PT
+    row.getCell(25).value = {
+      formula: `IF(O${r}>25000,200,0)`,
+      result: toNumber(line.pt),
+    };
+    // Z Total deductions
+    row.getCell(26).value = {
+      formula: `W${r}+X${r}+Y${r}`,
+      result: toNumber(line.total_deductions),
+    };
+    // AA Net Paid
+    row.getCell(27).value = {
+      formula: `O${r}-W${r}-X${r}-Y${r}`,
+      result: toNumber(line.net_paid),
+    };
+
+    for (let c = 1; c <= 27; c += 1) {
+      const cell = row.getCell(c);
+      if (c >= 10 && c !== 11) {
+        cell.numFmt = '#,##0.00';
+      } else if ([4, 5, 6, 7, 8, 9, 11].includes(c)) {
+        cell.numFmt = '0.##';
+      }
+    }
+  });
+
+  // Second sheet: formula legend matching the Formulas panel
+  const legend = workbook.addWorksheet('Formulas');
+  legend.columns = [
+    { header: 'Field', key: 'field', width: 28 },
+    { header: 'Excel formula (per row)', key: 'formula', width: 72 },
+  ];
+  legend.getRow(1).font = { bold: true };
+  const legendRows = [
+    ['Overtime Hourly Rate', 'Basic / 170'],
+    ['Absent Deduction', 'Basic/30 × Absent Days + Basic/30 × Unauthorized Absent × 1.5'],
+    ['Overtime Pay', 'Total Overtime (hrs) × Overtime Hourly Rate'],
+    ['Total Earned', 'Basic + Overtime Pay − Absent Deduction'],
+    ['Basic Earned', 'ESI Basic / Wage Period × (Days Worked + Paid Leave + Earned Leave)'],
+    ['Allowance', 'Basic Earned × 15%'],
+    ['Production Allowance', 'Total Earned − Basic Earned − Allowance'],
+    ['Inc+ Prod All', 'Incentive Paid + Production Allowance'],
+    ['Allowance + Production Allowance', 'Allowance + Production Allowance'],
+    ['ESI', 'Total Earned × 0.75%'],
+    ['PF', '12% of (Basic Earned + Allowance), capped at ₹15,000 wage base'],
+    ['PT', '200 if Total Earned > 25000, else 0'],
+    ['Total', 'ESI + PF + PT'],
+    ['Net Paid', 'Total Earned − ESI − PF − PT'],
+  ];
+  for (const [field, formula] of legendRows) {
+    legend.addRow({ field, formula });
+  }
 
   const buffer = await workbook.xlsx.writeBuffer();
   const filename = `payroll-${payload.bounds.year}-${String(payload.bounds.month).padStart(2, '0')}.xlsx`;
-  return { buffer, filename, payload };
+  return { buffer, filename, payload: { ...payload, lines } };
 }
+
 
 module.exports = {
   INPUT_KEYS,
@@ -1315,4 +1454,7 @@ module.exports = {
   createFormulaVersion,
   getLatestFormulaVersion,
   monthBounds,
+  // Exported for unit tests
+  computeLeaveAndAbsent,
+  countDaysWorked,
 };

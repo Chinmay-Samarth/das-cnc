@@ -8,10 +8,10 @@
  *
  * - Basic Earned = esi_basic / wage_period × (days_worked + paid_leave + earned_leave) (no OT)
  * - Allowance = 15% of Basic Earned
- * - Production Allowance = (company basic − Basic Earned) + Allowance
- * - Absent Deduction = company basic/30 × absent (+ unauthorized × 1.5) — accounting only
- * - OT Hourly Rate = company basic / 170
  * - Total Earned = company basic + overtime_pay − absent_deduction (leave cut)
+ * - Production Allowance = total_earned − basic_earned − allowance
+ * - Absent Deduction = company basic/30 × absent (+ unauthorized × 1.5) — leave deductions
+ * - OT Hourly Rate = company basic / 170
  * - ESI on total_earned @ 0.75%; PF on basic_earned+allowance (capped); PT on total_earned
  * - Net Paid = total_earned − ESI − PF − PT
  */
@@ -35,11 +35,11 @@ const OUTPUT_KEYS = [
   'overtime_pay',
   'basic_earned',
   'allowance',
+  'total_earned',
   'production_allowance',
   'inc_plus_prod_all',
   'allowance_plus_pa',
   'regular_earnings',
-  'total_earned',
   'esi',
   'pf',
   'pt',
@@ -59,14 +59,14 @@ const DEFAULT_FORMULAS = {
   basic_earned:
     'IF(wage_period > 0, IF(esi_basic > 0, esi_basic / wage_period * (days_worked + paid_leave + earned_leave), 0), 0)',
   allowance: 'basic_earned * 0.15',
-  // PA = (company basic − basic earned) + allowance
-  production_allowance: 'basic - basic_earned + allowance',
+  // Company basic + OT − leave (absent) deductions — not ESI basic
+  total_earned: 'basic + overtime_pay - absent_deduction',
+  // PA = Total Earned − Basic Earned − Allowance
+  production_allowance: 'total_earned - basic_earned - allowance',
   inc_plus_prod_all: 'incentive_paid + production_allowance',
   allowance_plus_pa: 'allowance + production_allowance',
   regular_earnings:
     'basic_earned + allowance + production_allowance + incentive_paid',
-  // Company basic + OT − leave (absent) deductions — not ESI basic
-  total_earned: 'basic + overtime_pay - absent_deduction',
   esi: 'total_earned * 0.75 / 100',
   pf: 'IF((basic_earned + allowance) <= 15000, (basic_earned + allowance) * 0.12, 15000 * 0.12)',
   pt: 'IF(total_earned > 25000, 200, 0)',
@@ -339,8 +339,7 @@ function normalizeFormulas(formulas) {
   if (
     !storedPa ||
     storedPa === '0' ||
-    storedPa.includes('absent_deduction') ||
-    storedPa.includes('overtime_pay') ||
+    !storedPa.includes('total_earned') ||
     !storedPa.includes('basic_earned') ||
     !storedPa.includes('allowance')
   ) {
