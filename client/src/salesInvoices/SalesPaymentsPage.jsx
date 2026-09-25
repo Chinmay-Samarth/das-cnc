@@ -7,6 +7,7 @@ import { appAlert } from '../components/dialog';
 import { formatDisplayDate } from '../utils/dateFormat';
 import { formatInr } from './downloadSalesInvoicePdf';
 import { openSalesPaymentDialog } from './salesPaymentDialog';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
 
 export default function SalesPaymentsPage() {
   const navigate = useNavigate();
@@ -208,32 +209,20 @@ export default function SalesPaymentsPage() {
         }
       />
 
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 12,
-          alignItems: 'flex-end',
-          marginBottom: 16,
-        }}
-      >
-        <label style={{ minWidth: 240 }}>
+      <div className="mes-filters" style={{ marginBottom: 16 }}>
+        <label className="prod-filter-wc">
           Customer
-          <select
+          <FormSearchSelect
             value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
-            style={{ display: 'block', width: '100%', marginTop: 4 }}
-          >
-            <option value="">All customers</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => setCustomerId(value || '')}
+            options={customers.map((c) => ({ value: c.id, label: c.name }))}
+            placeholder="All customers"
+            searchable={customers.length > 6}
+            emptyMessage="No customers"
+          />
         </label>
         {selectedInvoices.length ? (
-          <p className="muted" style={{ margin: 0 }}>
+          <p className="muted" style={{ margin: 0, alignSelf: 'center' }}>
             Selected total: <strong>₹{formatInr(selectedTotal)}</strong>
           </p>
         ) : null}

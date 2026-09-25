@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { FileText, Plus, RefreshCw, Settings, Banknote } from 'lucide-react';
 import api from '../api/client';
-import { PageHeader, EmptyState, StatusBadge } from '../components/mes';
+import { PageHeader, EmptyState, StatusBadge, AlertBanner } from '../components/mes';
 import { formatDisplayDate } from '../utils/dateFormat';
 import { formatInr } from './downloadSalesInvoicePdf';
 import { openSalesPaymentDialog } from './salesPaymentDialog';
 import { appAlert } from '../components/dialog';
+import { sortBy } from '../utils/listHelpers';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
 
-const TABS = [
-  { id: 'due', label: 'Due' },
-  { id: 'paid', label: 'Paid' },
-  { id: 'cancelled', label: 'Cancelled' },
+const STATUS_OPTIONS = [
+  { value: 'due', label: 'Due' },
+  { value: 'paid', label: 'Paid' },
+  { value: 'cancelled', label: 'Cancelled' },
+  { value: 'tally_unsynced', label: 'Not Tally synced' },
 ];
+
+const STATUS_VALUES = new Set(STATUS_OPTIONS.map((o) => o.value));
 
 function statusTone(status) {
   if (status === 'paid') return 'completed';
@@ -21,28 +26,55 @@ function statusTone(status) {
   return 'pending';
 }
 
+function statusLabel(status) {
+  return String(status || '—').replace(/_/g, ' ').toUpperCase();
+}
+
 export default function SalesInvoicesPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = TABS.some((t) => t.id === searchParams.get('tab'))
+  const statusFilter = STATUS_VALUES.has(searchParams.get('tab'))
     ? searchParams.get('tab')
-    : 'due';
+    : '';
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [tallyEnabled, setTallyEnabled] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [search, setSearch] = useState('');
+  const [sortKey, setSortKey] = useState('invoice_date');
+  const [sortAsc, setSortAsc] = useState(false);
+
+  function setStatusFilter(value) {
+    if (!value) {
+      setSearchParams({});
+      return;
+    }
+    setSearchParams({ tab: value });
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      const statusParam =
+        !statusFilter || statusFilter === 'tally_unsynced' ? undefined : statusFilter;
       const [invRes, tallyRes] = await Promise.all([
-        api.get('/sales-invoices', { params: { status: tab } }),
+        api.get('/sales-invoices', {
+          params: statusParam
+            ? { status: statusParam }
+            : { status: 'due,paid,cancelled' },
+        }),
         api.get('/sales-invoices/tally/status'),
       ]);
-      setRows(invRes.data.sales_invoices || []);
+      let list = invRes.data.sales_invoices || [];
+      if (statusFilter === 'tally_unsynced') {
+        list = list.filter(
+          (inv) => inv.status !== 'cancelled' && inv.tally_sync_status !== 'synced'
+        );
+      }
+      setRows(list);
       setTallyEnabled(Boolean(tallyRes.data?.tally_enabled));
     } catch (err) {
       setError(err.response?.data?.error || 'Unable to load sales invoices');
@@ -50,23 +82,57 @@ export default function SalesInvoicesPage() {
     } finally {
       setLoading(false);
     }
-  }, [tab]);
+  }, [statusFilter]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  const filteredRows = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const matches = rows.filter((inv) => {
+      if (!query) return true;
+      return [
+        inv.customer_name,
+        inv.invoice_number,
+        inv.invoice_date,
+        inv.due_date,
+        inv.status,
+        inv.tally_sync_status,
+        inv.total_amount,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(query);
+    });
+
+    return sortBy(matches, sortKey, sortAsc, (row) => {
+      if (sortKey === 'customer_name') return row.customer_name || '';
+      if (sortKey === 'total_amount') return Number(row.total_amount) || 0;
+      return row[sortKey] ?? '';
+    });
+  }, [rows, search, sortKey, sortAsc]);
+
+  function handleSort(key) {
+    if (sortKey === key) setSortAsc((v) => !v);
+    else {
+      setSortKey(key);
+      setSortAsc(true);
+    }
+  }
+
+  const sortMark = (key) => (sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : '');
 
   async function handleBulkPay() {
     setPaying(true);
     try {
       const due = rows.filter((r) => r.status === 'due');
       if (!due.length) {
-        await appAlert('No due invoices on this tab to pay');
+        await appAlert('No due invoices to pay');
         return;
       }
-      // Prefer opening the shared dialog when all due rows share one customer
       const customerIds = [...new Set(due.map((r) => r.customer_id).filter(Boolean))];
-      if (customerIds.length === 1 && tab === 'due') {
+      if (customerIds.length === 1 && (!statusFilter || statusFilter === 'due')) {
         let ledgerName = '';
         let customerName = due[0].customer_name;
         try {
@@ -128,18 +194,26 @@ export default function SalesInvoicesPage() {
     }
   }
 
+  function openInvoice(inv) {
+    navigate(`/sales-invoices/${inv.id}`);
+  }
+
   const subtitle = useMemo(() => {
-    if (tab === 'due') return 'Issued invoices awaiting payment';
-    if (tab === 'paid') return 'Fully paid invoices with payment trail';
-    return 'Cancelled invoices kept for GST numbering integrity';
-  }, [tab]);
+    if (statusFilter === 'due') return 'Issued invoices awaiting payment';
+    if (statusFilter === 'paid') return 'Fully paid invoices with payment trail';
+    if (statusFilter === 'tally_unsynced') return 'Due and paid invoices not yet synced to Tally';
+    if (statusFilter === 'cancelled') {
+      return 'Cancelled invoices kept for GST numbering integrity';
+    }
+    return 'All sales invoices';
+  }, [statusFilter]);
 
   return (
     <main className="mes-shell">
       <PageHeader
         eyebrow="Accounts receivable"
         title="Sales Invoices"
-        subtitle={subtitle}
+        subtitle={`${subtitle} · ${filteredRows.length} invoice${filteredRows.length === 1 ? '' : 's'}`}
         actions={
           <>
             <button
@@ -180,92 +254,144 @@ export default function SalesInvoicesPage() {
         }
       />
 
-      <div className="mes-view-toggle" style={{ marginBottom: 16 }}>
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            className={`mes-view-toggle-btn${tab === t.id ? ' is-active' : ''}`}
-            onClick={() => setSearchParams({ tab: t.id })}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="mes-filters">
+        <label style={{ flex: 1, minWidth: 220 }}>
+          Search
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Customer, invoice #…"
+            aria-label="Search sales invoices"
+          />
+        </label>
+        <label>
+          Status
+          <FormSearchSelect
+            value={statusFilter}
+            onChange={(value) => setStatusFilter(value || '')}
+            options={STATUS_OPTIONS}
+            placeholder="All statuses"
+            emptyMessage="No statuses"
+          />
+        </label>
       </div>
 
-      {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading…</p> : null}
+      {error ? <AlertBanner title="Unable to load invoices">{error}</AlertBanner> : null}
+      {loading ? <p className="muted">Loading invoices…</p> : null}
 
-      {!loading && !rows.length ? (
+      {!loading && !filteredRows.length ? (
         <EmptyState
           icon={FileText}
-          title={`No ${tab} invoices`}
-          description="Create a sales invoice from Ready for Dispatch before shipping a lot."
-          actionLabel="Open dispatch queue"
-          onAction={() => navigate('/production/dispatch')}
+          title={
+            search.trim() || statusFilter ? 'No matching invoices' : 'No sales invoices'
+          }
+          description={
+            search.trim() || statusFilter
+              ? 'Try a different search or status filter.'
+              : 'Create a sales invoice from Ready for Dispatch before shipping a lot.'
+          }
+          actionLabel={
+            search.trim() || statusFilter === 'tally_unsynced'
+              ? undefined
+              : 'Open dispatch queue'
+          }
+          onAction={
+            search.trim() || statusFilter === 'tally_unsynced'
+              ? undefined
+              : () => navigate('/production/dispatch')
+          }
         />
       ) : null}
 
-      {!loading && rows.length ? (
-        <div className="mes-task-queue">
-          {rows.map((inv) => (
-            <article
-              key={inv.id}
-              className="mes-task-card"
-              style={{ cursor: 'pointer' }}
-              onClick={() => navigate(`/sales-invoices/${inv.id}`)}
-            >
-              <div className="mes-task-top">
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <p className="mes-task-id">
-                    <FileText size={15} />
-                    <span>{inv.invoice_number || 'Draft'}</span>
-                  </p>
-                  <h2 style={{ margin: '0 0 4px', fontSize: '1.05rem' }}>
-                    {inv.customer_name || 'Customer'}
-                  </h2>
-                  <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-                    ₹{formatInr(inv.total_amount)}
-                    {inv.due_date ? ` · Due ${formatDisplayDate(inv.due_date)}` : ''}
-                    {inv.printed_at ? ' · Printed' : ''}
-                    {inv.packing_slip_printed_at ? ' · Packing slip' : ''}
-                    {inv.dispatched_at ? ' · Dispatched' : ''}
-                    {inv.tally_sync_status ? ` · Sales ${inv.tally_sync_status}` : ''}
-                    {inv.tally_receipt_sync_status
-                      ? ` · Receipt ${inv.tally_receipt_sync_status}`
-                      : ''}
-                    {inv.payment_transaction_id
-                      ? ` · Txn ${inv.payment_transaction_id}`
-                      : ''}
-                  </p>
-                </div>
-                <StatusBadge status={statusTone(inv.status)}>
-                  {String(inv.status || '').toUpperCase()}
-                </StatusBadge>
-              </div>
-              <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <Link
-                  to={`/sales-invoices/${inv.id}`}
-                  className="mes-btn mes-btn-secondary"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  Open
-                </Link>
-                {inv.status === 'due' ? (
-                  <button
-                    type="button"
-                    className="mes-btn mes-btn-primary"
-                    disabled={paying}
-                    onClick={(e) => handlePayInvoice(inv, e)}
+      {!loading && filteredRows.length ? (
+        <section className="mes-card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div className="app-table-wrap">
+            <table className="app-table">
+              <thead>
+                <tr>
+                  <th onClick={() => handleSort('customer_name')} style={{ cursor: 'pointer' }}>
+                    Customer
+                    <span className="sort-indicator">{sortMark('customer_name')}</span>
+                  </th>
+                  <th onClick={() => handleSort('invoice_number')} style={{ cursor: 'pointer' }}>
+                    Invoice #
+                    <span className="sort-indicator">{sortMark('invoice_number')}</span>
+                  </th>
+                  <th onClick={() => handleSort('invoice_date')} style={{ cursor: 'pointer' }}>
+                    Date
+                    <span className="sort-indicator">{sortMark('invoice_date')}</span>
+                  </th>
+                  <th onClick={() => handleSort('total_amount')} style={{ cursor: 'pointer' }}>
+                    Total
+                    <span className="sort-indicator">{sortMark('total_amount')}</span>
+                  </th>
+                  <th onClick={() => handleSort('due_date')} style={{ cursor: 'pointer' }}>
+                    Due date
+                    <span className="sort-indicator">{sortMark('due_date')}</span>
+                  </th>
+                  <th onClick={() => handleSort('status')} style={{ cursor: 'pointer' }}>
+                    Status
+                    <span className="sort-indicator">{sortMark('status')}</span>
+                  </th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRows.map((inv) => (
+                  <tr
+                    key={inv.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openInvoice(inv)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        openInvoice(inv);
+                      }
+                    }}
+                    style={{ cursor: 'pointer' }}
                   >
-                    <Banknote size={14} />
-                    Pay
-                  </button>
-                ) : null}
-              </div>
-            </article>
-          ))}
-        </div>
+                    <td>{inv.customer_name || '—'}</td>
+                    <td>{inv.invoice_number || 'Draft'}</td>
+                    <td>{formatDisplayDate(inv.invoice_date || inv.created_at)}</td>
+                    <td>₹{formatInr(inv.total_amount)}</td>
+                    <td>{formatDisplayDate(inv.due_date)}</td>
+                    <td>
+                      <div className="invoice-status-stack">
+                        <StatusBadge status={statusTone(inv.status)}>
+                          {statusLabel(inv.status)}
+                        </StatusBadge>
+                        {inv.tally_sync_status !== 'synced' && inv.status !== 'cancelled' ? (
+                          <StatusBadge status="on_hold">
+                            TALLY {String(inv.tally_sync_status || 'pending').toUpperCase()}
+                          </StatusBadge>
+                        ) : inv.tally_sync_status === 'synced' ? (
+                          <StatusBadge status="completed">TALLY SYNCED</StatusBadge>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td>
+                      {inv.status === 'due' ? (
+                        <button
+                          type="button"
+                          className="mes-btn mes-btn-primary"
+                          disabled={paying}
+                          onClick={(e) => handlePayInvoice(inv, e)}
+                        >
+                          <Banknote size={14} />
+                          Pay
+                        </button>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       ) : null}
     </main>
   );

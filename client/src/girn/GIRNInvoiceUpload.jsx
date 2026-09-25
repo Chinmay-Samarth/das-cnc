@@ -56,7 +56,7 @@ export default function GIRNInvoiceUpload({ disabled = false, reviewReturnPath =
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <button
         type="button"
-        className="neutral-button"
+        className="mes-btn"
         disabled={disabled || busy}
         onClick={() => inputRef.current?.click()}
       >
@@ -64,7 +64,7 @@ export default function GIRNInvoiceUpload({ disabled = false, reviewReturnPath =
       </button>
       {fileName && busy ? <p className="muted">{fileName}</p> : null}
       <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-        Upload runs in the background. You can leave this page — a status bar will keep you updated.
+        Upload runs in the background. You can leave this page, a status bar will keep you updated.
       </p>
 
       <input

@@ -171,7 +171,7 @@ export default function OutsourcingPage() {
       <PageHeader
         eyebrow="Shop floor"
         title="Outsourcing"
-        subtitle="Stage to the AF minimum, send the tied batch, then file a GIRN with the supplier invoice to receive."
+        subtitle={null}
         actions={
           <>
             <button

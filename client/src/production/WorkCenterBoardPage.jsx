@@ -697,11 +697,11 @@ export default function WorkCenterBoardPage() {
     canPinActingRole && !!contextBoard?.can_pin_acting && !!contextBoard?.manager_unavailable;
 
   return (
-    <main className="mes-shell">
+    <main className="mes-shell app-shell">
       <PageHeader
         eyebrow="Shop floor"
         title="WC Board"
-        subtitle={`Station view for ${formatDueLabel(date)}. Right-click a job to reassign when the WC manager is absent.`}
+        subtitle={null}
         actions={
           <>
             <button

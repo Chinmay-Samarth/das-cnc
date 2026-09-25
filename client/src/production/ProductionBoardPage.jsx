@@ -150,13 +150,29 @@ export default function ProductionBoardPage() {
             onChange={(e) => handleFilterChange('from', e.target.value)}
           />
         </label>
-        <label>
+        <label className="mes-filter-to-with-today">
           To
-          <input
-            type="date"
-            value={filters.to}
-            onChange={(e) => handleFilterChange('to', e.target.value)}
-          />
+          <span className="mes-filter-date-row">
+            <input
+              type="date"
+              value={filters.to}
+              onChange={(e) => handleFilterChange('to', e.target.value)}
+            />
+            <button
+              type="button"
+              className="mes-btn mes-btn-primary"
+              onClick={() => {
+                const today = todayStr();
+                setFilters((prev) => ({
+                  ...prev,
+                  from: today,
+                  to: prev.to && prev.to < today ? today : prev.to,
+                }));
+              }}
+            >
+              Today
+            </button>
+          </span>
         </label>
         <label className="prod-filter-wc">
           Work center

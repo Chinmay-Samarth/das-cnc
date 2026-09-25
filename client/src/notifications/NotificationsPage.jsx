@@ -51,6 +51,9 @@ const TYPE_META = {
   girn_ready_for_approval: { icon: ClipboardCheck, label: 'GIRN approval', category: 'inventory' },
   girn_approved: { icon: ClipboardCheck, label: 'GIRN approved', category: 'inventory' },
   invoice_overdue: { icon: FileText, label: 'Invoice overdue', category: 'finance' },
+  purchase_invoice_overdue: { icon: FileText, label: 'Purchase overdue', category: 'finance' },
+  purchase_invoice_tally_unsynced: { icon: FileText, label: 'Purchase Tally sync', category: 'finance' },
+  sales_invoice_tally_unsynced: { icon: FileText, label: 'Sales Tally sync', category: 'finance' },
   op1_schedule_delay: { icon: Timer, label: 'Op1 delay', category: 'production' },
   outsource_lead_delay: { icon: Truck, label: 'Outsource delay', category: 'production' },
   horizon_wave_renewed: { icon: Waves, label: 'Wave renew', category: 'production' },
@@ -231,8 +234,15 @@ export default function NotificationsPage() {
       } else if (n.category === 'inventory') {
         navigate('/delivery-schedules');
       } else if (n.category === 'finance' || n.type === 'invoice_overdue') {
-        const invId = n.payload?.sales_invoice_id;
-        navigate(invId ? `/sales-invoices/${invId}` : '/sales-invoices?tab=due');
+        if (n.payload?.path) {
+          navigate(n.payload.path);
+        } else if (n.type === 'purchase_invoice_overdue' || n.type === 'purchase_invoice_tally_unsynced') {
+          const invId = n.payload?.invoice_id;
+          navigate(invId ? `/invoices/${invId}` : '/invoices');
+        } else {
+          const invId = n.payload?.sales_invoice_id;
+          navigate(invId ? `/sales-invoices/${invId}` : '/sales-invoices?tab=due');
+        }
       } else if (n.category === 'production') {
         navigate('/production/horizon-planner');
       } else {

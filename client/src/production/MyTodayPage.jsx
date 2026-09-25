@@ -16,6 +16,7 @@ import { useSocket } from '../socket/socketContext';
 import { PageHeader, EmptyState, StatusBadge, TruncatedText } from '../components/mes';
 import { appAlert } from '../components/dialog';
 import { formatDisplayDate } from '../utils/dateFormat';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
 
 const DONE_CHIP_LIMIT = 8;
 const PLANT_TZ = 'Asia/Kolkata';
@@ -1104,18 +1105,21 @@ function ManagerMyToday({ floorOnly, navigate }) {
       />
 
       <div className="mes-filters" style={{ marginBottom: 16 }}>
-        <label>
+        <label className="prod-filter-wc">
           Work center
-          <select value={selectedWc} onChange={(e) => handleWcChange(e.target.value)}>
-            <option value="">Select work center…</option>
-            {managedWcs.map((wc) => (
-              <option key={wc.id} value={wc.id}>
-                {wc.code ? `${wc.code} — ` : ''}
-                {wc.name}
-                {wc.is_acting ? ' (acting)' : ''}
-              </option>
-            ))}
-          </select>
+          <FormSearchSelect
+            value={selectedWc}
+            onChange={(value) => handleWcChange(value || '')}
+            options={managedWcs.map((wc) => ({
+              value: wc.id,
+              label: `${wc.code ? `${wc.code} — ` : ''}${wc.name}${
+                wc.is_acting ? ' (acting)' : ''
+              }`,
+            }))}
+            placeholder="Select work center…"
+            searchable={managedWcs.length > 6}
+            emptyMessage="No work centers"
+          />
         </label>
       </div>
 

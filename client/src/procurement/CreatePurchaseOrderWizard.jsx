@@ -519,8 +519,9 @@ export default function CreatePurchaseOrderWizard() {
             </p>
 
             <div className="bpo-grid-2">
-              <label>
+              <div>
                 Supplier <span className="req">*</span>
+                
                 <select
                   value={supplierId}
                   onChange={(e) => {
@@ -556,16 +557,17 @@ export default function CreatePurchaseOrderWizard() {
                     on the raw material master for every selected item.
                   </span>
                 ) : null}
-              </label>
-              <label>
+              </div>
+              <div>
                 Expected delivery
                 <input
                   type="date"
                   value={expectedDelivery}
                   onChange={(e) => setExpectedDelivery(e.target.value)}
                   disabled={busy}
+                  className='date-bar'
                 />
-              </label>
+              </div>
             </div>
 
             <label>

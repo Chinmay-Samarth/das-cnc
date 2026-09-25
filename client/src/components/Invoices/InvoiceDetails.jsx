@@ -547,6 +547,30 @@ export default function InvoiceDetails() {
         </div>
 
         <div style={styles.headerActions}>
+          {invoice.status !== 'needs_review' &&
+          invoice.review_status !== 'needs_review' &&
+          invoice.status !== 'cancelled' &&
+          invoice.review_status !== 'superseded' &&
+          !invoice.has_girn ? (
+            <button
+              type="button"
+              style={styles.approveBtn}
+              onClick={() =>
+                navigate(`/girn/create?invoice_id=${encodeURIComponent(invoice.id)}&reviewed=1`)
+              }
+            >
+              Register GIRN
+            </button>
+          ) : null}
+          {invoice.girn_id ? (
+            <button
+              type="button"
+              style={styles.downloadBtn}
+              onClick={() => navigate(`/girn/${invoice.girn_id}`)}
+            >
+              Open GIRN{invoice.girn_number ? ` ${invoice.girn_number}` : ''}
+            </button>
+          ) : null}
           {canPay ? (
             <button
               type="button"

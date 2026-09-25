@@ -1288,7 +1288,7 @@ export default function EmployeeDetailsPage() {
                   </label>
                   <label htmlFor="password" className="form-span-2">
                     Password
-                    <input id="password" type="password" name="password" value={formData.password} onChange={handleChange} placeholder="Leave blank to keep current password" disabled={submitting} />
+                    <input id="password" type="password" name="password" value={formData.password} onChange={handleChange} placeholder="Leave blank to keep · set welcome*1* to reset" disabled={submitting} />
                   </label>
 
                   <p className="form-page-section-title form-span-2">Documents</p>

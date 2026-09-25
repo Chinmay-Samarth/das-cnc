@@ -57,7 +57,6 @@ import SalesPaymentsPage from './salesInvoices/SalesPaymentsPage';
 import PurchasePaymentsPage from './invoices/PurchasePaymentsPage';
 import CompanySettingsPage from './salesInvoices/CompanySettingsPage';
 import AccountSettingsPage from './auth/AccountSettingsPage';
-import ForcePasswordChangeGate from './auth/ForcePasswordChangeGate';
 import NotFoundPage from './pages/NotFoundPage';
 import PurchaseOrderDetailPage from './procurement/PurchaseOrderDetailPage';
 import CreatePurchaseOrderWizard from './procurement/CreatePurchaseOrderWizard';
@@ -77,6 +76,7 @@ function MesLoading() {
 
 function RequireAuth() {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return <MesLoading />;
@@ -86,8 +86,12 @@ function RequireAuth() {
     return <Navigate to="/auth/login" replace />;
   }
 
-  if (user.must_change_password) {
-    return <ForcePasswordChangeGate />;
+  // Default welcome password still in use → Account Settings (change password).
+  if (
+    user.must_change_password &&
+    !location.pathname.startsWith('/account/settings')
+  ) {
+    return <Navigate to="/account/settings" replace />;
   }
 
   return <Outlet />;
@@ -146,6 +150,9 @@ function PublicOnly() {
   }
 
   if (user) {
+    if (user.must_change_password) {
+      return <Navigate to="/account/settings" replace />;
+    }
     return <Navigate to={defaultHomePath()} replace />;
   }
 

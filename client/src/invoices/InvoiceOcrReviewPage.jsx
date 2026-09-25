@@ -365,28 +365,20 @@ export default function InvoiceOcrReviewPage() {
           ...line,
           scanned_description: line.scanned_description || line.description || '',
         })),
-        include_girn_draft: context === 'girn',
       };
 
       const { data } = await api.post(`/invoices/${id}/confirm-review`, payload);
       if (queueJob) dismissJob(queueJob.id);
 
-      if (context === 'girn') {
-        const params = new URLSearchParams(returnTo ? returnTo.split('?')[1] || '' : searchParams.toString());
-        params.set('invoice_id', id);
-        params.set('reviewed', '1');
-        navigate(`/girn/create?${params.toString()}`, {
-          state: { invoice: data.invoice, draft_girn: data.draft_girn },
-        });
-        return;
-      }
-
-      await appAlert({
-        title: 'Invoice confirmed',
-        message: 'OCR review saved. Invoice is ready for payment tracking.',
-        tone: 'success',
+      // Confirmed AP invoices are due for GIRN Register & review next.
+      const params = new URLSearchParams(
+        returnTo ? returnTo.split('?')[1] || '' : searchParams.toString()
+      );
+      params.set('invoice_id', id);
+      params.set('reviewed', '1');
+      navigate(`/girn/create?${params.toString()}`, {
+        state: { invoice: data.invoice, draft_girn: data.draft_girn },
       });
-      navigate('/invoices');
     } catch (err) {
       await appAlert({
         title: 'Could not save',

@@ -3,8 +3,13 @@ import { useNavigate, useSearchParams, Link, useLocation } from 'react-router-do
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
 import { appAlert } from '../components/dialog';
-import { AlertBanner, PageHeader } from '../components/mes';
-import { Check } from 'lucide-react';
+import {
+  AlertBanner,
+  EmptyState,
+  PageHeader,
+  StatusBadge,
+} from '../components/mes';
+import { Check, ClipboardList, FileText, Plus, Trash2 } from 'lucide-react';
 import EmployeeSelect from './EmployeeSelect';
 import GIRNInvoiceUpload from './GIRNInvoiceUpload';
 import MasterItemSelect from './MasterItemSelect';
@@ -72,6 +77,156 @@ function normalizeDraftItems(items = []) {
   return items.map((item) => calcItem({ ...EMPTY_ITEM, ...item }));
 }
 
+function ReqMark() {
+  return <span className="required-mark">*</span>;
+}
+
+function itemNeedsLink(item) {
+  const cat = item.item_category || 'raw_material';
+  if (cat === 'other') return false;
+  return !(item.master_record_id || item.raw_material_id);
+}
+
+function itemIsReady(item) {
+  if (toNumber(item.quantity) <= 0) return false;
+  if (item.item_category === 'other') {
+    return Boolean(String(item.item_description || '').trim());
+  }
+  return Boolean(item.master_record_id || item.raw_material_id);
+}
+
+function registerBlockers({ header, items }) {
+  const blockers = [];
+  if (!(header.supplier_id || String(header.supplier_name || '').trim())) {
+    blockers.push('Supplier required');
+  }
+  if (!header.received_by) blockers.push('Receiver required');
+  if (!header.received_date) blockers.push('Received date required');
+  if (!items.length) blockers.push('Add at least one line');
+  const unlinked = items.filter(itemNeedsLink).length;
+  if (unlinked) blockers.push(`${unlinked} line${unlinked === 1 ? '' : 's'} need master link`);
+  const badQty = items.filter((item) => toNumber(item.quantity) <= 0).length;
+  if (badQty) blockers.push(`${badQty} line${badQty === 1 ? '' : 's'} need quantity`);
+  const otherMissing = items.filter(
+    (item) =>
+      item.item_category === 'other' && !String(item.item_description || '').trim()
+  ).length;
+  if (otherMissing) blockers.push(`${otherMissing} Other line${otherMissing === 1 ? '' : 's'} need description`);
+  return blockers;
+}
+
+function ReceivedByField({ employees, header, user, onReceivedByChange }) {
+  const [overrideEmployee, setOverrideEmployee] = useState(false);
+  const selectedEmployee = employees.find((e) => String(e.id) === String(header.received_by));
+  const employeeLabel = selectedEmployee
+    ? `${selectedEmployee.full_name}${selectedEmployee.employee_code ? ` (${selectedEmployee.employee_code})` : ''}`
+    : user?.name
+      ? `${user.name}${user.code ? ` (${user.code})` : ''}`
+      : 'Select employee';
+
+  return (
+    <div className="girn-review-received">
+      <span className="girn-review-field-label">Received by</span>
+      {!overrideEmployee ? (
+        <div className="girn-review-received-row">
+          <StatusBadge status="completed">{employeeLabel}</StatusBadge>
+          <button type="button" className="neutral-button" onClick={() => setOverrideEmployee(true)}>
+            Change
+          </button>
+        </div>
+      ) : (
+        <EmployeeSelect value={header.received_by} onChange={onReceivedByChange} />
+      )}
+    </div>
+  );
+}
+
+function ReceiptEssentials({
+  header,
+  employees,
+  user,
+  onChange,
+  onReceivedByChange,
+  showPo = true,
+}) {
+  const [moreOpen, setMoreOpen] = useState(Boolean(header.notes || header.csr));
+
+  return (
+    <section className="mes-card girn-review-card girn-review-essentials">
+      <header className="girn-review-card-head">
+        <div>
+          <h3 className="form-page-section-title">Receipt</h3>
+          <p className="girn-review-lead">Date and receiver — then register.</p>
+        </div>
+      </header>
+
+      <div className="girn-review-essential-grid">
+        <label>
+          Received date <ReqMark />
+          <input
+            type="date"
+            className="date-bar"
+            name="received_date"
+            value={header.received_date}
+            onChange={onChange}
+            required
+          />
+        </label>
+        <ReceivedByField
+          employees={employees}
+          header={header}
+          user={user}
+          onReceivedByChange={onReceivedByChange}
+        />
+      </div>
+
+      <button
+        type="button"
+        className="girn-review-more-toggle"
+        onClick={() => setMoreOpen((v) => !v)}
+        aria-expanded={moreOpen}
+      >
+        {moreOpen ? 'Hide optional fields' : 'CSR, PO, notes'}
+      </button>
+
+      {moreOpen ? (
+        <div className="form-page-grid girn-review-fields girn-review-optional">
+          {showPo ? (
+            <label>
+              Linked purchase order
+              {header.purchase_order_id ? (
+                <Link
+                  to={`/purchase-orders/${header.purchase_order_id}`}
+                  className="neutral-button girn-review-po-link"
+                >
+                  <ClipboardList size={15} />
+                  {header.po_reference || 'Open PO'}
+                </Link>
+              ) : (
+                <input
+                  type="text"
+                  name="po_reference"
+                  value={header.po_reference}
+                  onChange={onChange}
+                  placeholder="Optional"
+                />
+              )}
+            </label>
+          ) : null}
+          <label>
+            CSR
+            <input type="text" name="csr" value={header.csr} onChange={onChange} />
+          </label>
+          <label className="form-span-2">
+            Notes
+            <textarea name="notes" value={header.notes} onChange={onChange} rows={2} />
+          </label>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function GirnRegisterPanel({
   invoice,
   header,
@@ -81,149 +236,110 @@ function GirnRegisterPanel({
   onChange,
   onReceivedByChange,
 }) {
-  const [overrideEmployee, setOverrideEmployee] = useState(false);
-  const selectedEmployee = employees.find((e) => String(e.id) === String(header.received_by));
-  const employeeLabel = selectedEmployee
-    ? `${selectedEmployee.full_name}${selectedEmployee.employee_code ? ` (${selectedEmployee.employee_code})` : ''}`
-    : user?.name
-      ? `${user.name}${user.code ? ` (${user.code})` : ''}`
-      : 'Select employee';
   const grandTotal = items.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
+  const supplierName = header.supplier_name || invoice?.suppliers?.name || '—';
+  const readyCount = items.filter(itemIsReady).length;
+  const allReady = items.length > 0 && readyCount === items.length;
 
   return (
-    <>
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="section-header" style={{ marginBottom: 16 }}>
+    <div className="girn-review">
+      <section className="mes-card girn-review-summary">
+        <div className="girn-review-summary-main">
           <div>
-            <h2>Register GIRN</h2>
-            <p className="muted">Invoice OCR review is complete. Confirm receipt details and register.</p>
+            <p className="girn-review-summary-kicker">Ready to register</p>
+            <h2 className="girn-review-summary-title">{supplierName}</h2>
+            <p className="girn-review-summary-meta">
+              Invoice <strong>{invoice?.invoice_number || '—'}</strong>
+              {header.supplier_gstin ? ` · GSTIN ${header.supplier_gstin}` : ''}
+            </p>
+          </div>
+          <div className="girn-review-summary-total">
+            <span>Grand total</span>
+            <strong>₹{fmt(grandTotal)}</strong>
           </div>
         </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16, marginBottom: 16 }}>
-          <div>
-            <p className="component-detail-label">Supplier</p>
-            <strong>{header.supplier_name || invoice?.suppliers?.name || '—'}</strong>
-          </div>
-          <div>
-            <p className="component-detail-label">Invoice</p>
-            <strong>{invoice?.invoice_number || invoice?.id || '—'}</strong>
-          </div>
-          <div>
-            <p className="component-detail-label">GSTIN</p>
-            <strong>{header.supplier_gstin || '—'}</strong>
-          </div>
+        <div className="girn-review-summary-chips">
+          <StatusBadge status="completed">OCR confirmed</StatusBadge>
+          <StatusBadge status={allReady ? 'completed' : 'ready'}>
+            {readyCount}/{items.length} lines ready
+          </StatusBadge>
+          {invoice?.file_url ? (
+            <a
+              href={invoice.file_url}
+              target="_blank"
+              rel="noreferrer"
+              className="neutral-button girn-review-scan-link"
+            >
+              <FileText size={14} />
+              View scan
+            </a>
+          ) : null}
         </div>
+      </section>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 }}>
-          <label>
-            Linked purchase order
-            {header.purchase_order_id ? (
-              <div>
-                <Link to={`/purchase-orders/${header.purchase_order_id}`} className="neutral-button" style={{ display: 'inline-flex', width: 'fit-content' }}>
-                  {header.po_reference || 'Open PO'}
-                </Link>
-              </div>
-            ) : (
-              <input
-                type="text"
-                name="po_reference"
-                value={header.po_reference}
-                onChange={onChange}
-                placeholder="Optional text reference"
-              />
-            )}
-          </label>
+      <ReceiptEssentials
+        header={header}
+        employees={employees}
+        user={user}
+        onChange={onChange}
+        onReceivedByChange={onReceivedByChange}
+      />
 
-          <label>
-            Received Date <span style={{ color: '#b91c1c' }}>*</span>
-            <input
-              type="date"
-              name="received_date"
-              value={header.received_date}
-              onChange={onChange}
-              required
-            />
-          </label>
+      <section className="mes-card girn-review-card">
+        <header className="girn-review-card-head">
+          <div>
+            <h3 className="form-page-section-title">Lines</h3>
+            <p className="girn-review-lead">Linked at OCR — glance and register.</p>
+          </div>
+          <StatusBadge status="draft">{items.length}</StatusBadge>
+        </header>
 
-          <label>
-            CSR
-            <input
-              type="text"
-              name="csr"
-              value={header.csr}
-              onChange={onChange}
-            />
-          </label>
-        </div>
-
-        <div style={{ marginTop: 16 }}>
-          <p className="component-detail-label">Received By</p>
-          {!overrideEmployee ? (
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-              <strong>{employeeLabel}</strong>
-              <button
-                type="button"
-                className="neutral-button"
-                onClick={() => setOverrideEmployee(true)}
-              >
-                Change employee
-              </button>
+        {items.length === 0 ? (
+          <EmptyState title="No lines" description="No confirmed line items on this invoice." />
+        ) : (
+          <div className="girn-review-line-list" role="list">
+            {items.map((item, idx) => {
+              const cfg = getCategoryConfig(item.item_category || 'raw_material');
+              const ready = itemIsReady(item);
+              return (
+                <div
+                  key={idx}
+                  className={`girn-review-line${ready ? ' is-ready' : ' is-blocked'}`}
+                  role="listitem"
+                >
+                  <span className="girn-review-line-idx">{idx + 1}</span>
+                  <div className="girn-review-line-body">
+                    <p className="girn-review-line-title">
+                      {item.item_description ||
+                        item.master_record_label ||
+                        item.rm_code ||
+                        '—'}
+                    </p>
+                    <p className="girn-review-line-sub">
+                      {cfg.label}
+                      {item.master_record_label || item.raw_material_label
+                        ? ` · ${item.master_record_label || item.raw_material_label}`
+                        : ' · Not linked'}
+                    </p>
+                  </div>
+                  <div className="girn-review-line-qty">
+                    <span>{item.quantity || '—'} {item.unit || ''}</span>
+                    <strong>₹{fmt(item.total_amount)}</strong>
+                  </div>
+                  <StatusBadge status={ready ? 'completed' : 'overdue'}>
+                    {ready ? <><Check size={12} strokeWidth={3} /> OK</> : 'Fix'}
+                  </StatusBadge>
+                </div>
+              );
+            })}
+            <div className="girn-review-line-footer">
+              <span>Grand total</span>
+              <strong>₹{fmt(grandTotal)}</strong>
             </div>
-          ) : (
-            <EmployeeSelect value={header.received_by} onChange={onReceivedByChange} />
-          )}
-        </div>
-
-        <label style={{ marginTop: 16 }}>
-          Notes
-          <textarea
-            name="notes"
-            value={header.notes}
-            onChange={onChange}
-            rows={3}
-          />
-        </label>
-      </div>
-
-      <div className="card">
-        <div className="section-header" style={{ marginBottom: 16 }}>
-          <div>
-            <h2>Confirmed line items</h2>
-            <p className="muted">Linked during invoice OCR review. Edit on the invoice if corrections are needed.</p>
           </div>
-        </div>
-
-        <div className="app-table-wrap">
-          <table className="app-table">
-            <thead>
-              <tr>
-                <th>Description</th>
-                <th>Category</th>
-                <th>Master</th>
-                <th>Qty</th>
-                <th>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item, idx) => (
-                <tr key={idx}>
-                  <td>{item.item_description || item.master_record_label || item.rm_code || '—'}</td>
-                  <td>{getCategoryConfig(item.item_category || 'raw_material').label}</td>
-                  <td>{item.master_record_label || item.raw_material_label || '—'}</td>
-                  <td>{item.quantity || '—'}</td>
-                  <td>₹{fmt(item.total_amount)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-          <strong>Grand Total: ₹{fmt(grandTotal)}</strong>
-        </div>
-      </div>
-    </>
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -237,319 +353,385 @@ function HeaderReview({
   onSupplierSelect,
   supplierLocked = false,
 }) {
-  const [overrideEmployee, setOverrideEmployee] = useState(false);
-  const selectedEmployee = employees.find((e) => String(e.id) === String(header.received_by));
-  const employeeLabel = selectedEmployee
-    ? `${selectedEmployee.full_name}${selectedEmployee.employee_code ? ` (${selectedEmployee.employee_code})` : ''}`
-    : user?.name
-      ? `${user.name}${user.code ? ` (${user.code})` : ''}`
-      : 'Select employee';
+  const [supplierOpen, setSupplierOpen] = useState(
+    !header.supplier_id && !supplierLocked
+  );
 
   return (
-    <div className="card" style={{ marginBottom: 16 }}>
-      <div className="section-header" style={{ marginBottom: 16 }}>
-        <div>
-          <h2>Review GIRN Header</h2>
-          {/* <p className="muted">OCR filled these fields from the invoice. Correct anything before registering.</p> */}
-        </div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 }}>
-        <label>
-          Supplier Name <span style={{ color: '#b91c1c' }}>*</span>
-          <input
-            type="text"
-            name="supplier_name"
-            value={header.supplier_name || ''}
-            onChange={onChange}
-            required={!header.supplier_id}
-            disabled={supplierLocked || Boolean(header.supplier_id)}
-          />
-        </label>
-
-        <label>
-          GSTIN
-          <input
-            type="text"
-            name="supplier_gstin"
-            value={header.supplier_gstin || ''}
-            onChange={onChange}
-            disabled={supplierLocked || Boolean(header.supplier_id)}
-          />
-        </label>
-
-        <label>
-          Link existing supplier
-          <select
-            name="supplier_id"
-            value={header.supplier_id}
-            onChange={onSupplierSelect}
-            disabled={supplierLocked}
-          >
-            <option value="">Create from OCR details above</option>
-            {suppliers.map((supplier) => (
-              <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
-            ))}
-          </select>
-        </label>
-
-        <label>
-          Linked purchase order
-          {header.purchase_order_id ? (
-            <div>
-              <Link to={`/purchase-orders/${header.purchase_order_id}`} className="neutral-button" style={{ display: 'inline-flex', width: 'fit-content' }}>
-                {header.po_reference || 'Open PO'}
-              </Link>
-            </div>
-          ) : (
-            <input
-              type="text"
-              name="po_reference"
-              value={header.po_reference}
-              onChange={onChange}
-              placeholder="Optional text reference"
-            />
-          )}
-        </label>
-
-        <label>
-          Received Date <span style={{ color: '#b91c1c' }}>*</span>
-          <input
-            type="date"
-            name="received_date"
-            value={header.received_date}
-            onChange={onChange}
-            required
-          />
-        </label>
-
-        <label>
-          CSR
-          <input
-            type="text"
-            name="csr"
-            value={header.csr}
-            onChange={onChange}
-          />
-        </label>
-      </div>
-
-      <div style={{ marginTop: 16 }}>
-        <p className="component-detail-label">Received By</p>
-        {!overrideEmployee ? (
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <strong>{employeeLabel}</strong>
+    <>
+      <section className="mes-card girn-review-summary">
+        <div className="girn-review-summary-main">
+          <div>
+            <p className="girn-review-summary-kicker">Supplier</p>
+            <h2 className="girn-review-summary-title">
+              {header.supplier_name || 'Set supplier'}
+            </h2>
+            <p className="girn-review-summary-meta">
+              {header.supplier_gstin
+                ? `GSTIN ${header.supplier_gstin}`
+                : 'Confirm supplier before registering'}
+            </p>
+          </div>
+          {!supplierLocked ? (
             <button
               type="button"
               className="neutral-button"
-              onClick={() => setOverrideEmployee(true)}
+              onClick={() => setSupplierOpen((v) => !v)}
             >
-              Change employee
+              {supplierOpen ? 'Done' : 'Edit'}
             </button>
-          </div>
-        ) : (
-          <EmployeeSelect value={header.received_by} onChange={onReceivedByChange} />
-        )}
-      </div>
+          ) : (
+            <StatusBadge status="completed">Locked</StatusBadge>
+          )}
+        </div>
 
-      <label style={{ marginTop: 16 }}>
-        Notes
-        <textarea
-          name="notes"
-          value={header.notes}
-          onChange={onChange}
-          rows={3}
-        />
-      </label>
-    </div>
+        {supplierOpen && !supplierLocked ? (
+          <div className="form-page-grid girn-review-fields girn-review-optional">
+            <label>
+              Supplier name <ReqMark />
+              <input
+                type="text"
+                name="supplier_name"
+                value={header.supplier_name || ''}
+                onChange={onChange}
+                required={!header.supplier_id}
+                disabled={Boolean(header.supplier_id)}
+              />
+            </label>
+            <label>
+              GSTIN
+              <input
+                type="text"
+                name="supplier_gstin"
+                value={header.supplier_gstin || ''}
+                onChange={onChange}
+                disabled={Boolean(header.supplier_id)}
+              />
+            </label>
+            <label className="form-span-2">
+              Link existing supplier
+              <select
+                name="supplier_id"
+                value={header.supplier_id}
+                onChange={onSupplierSelect}
+              >
+                <option value="">Create from OCR details above</option>
+                {suppliers.map((supplier) => (
+                  <option key={supplier.id} value={supplier.id}>
+                    {supplier.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
+      </section>
+
+      <ReceiptEssentials
+        header={header}
+        employees={employees}
+        user={user}
+        onChange={onChange}
+        onReceivedByChange={onReceivedByChange}
+      />
+    </>
   );
 }
 
 function ItemsReview({ items, onItemChange, onMasterSelect, onCategoryChange, onAddItem, onRemoveItem }) {
   const grandTotal = items.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
+  const readyCount = items.filter(itemIsReady).length;
+  const blocked = items.length - readyCount;
+  const [expanded, setExpanded] = useState(() =>
+    Object.fromEntries(items.map((item, idx) => [idx, !itemIsReady(item)]))
+  );
+
+  function toggleExpand(idx) {
+    setExpanded((prev) => ({ ...prev, [idx]: !prev[idx] }));
+  }
 
   return (
-    <div className="card">
-      <div className="section-header" style={{ marginBottom: 16 }}>
+    <section className="mes-card girn-review-card">
+      <header className="girn-review-card-head">
         <div>
-          <h2>Review Line Items</h2>
-          <p className="muted">OCR suggests a category per line. Each stocked item must be linked to an existing master record.</p>
+          <h3 className="form-page-section-title">Lines</h3>
+          <p className="girn-review-lead">
+            Link stocked lines · set qty · register.
+          </p>
         </div>
-        <button type="button" className="neutral-button" onClick={onAddItem}>
-          + Add Item
-        </button>
-      </div>
+        <div className="girn-review-card-head-actions">
+          <StatusBadge status={blocked ? 'ready' : 'completed'}>
+            {readyCount}/{items.length} ready
+          </StatusBadge>
+          <button type="button" className="neutral-button" onClick={onAddItem}>
+            <Plus size={15} />
+            Add
+          </button>
+        </div>
+      </header>
 
-      {items.map((item, idx) => {
-        const cfg = getCategoryConfig(item.item_category || 'raw_material');
-        const isOther = item.item_category === 'other';
+      {blocked > 0 ? (
+        <AlertBanner tone="amber">
+          {blocked} line{blocked === 1 ? '' : 's'} still need a link, description, or quantity.
+        </AlertBanner>
+      ) : null}
 
-        return (
-        <div
-          key={idx}
-          style={{
-            border: '1px solid #e5e7eb',
-            borderRadius: 8,
-            padding: 16,
-            marginBottom: 12,
-            background: '#fafafa',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <strong>Item {idx + 1}</strong>
-              <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: '#e0e7ff', color: '#3730a3' }}>
-                {cfg.quantityType === 'kg' ? 'kg' : 'nos'}
-              </span>
-              {item.match_confidence && item.match_confidence !== 'none' ? (
-                <span className="muted" style={{ fontSize: 12 }}>OCR match: {item.match_confidence}</span>
-              ) : null}
-            </div>
-            {items.length > 1 ? (
+      <div className="girn-review-items">
+        {items.map((item, idx) => {
+          const cfg = getCategoryConfig(item.item_category || 'raw_material');
+          const isOther = item.item_category === 'other';
+          const linked = Boolean(item.master_record_id || item.raw_material_id);
+          const ready = itemIsReady(item);
+          const open = expanded[idx] ?? !ready;
+
+          return (
+            <article
+              key={idx}
+              className={`girn-review-item${ready ? ' is-ready' : ' is-blocked'}${open ? ' is-open' : ''}`}
+            >
               <button
                 type="button"
-                className="neutral-button"
-                style={{ fontSize: 12, padding: '2px 10px' }}
-                onClick={() => onRemoveItem(idx)}
+                className="girn-review-item-summary"
+                onClick={() => toggleExpand(idx)}
+                aria-expanded={open}
               >
-                Remove
+                <span className="girn-review-line-idx">{idx + 1}</span>
+                <div className="girn-review-line-body">
+                  <p className="girn-review-line-title">
+                    {item.item_description ||
+                      item.master_record_label ||
+                      item.raw_material_label ||
+                      item.rm_code ||
+                      `Item ${idx + 1}`}
+                  </p>
+                  <p className="girn-review-line-sub">
+                    {cfg.label}
+                    {' · '}
+                    {item.quantity || '—'} {item.unit || cfg.quantityType}
+                    {' · '}
+                    ₹{fmt(item.total_amount)}
+                  </p>
+                </div>
+                <StatusBadge status={ready ? 'completed' : 'overdue'}>
+                  {ready ? 'OK' : 'Needs fix'}
+                </StatusBadge>
               </button>
-            ) : null}
-          </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
-            <label>
-              Category <span style={{ color: '#b91c1c' }}>*</span>
-              <select
-                value={item.item_category || 'raw_material'}
-                onChange={(e) => onCategoryChange(idx, e.target.value)}
-              >
-                {CATEGORY_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-            </label>
-
-            {!isOther && cfg.masterSlug ? (
-              <label style={{ gridColumn: '1 / -1' }}>
-                Match {cfg.label.toLowerCase()}
-                <MasterItemSelect
-                  masterSlug={cfg.masterSlug}
-                  category={item.item_category}
-                  value={item.master_record_id || item.raw_material_id}
-                  label={item.master_record_label || item.raw_material_label}
-                  onChange={(mapped) => onMasterSelect(idx, mapped)}
-                />
-              </label>
-            ) : null}
-
-            {isOther ? (
-              <label style={{ gridColumn: '1 / -1' }}>
-                Description <span style={{ color: '#b91c1c' }}>*</span>
-                <input
-                  type="text"
-                  value={item.item_description}
-                  onChange={(e) => onItemChange(idx, 'item_description', e.target.value)}
-                />
-              </label>
-            ) : (
-              <>
-                <label style={{ gridColumn: '1 / -1' }}>
-                  Linked item
-                  <input
-                    type="text"
-                    value={item.master_record_label || item.raw_material_label || 'Not linked'}
-                    disabled
-                  />
-                </label>
-
-                {item.item_category === 'raw_material' ? (
-                  <>
+              {open ? (
+                <div className="girn-review-item-edit">
+                  <div className="girn-review-item-edit-top">
                     <label>
-                      Grade
-                      <input
-                        type="text"
-                        value={item.grade}
-                        onChange={(e) => onItemChange(idx, 'grade', e.target.value)}
-                        disabled={!item.master_record_id && !item.raw_material_id}
+                      Category
+                      <select
+                        value={item.item_category || 'raw_material'}
+                        onChange={(e) => onCategoryChange(idx, e.target.value)}
+                      >
+                        {CATEGORY_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {items.length > 1 ? (
+                      <button
+                        type="button"
+                        className="neutral-button"
+                        onClick={() => onRemoveItem(idx)}
+                      >
+                        <Trash2 size={14} />
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {!isOther && cfg.masterSlug ? (
+                    <label className="girn-review-match">
+                      Match {cfg.label.toLowerCase()} <ReqMark />
+                      <MasterItemSelect
+                        masterSlug={cfg.masterSlug}
+                        category={item.item_category}
+                        value={item.master_record_id || item.raw_material_id}
+                        label={item.master_record_label || item.raw_material_label}
+                        onChange={(mapped) => onMasterSelect(idx, mapped)}
                       />
                     </label>
+                  ) : null}
 
-                    <label>
-                      Inventory Number
+                  {isOther ? (
+                    <label className="girn-review-match">
+                      Description <ReqMark />
                       <input
                         type="text"
-                        value={item.inventory_number}
-                        onChange={(e) => onItemChange(idx, 'inventory_number', e.target.value)}
-                        disabled={!item.master_record_id && !item.raw_material_id}
+                        value={item.item_description}
+                        onChange={(e) => onItemChange(idx, 'item_description', e.target.value)}
+                        autoFocus={!item.item_description}
                       />
                     </label>
-                  </>
-                ) : null}
-              </>
-            )}
+                  ) : null}
 
-            <label>
-              Unit
-              <input
-                type="text"
-                value={item.unit}
-                onChange={(e) => onItemChange(idx, 'unit', e.target.value)}
-                placeholder={cfg.quantityType === 'kg' ? 'kg' : 'nos'}
-              />
-            </label>
+                  <div className="girn-review-qty-row">
+                    <label>
+                      Qty <ReqMark />
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={item.quantity}
+                        onChange={(e) => onItemChange(idx, 'quantity', e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Unit
+                      <input
+                        type="text"
+                        value={item.unit}
+                        onChange={(e) => onItemChange(idx, 'unit', e.target.value)}
+                        placeholder={cfg.quantityType === 'kg' ? 'kg' : 'nos'}
+                      />
+                    </label>
+                    <label>
+                      Rate
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={item.unit_rate}
+                        onChange={(e) => onItemChange(idx, 'unit_rate', e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      GST %
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={item.vat_percentage}
+                        onChange={(e) => onItemChange(idx, 'vat_percentage', e.target.value)}
+                      />
+                    </label>
+                  </div>
 
-            <label>
-              Quantity <span style={{ color: '#b91c1c' }}>*</span>
-              <input
-                type="number"
-                min="0"
-                step="any"
-                value={item.quantity}
-                onChange={(e) => onItemChange(idx, 'quantity', e.target.value)}
-              />
-            </label>
+                  {!isOther && item.item_category === 'raw_material' && linked ? (
+                    <div className="girn-review-qty-row">
+                      <label>
+                        Grade
+                        <input
+                          type="text"
+                          value={item.grade}
+                          onChange={(e) => onItemChange(idx, 'grade', e.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Inventory #
+                        <input
+                          type="text"
+                          value={item.inventory_number}
+                          onChange={(e) => onItemChange(idx, 'inventory_number', e.target.value)}
+                        />
+                      </label>
+                    </div>
+                  ) : null}
 
-            <label>
-              Unit Rate
-              <input
-                type="number"
-                min="0"
-                step="any"
-                value={item.unit_rate}
-                onChange={(e) => onItemChange(idx, 'unit_rate', e.target.value)}
-              />
-            </label>
+                  {!isOther && !linked ? (
+                    <p className="girn-review-inline-warn">
+                      Link a master record to continue.
+                    </p>
+                  ) : null}
 
-            <label>
-              GST %
-              <input
-                type="number"
-                min="0"
-                step="any"
-                value={item.vat_percentage}
-                onChange={(e) => onItemChange(idx, 'vat_percentage', e.target.value)}
-              />
-            </label>
-          </div>
+                  <div className="girn-review-item-totals">
+                    <span>
+                      Amount <strong>₹{fmt(item.amount)}</strong>
+                    </span>
+                    <span>
+                      GST <strong>₹{fmt(item.vat_amount)}</strong>
+                    </span>
+                    <span>
+                      Total <strong>₹{fmt(item.total_amount)}</strong>
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+            </article>
+          );
+        })}
+      </div>
 
-          {!isOther && !(item.master_record_id || item.raw_material_id) ? (
-            <p className="muted" style={{ marginTop: 8, color: '#b91c1c' }}>
-              Link an existing {cfg.label.toLowerCase()} from the master before registering this GIRN.
-            </p>
-          ) : null}
+      <div className="girn-review-line-footer">
+        <span>{items.length} line{items.length === 1 ? '' : 's'}</span>
+        <strong>₹{fmt(grandTotal)}</strong>
+      </div>
+    </section>
+  );
+}
 
-          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>
-            <span>Amount: <strong>₹{fmt(item.amount)}</strong></span>
-            <span>GST: <strong>₹{fmt(item.vat_amount)}</strong></span>
-            <span>Total: <strong>₹{fmt(item.total_amount)}</strong></span>
-          </div>
+function ReviewActions({
+  canRegister,
+  submitting,
+  blockers,
+  isOutsourceReturn,
+  invoiceReviewConfirmed,
+  onBack,
+  onCancel,
+  onRegister,
+  onRegisterAndSubmit,
+}) {
+  return (
+    <div className="girn-review-sticky-actions">
+      {blockers.length ? (
+        <p className="girn-review-blocker-hint">{blockers[0]}</p>
+      ) : (
+        <p className="girn-review-ready-hint">
+          <Check size={14} strokeWidth={3} />
+          Ready — register now
+        </p>
+      )}
+      <div className="girn-review-actions">
+        <button
+          type="button"
+          className="neutral-button"
+          onClick={onBack}
+          disabled={submitting || invoiceReviewConfirmed}
+        >
+          Back
+        </button>
+        <div className="girn-review-actions-end">
+          <button
+            type="button"
+            className="cancel-button"
+            disabled={submitting}
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="neutral-button"
+            disabled={!canRegister || submitting}
+            onClick={() => onRegister(false)}
+          >
+            {submitting ? 'Registering…' : 'Register only'}
+          </button>
+          {!isOutsourceReturn ? (
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!canRegister || submitting}
+              onClick={() => onRegisterAndSubmit(true)}
+            >
+              {submitting ? 'Submitting…' : 'Register & submit'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!canRegister || submitting}
+              onClick={() => onRegister(false)}
+            >
+              {submitting ? 'Registering…' : 'Register GIRN'}
+            </button>
+          )}
         </div>
-        );
-      })}
-
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-        <strong>Grand Total: ₹{fmt(grandTotal)}</strong>
       </div>
     </div>
   );
@@ -755,6 +937,11 @@ export default function CreateGIRNPage() {
     () => employees.find((employee) => String(employee.id) === String(header.received_by)),
     [employees, header.received_by]
   );
+  const initials = selectedEmployee?.full_name?.split(' ')
+      .map((n) => n[0])
+      .slice(0, 2)
+      .join('')
+      .toUpperCase() || '?';
 
   function handleHeaderChange(event) {
     const { name, value } = event.target;
@@ -825,11 +1012,7 @@ export default function CreateGIRNPage() {
   }
 
   function itemIsValid(item) {
-    if (toNumber(item.quantity) <= 0) return false;
-    if (item.item_category === 'other') {
-      return Boolean(String(item.item_description || '').trim());
-    }
-    return Boolean(item.master_record_id || item.raw_material_id);
+    return itemIsReady(item);
   }
 
   const canRegister =
@@ -838,6 +1021,11 @@ export default function CreateGIRNPage() {
     header.received_date &&
     items.length > 0 &&
     items.every(itemIsValid);
+
+  const blockers = useMemo(
+    () => registerBlockers({ header, items }),
+    [header, items]
+  );
 
   const allOilOrOther = items.length > 0 && items.every((item) => {
     const cat = item.item_category || 'raw_material';
@@ -914,11 +1102,7 @@ export default function CreateGIRNPage() {
       <PageHeader
         eyebrow={isOutsourceReturn ? 'Outsourcing return' : 'Procurement'}
         title={isOutsourceReturn ? 'GIRN — outsource inward' : 'New GIRN'}
-        subtitle={
-          isOutsourceReturn
-            ? `Upload the supplier invoice for shipment ${outsourceShipment?.shipment_number || header.po_reference || 'OS'}. Registering this GIRN receives the lots and resumes routing.`
-            : 'Scan the invoice, review details, then register.'
-        }
+        subtitle={null}
       />
 
       <nav className="bpo-steps" aria-label="GIRN setup steps">
@@ -943,46 +1127,38 @@ export default function CreateGIRNPage() {
         ))}
       </nav>
 
-      <section className="card bpo-setup-card">
-        {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
-        {header.purchase_order_id ? (
-          <AlertBanner tone="amber">
-            Receiving against{' '}
-            <Link to={`/purchase-orders/${header.purchase_order_id}`}>
-              {header.po_reference || 'purchase order'}
-            </Link>
-            . Lines stay linked so receipts roll up on the PO.
-          </AlertBanner>
-        ) : null}
+      {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
+      {header.purchase_order_id ? (
+        <AlertBanner tone="amber">
+          Receiving against{' '}
+          <Link to={`/purchase-orders/${header.purchase_order_id}`}>
+            {header.po_reference || 'purchase order'}
+          </Link>
+          . Lines stay linked so receipts roll up on the PO.
+        </AlertBanner>
+      ) : null}
 
-        {step === 1 ? (
+      {step === 1 ? (
+        <section className="card bpo-setup-card">
           <div className="bpo-panel">
             <h2>Scan supplier invoice</h2>
-            <p className="muted bpo-lead">
-              Confirm who is receiving the goods, then upload the invoice for OCR extraction.
-            </p>
+            <p className="muted bpo-lead">Upload Invoice to register GIRN</p>
 
             <div className="bpo-grid-2">
               <div>
-                <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>Confirm receiver</h3>
-                <p className="muted" style={{ margin: '0 0 12px' }}>
-                  Taken from the logged-in user. Change only if needed.
-                </p>
                 <p className="component-detail-label">Received by</p>
-                <strong>
+                <p className="bpo-step is-active">
+                  <div className="sidebar-avatar">{initials}</div>
                   {selectedEmployee
                     ? `${selectedEmployee.full_name}${selectedEmployee.employee_code ? ` (${selectedEmployee.employee_code})` : ''}`
                     : user?.name
                       ? `${user.name}${user.code ? ` (${user.code})` : ''}`
                       : 'Not selected'}
-                </strong>
+                </p>
               </div>
 
               <div>
-                <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>Upload scanned invoice</h3>
-                <p className="muted" style={{ margin: '0 0 12px' }}>
-                  OCR extracts supplier, invoice, and line item details for review.
-                </p>
+                <h3 className="girn-review-upload-title">Upload scanned invoice</h3>
                 <GIRNInvoiceUpload
                   disabled={!header.received_by}
                   reviewReturnPath={reviewReturnPath}
@@ -990,98 +1166,83 @@ export default function CreateGIRNPage() {
               </div>
             </div>
           </div>
-        ) : (
-          <>
-            {invoice && !invoiceReviewConfirmed ? (
-              <div className="bpo-panel" style={{ marginBottom: 16 }}>
-                <h2>Invoice added</h2>
-                <p className="muted bpo-lead">
-                  Invoice {invoice.invoice_number || invoice.id} has been added to the Purchase Invoices tab.
-                </p>
+        </section>
+      ) : (
+        <div className="girn-review-step">
+          {invoice && !invoiceReviewConfirmed ? (
+            <section className="mes-card girn-review-card">
+              <header className="girn-review-card-head">
+                <div>
+                  <h3 className="form-page-section-title">Invoice added</h3>
+                  <p className="girn-review-lead">
+                    Invoice {invoice.invoice_number || invoice.id} is in Purchase Invoices.
+                  </p>
+                </div>
                 {invoice.file_url ? (
-                  <a href={invoice.file_url} target="_blank" rel="noreferrer" className="neutral-button" style={{ display: 'inline-flex' }}>
-                    View scanned invoice
+                  <a
+                    href={invoice.file_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="neutral-button"
+                  >
+                    <FileText size={15} />
+                    View scan
                   </a>
                 ) : null}
-              </div>
-            ) : null}
+              </header>
+            </section>
+          ) : null}
 
-            {invoiceReviewConfirmed ? (
-              <GirnRegisterPanel
-                invoice={invoice}
+          {invoiceReviewConfirmed ? (
+            <GirnRegisterPanel
+              invoice={invoice}
+              header={header}
+              items={items}
+              employees={employees}
+              user={user}
+              onChange={handleHeaderChange}
+              onReceivedByChange={(employeeId) =>
+                setHeader((prev) => ({ ...prev, received_by: employeeId }))
+              }
+            />
+          ) : (
+            <div className="girn-review">
+              <HeaderReview
                 header={header}
-                items={items}
+                suppliers={suppliers}
                 employees={employees}
                 user={user}
                 onChange={handleHeaderChange}
-                onReceivedByChange={(employeeId) => setHeader((prev) => ({ ...prev, received_by: employeeId }))}
+                onSupplierSelect={handleSupplierSelect}
+                supplierLocked={supplierLocked}
+                onReceivedByChange={(employeeId) =>
+                  setHeader((prev) => ({ ...prev, received_by: employeeId }))
+                }
               />
-            ) : (
-              <>
-                <HeaderReview
-                  header={header}
-                  suppliers={suppliers}
-                  employees={employees}
-                  user={user}
-                  onChange={handleHeaderChange}
-                  onSupplierSelect={handleSupplierSelect}
-                  supplierLocked={supplierLocked}
-                  onReceivedByChange={(employeeId) => setHeader((prev) => ({ ...prev, received_by: employeeId }))}
-                />
-
-                <ItemsReview
-                  items={items}
-                  onItemChange={handleItemChange}
-                  onMasterSelect={handleMasterSelect}
-                  onCategoryChange={handleCategoryChange}
-                  onAddItem={addItem}
-                  onRemoveItem={removeItem}
-                />
-              </>
-            )}
-
-            <div className="bpo-footer">
-              <button
-                type="button"
-                className="neutral-button"
-                onClick={() => setStep(1)}
-                disabled={submitting || invoiceReviewConfirmed}
-              >
-                Back
-              </button>
-
-              <div className="bpo-actions-row">
-                <button
-                  type="button"
-                  className="cancel-button"
-                  disabled={submitting}
-                  onClick={() => navigate(isOutsourceReturn ? '/production/outsource' : '/girn')}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="primary-button"
-                  disabled={!canRegister || submitting}
-                  onClick={() => registerGirn(false)}
-                >
-                  {submitting ? 'Registering…' : 'Register GIRN'}
-                </button>
-                {!isOutsourceReturn ? (
-                  <button
-                    type="button"
-                    className="primary-button"
-                    disabled={!canRegister || submitting}
-                    onClick={() => registerGirn(true)}
-                  >
-                    {submitting ? 'Submitting…' : 'Register & submit for inspection'}
-                  </button>
-                ) : null}
-              </div>
+              <ItemsReview
+                items={items}
+                onItemChange={handleItemChange}
+                onMasterSelect={handleMasterSelect}
+                onCategoryChange={handleCategoryChange}
+                onAddItem={addItem}
+                onRemoveItem={removeItem}
+              />
             </div>
-          </>
-        )}
-      </section>
+          )}
+
+          <ReviewActions
+            canRegister={canRegister}
+            submitting={submitting}
+            blockers={blockers}
+            isOutsourceReturn={isOutsourceReturn}
+            invoiceReviewConfirmed={invoiceReviewConfirmed}
+            onBack={() => setStep(1)}
+            onCancel={() => navigate(isOutsourceReturn ? '/production/outsource' : '/girn')}
+            onRegister={registerGirn}
+            onRegisterAndSubmit={registerGirn}
+          />
+        </div>
+      )}
     </main>
   );
 }

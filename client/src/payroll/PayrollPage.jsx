@@ -13,6 +13,7 @@ import {
   AlertBanner,
 } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
 
 const EDITABLE_KEYS = [
   'days_worked',
@@ -366,8 +367,17 @@ export default function PayrollPage() {
 
   const yearOptions = useMemo(() => {
     const y = currentYm().year;
-    return [y - 1, y, y + 1];
+    return [y - 1, y, y + 1].map((yr) => ({ value: String(yr), label: String(yr) }));
   }, []);
+
+  const monthOptions = useMemo(
+    () =>
+      Array.from({ length: 12 }, (_, i) => ({
+        value: String(i + 1),
+        label: new Date(2000, i, 1).toLocaleString('en-IN', { month: 'long' }),
+      })),
+    []
+  );
 
   return (
     <ListPage
@@ -394,26 +404,34 @@ export default function PayrollPage() {
         </div>
       }
       filters={
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: 0 }}>
+        <div className="mes-filters" style={{ marginBottom: 0 }}>
+          <label>
             Month
-            <select value={month} onChange={(e) => setMonth(Number(e.target.value))} disabled={busy}>
-              {Array.from({ length: 12 }, (_, i) => (
-                <option key={i + 1} value={i + 1}>
-                  {new Date(2000, i, 1).toLocaleString('en-IN', { month: 'long' })}
-                </option>
-              ))}
-            </select>
+            <FormSearchSelect
+              value={String(month)}
+              onChange={(value) => {
+                if (!value) return;
+                setMonth(Number(value));
+              }}
+              options={monthOptions}
+              placeholder="Month"
+              disabled={busy}
+              emptyMessage="No months"
+            />
           </label>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: 0 }}>
+          <label>
             Year
-            <select value={year} onChange={(e) => setYear(Number(e.target.value))} disabled={busy}>
-              {yearOptions.map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </select>
+            <FormSearchSelect
+              value={String(year)}
+              onChange={(value) => {
+                if (!value) return;
+                setYear(Number(value));
+              }}
+              options={yearOptions}
+              placeholder="Year"
+              disabled={busy}
+              emptyMessage="No years"
+            />
           </label>
         </div>
       }

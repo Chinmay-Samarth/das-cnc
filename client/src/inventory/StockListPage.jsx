@@ -7,6 +7,7 @@ import { ListPage, EmptyState } from '../components/mes';
 import { useSocket } from '../socket/socketContext';
 import { formatDisplayDateTime } from '../utils/dateFormat';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val)) ? '—' : Number(val).toLocaleString('en-IN');
@@ -175,17 +176,16 @@ export default function StockListPage() {
             className="search-input"
             aria-label="Search stock"
           />
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="search-input"
-            style={{ width: 'auto' }}
-          >
-            <option value="all">All categories</option>
-            {CATEGORY_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
+          <div className="list-filter-select">
+            <FormSearchSelect
+              value={categoryFilter === 'all' ? '' : categoryFilter}
+              onChange={(value) => setCategoryFilter(value || 'all')}
+              options={CATEGORY_OPTIONS}
+              placeholder="All categories"
+              emptyMessage="No categories"
+              searchable={CATEGORY_OPTIONS.length > 6}
+            />
+          </div>
         </div>
       </div>
 

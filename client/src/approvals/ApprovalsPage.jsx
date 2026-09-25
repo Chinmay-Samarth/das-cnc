@@ -47,7 +47,7 @@ export default function ApprovalsPage() {
 
   return (
     <main className="mes-shell">
-      <PageHeader eyebrow="Shop floor" title="Approvals" subtitle={subtitle} />
+      <PageHeader eyebrow="Shop floor" title="Approvals" subtitle={null} />
 
       <div className="mes-view-toggle" role="tablist" aria-label="Approval type" style={{ marginBottom: 20 }}>
         {TABS.map(({ key, label }) => (

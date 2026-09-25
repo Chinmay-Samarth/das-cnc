@@ -12,12 +12,19 @@ import {
 import api from '../api/client';
 import { formatDueLabel, formatScheduleLabel, formatScheduleCadence, WEEKDAYS } from './scheduleLabels';
 import { useSocket } from '../socket/socketContext';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
 import {
   PageHeader,
   StatusBadge,
   EmptyState,
   TruncatedText,
 } from '../components/mes';
+
+const STATUS_OPTIONS = [
+  { value: 'planned', label: 'Planned' },
+  { value: 'released', label: 'Released' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
 
 function utcYmd(y, m, d) {
   return new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10);
@@ -384,12 +391,13 @@ export default function DeliverySchedulesPage() {
         ) : null}
         <label>
           Status
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="" className='global-search-resutl'>All</option>
-            <option value="planned" className='global-search-resutl'>Planned</option>
-            <option value="released" className='global-search-resutl'>Released</option>
-            <option value="cancelled" className='global-search-resutl'>Cancelled</option>
-          </select>
+          <FormSearchSelect
+            value={status}
+            onChange={(value) => setStatus(value || '')}
+            options={STATUS_OPTIONS}
+            placeholder="All statuses"
+            emptyMessage="No statuses"
+          />
         </label>
         <label style={{ flex: 1, minWidth: 180 }}>
           Search
@@ -398,7 +406,6 @@ export default function DeliverySchedulesPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Customer, schedule #…"
-            className='global-search-input'
           />
         </label>
       </div>

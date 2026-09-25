@@ -287,7 +287,7 @@ export default function AddEmployeePage() {
                   name="password"
                   value={formData.password}
                   onChange={handleChange}
-                  placeholder="Leave blank to auto-generate"
+                  placeholder="Leave blank for welcome*1*"
                   disabled={submitting}
                 />
               </label>

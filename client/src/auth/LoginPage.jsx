@@ -16,6 +16,9 @@ export default function LoginPage() {
   const [error, setError] = useState('');
 
   if (user) {
+    if (user.must_change_password) {
+      return <Navigate to="/account/settings" replace />;
+    }
     const home = defaultHomePath?.() || '/production/today';
     const dest =
       from && from !== '/auth/login' && !(home !== '/home' && from === '/home')
@@ -31,6 +34,10 @@ export default function LoginPage() {
 
     try {
       const loggedIn = await login(employeeCode.trim(), password);
+      if (loggedIn.must_change_password) {
+        navigate('/account/settings', { replace: true });
+        return;
+      }
       const home = loggedIn.accessLevel === 'ADMIN' ? '/home' : '/production/today';
       const dest =
         from && from !== '/auth/login' && !(home !== '/home' && from === '/home')

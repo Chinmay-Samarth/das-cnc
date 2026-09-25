@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Check } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { useAuth } from '../auth/authContext';
 import { AlertBanner, PageHeader } from '../components/mes';
 import { appAlert } from '../components/dialog';
@@ -133,18 +133,41 @@ export default function AccountSettingsPage() {
       <PageHeader
         eyebrow="Account"
         title="Account Settings"
-        subtitle="Manage your sign-in password"
+        subtitle={
+          mustChange
+            ? 'Change the default welcome password before continuing'
+            : 'Manage your sign-in password'
+        }
         actions={null}
       />
       <div className="account-settings-center">
         <section className="mes-card form-card account-settings-card">
           <h2 className="account-settings-heading">Change password</h2>
-          <p className="muted account-settings-hint">
-            Use at least {MIN_LEN} characters. Do not share your password with anyone.
-          </p>
+          {mustChange ? (
+            <AlertBanner tone="amber">
+              Your account still uses the default password <strong>welcome*1*</strong>. Set a
+              new password to continue.
+            </AlertBanner>
+          ) : (
+            <p className="muted account-settings-hint">
+              Use at least {MIN_LEN} characters. Do not share your password with anyone.
+            </p>
+          )}
           <ChangePasswordForm
-            requireCurrent={!mustChange}
-            submitLabel="Update password"
+            requireCurrent
+            submitLabel={mustChange ? 'Save and continue' : 'Update password'}
+            onSuccess={
+              mustChange
+                ? async () => {
+                    await appAlert({
+                      title: 'Password saved',
+                      message: 'You can now use the app.',
+                      tone: 'success',
+                    });
+                    navigate(defaultHomePath?.() || '/production/today', { replace: true });
+                  }
+                : undefined
+            }
           />
         </section>
       </div>

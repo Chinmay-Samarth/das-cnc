@@ -6,6 +6,7 @@ import { useSocket } from '../socket/socketContext';
 import { formatDisplayDate } from '../utils/dateFormat';
 import { ListPage, EmptyState, StatusBadge } from '../components/mes';
 import { sortBy } from '../utils/listHelpers';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val)) ? '—' : Number(val).toLocaleString('en-IN');
@@ -16,6 +17,13 @@ const STATUS_LABELS = {
   approved: 'Approved',
   rejected: 'Rejected',
 };
+
+const STATUS_FILTER_OPTIONS = [
+  { value: 'draft', label: 'Draft' },
+  { value: 'pending_inspection', label: 'Pending Inspection' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'rejected', label: 'Rejected' },
+];
 
 function girnStatusTone(status) {
   if (status === 'approved') return 'completed';
@@ -30,7 +38,7 @@ export default function GIRNListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('');
   const [sortKey, setSortKey] = useState('received_date');
   const [sortAsc, setSortAsc] = useState(false);
   const { subscribe } = useSocket();
@@ -63,7 +71,7 @@ export default function GIRNListPage() {
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     const matches = girns.filter((g) => {
-      if (statusFilter !== 'all' && g.status !== statusFilter) return false;
+      if (statusFilter && g.status !== statusFilter) return false;
       if (!query) return true;
       return [g.girn_number, g.supplier_name, g.received_by_name, g.received_by_code, g.po_reference, g.purchase_order_number, g.csr]
         .join(' ')
@@ -97,18 +105,15 @@ export default function GIRNListPage() {
             className="search-input"
             aria-label="Search GIRNs"
           />
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="search-input"
-            style={{ width: 'auto' }}
-          >
-            <option value="all">All statuses</option>
-            <option value="draft">Draft</option>
-            <option value="pending_inspection">Pending Inspection</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-          </select>
+          <div className="list-filter-select">
+            <FormSearchSelect
+              value={statusFilter}
+              onChange={(value) => setStatusFilter(value || '')}
+              options={STATUS_FILTER_OPTIONS}
+              placeholder="All statuses"
+              emptyMessage="No statuses"
+            />
+          </div>
           <button
             type="button"
             className="primary-button"

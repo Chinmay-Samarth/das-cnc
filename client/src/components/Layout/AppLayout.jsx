@@ -56,7 +56,7 @@ export default function AppLayout() {
       </aside>
 
       <div className="app-main">
-        <div className="app-top-chrome">
+        <div className={`app-top-chrome${floorOnly ? ' app-top-chrome--floor' : ''}`}>
           <GlobalBackButton />
           {floorOnly ? (
             <AccountSettingsMenu />

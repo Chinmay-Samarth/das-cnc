@@ -5,6 +5,7 @@ import api from '../api/client';
 import { PageHeader, EmptyState, StatusBadge } from '../components/mes';
 import { appAlert } from '../components/dialog';
 import { formatDisplayDate } from '../utils/dateFormat';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
 import {
   openPurchasePaymentDialog,
   formatInr,
@@ -217,32 +218,20 @@ export default function PurchasePaymentsPage() {
         }
       />
 
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 12,
-          alignItems: 'flex-end',
-          marginBottom: 16,
-        }}
-      >
-        <label style={{ minWidth: 240 }}>
+      <div className="mes-filters" style={{ marginBottom: 16 }}>
+        <label className="prod-filter-wc">
           Supplier
-          <select
+          <FormSearchSelect
             value={supplierId}
-            onChange={(e) => setSupplierId(e.target.value)}
-            style={{ display: 'block', width: '100%', marginTop: 4 }}
-          >
-            <option value="">All suppliers</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => setSupplierId(value || '')}
+            options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
+            placeholder="All suppliers"
+            searchable={suppliers.length > 6}
+            emptyMessage="No suppliers"
+          />
         </label>
         {selectedInvoices.length ? (
-          <p className="muted" style={{ margin: 0 }}>
+          <p className="muted" style={{ margin: 0, alignSelf: 'center' }}>
             Selected total: <strong>₹{formatInr(selectedTotal)}</strong>
           </p>
         ) : null}

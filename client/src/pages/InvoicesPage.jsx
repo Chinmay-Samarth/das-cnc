@@ -8,16 +8,18 @@ import { PageHeader, EmptyState, StatusBadge, AlertBanner } from '../components/
 import { appAlert } from '../components/dialog';
 import { useAuth } from '../auth/authContext';
 import PurchaseOrdersTab from '../procurement/PurchaseOrdersTab';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
 
 const STATUS_OPTIONS = [
-  { id: 'all', label: 'All statuses' },
-  { id: 'needs_review', label: 'Needs review' },
-  { id: 'due', label: 'Due' },
-  { id: 'paid', label: 'Paid' },
-  { id: 'overdue', label: 'Overdue' },
-  { id: 'extracting', label: 'Extracting' },
-  { id: 'saving', label: 'Saving' },
-  { id: 'error', label: 'Error' },
+  { value: 'needs_review', label: 'Needs review' },
+  { value: 'due', label: 'Due' },
+  { value: 'girn_due', label: 'GIRN due' },
+  { value: 'tally_unsynced', label: 'Not Tally synced' },
+  { value: 'paid', label: 'Paid' },
+  { value: 'overdue', label: 'Overdue' },
+  { value: 'extracting', label: 'Extracting' },
+  { value: 'saving', label: 'Saving' },
+  { value: 'error', label: 'Error' },
 ];
 
 function todayYmdIst() {
@@ -35,12 +37,35 @@ function invoiceDisplayStatus(invoice) {
   return 'due';
 }
 
+function isConfirmedApInvoice(invoice) {
+  const status = invoiceDisplayStatus(invoice);
+  return status === 'due' || status === 'overdue' || status === 'paid';
+}
+
+function isGirnDue(invoice) {
+  return isConfirmedApInvoice(invoice) && !invoice?.has_girn;
+}
+
+function isTallyUnsynced(invoice) {
+  if (!isConfirmedApInvoice(invoice)) return false;
+  return invoice?.tally_sync_status !== 'synced';
+}
+
+function matchesStatusFilter(invoice, statusFilter) {
+  if (!statusFilter || statusFilter === 'all') return true;
+  if (statusFilter === 'girn_due') return isGirnDue(invoice);
+  if (statusFilter === 'tally_unsynced') return isTallyUnsynced(invoice);
+  return invoiceDisplayStatus(invoice) === statusFilter;
+}
+
 function statusLabel(status) {
   if (status === 'needs_review') return 'NEEDS REVIEW';
   if (status === 'cancelled') return 'CANCELLED';
   if (status === 'due') return 'DUE';
   if (status === 'paid') return 'PAID';
   if (status === 'overdue') return 'OVERDUE';
+  if (status === 'girn_due') return 'GIRN DUE';
+  if (status === 'tally_unsynced') return 'NOT TALLY SYNCED';
   return String(status || 'DUE').replace(/_/g, ' ').toUpperCase();
 }
 
@@ -105,7 +130,7 @@ export default function InvoicesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('');
   const [sortKey, setSortKey] = useState('invoice_date');
   const [sortAsc, setSortAsc] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -145,7 +170,7 @@ export default function InvoicesPage() {
       const displayStatus = invoiceDisplayStatus(invoice);
       // Hide superseded OCR drafts from the default list
       if (displayStatus === 'cancelled' && statusFilter !== 'cancelled') return false;
-      if (statusFilter !== 'all' && displayStatus !== statusFilter) return false;
+      if (!matchesStatusFilter(invoice, statusFilter)) return false;
       if (!query) return true;
       return [
         invoice.suppliers?.name,
@@ -154,6 +179,8 @@ export default function InvoicesPage() {
         invoiceDisplayTotal(invoice),
         invoice.due_date,
         invoice.status,
+        invoice.tally_sync_status,
+        invoice.girn_number,
         invoice.customer_GSTIN,
       ]
         .join(' ')
@@ -184,6 +211,10 @@ export default function InvoicesPage() {
     const displayStatus = invoiceDisplayStatus(item);
     if (displayStatus === 'needs_review') {
       navigate(`/invoices/${item.id}/review`);
+      return;
+    }
+    if (statusFilter === 'girn_due' && isGirnDue(item)) {
+      navigate(`/girn/create?invoice_id=${encodeURIComponent(item.id)}&reviewed=1`);
       return;
     }
     navigate(`/invoices/${item.id}`);
@@ -239,10 +270,10 @@ export default function InvoicesPage() {
     }
   }
 
-  const emptyTitle = search.trim() || statusFilter !== 'all'
+  const emptyTitle = search.trim() || statusFilter
     ? 'No matching invoices'
     : 'No invoices yet';
-  const emptyDescription = search.trim() || statusFilter !== 'all'
+  const emptyDescription = search.trim() || statusFilter
     ? 'Try a different search or status filter.'
     : 'Upload a vendor invoice to start the accounts-payable list.';
 
@@ -339,17 +370,13 @@ export default function InvoicesPage() {
         </label>
         <label>
           Status
-          <select
+          <FormSearchSelect
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            aria-label="Filter by status"
-          >
-            {STATUS_OPTIONS.map((opt) => (
-              <option key={opt.id} value={opt.id}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => setStatusFilter(value || '')}
+            options={STATUS_OPTIONS}
+            placeholder="All statuses"
+            emptyMessage="No statuses"
+          />
         </label>
       </div>
 
@@ -425,9 +452,21 @@ export default function InvoicesPage() {
                     </td>
                     <td>{formatDisplayDate(item.due_date)}</td>
                     <td>
-                      <StatusBadge status={statusTone(invoiceDisplayStatus(item))}>
-                        {statusLabel(invoiceDisplayStatus(item))}
-                      </StatusBadge>
+                      <div className="invoice-status-stack">
+                        <StatusBadge status={statusTone(invoiceDisplayStatus(item))}>
+                          {statusLabel(invoiceDisplayStatus(item))}
+                        </StatusBadge>
+                        {isGirnDue(item) ? (
+                          <StatusBadge status="ready">GIRN DUE</StatusBadge>
+                        ) : null}
+                        {isTallyUnsynced(item) ? (
+                          <StatusBadge status="on_hold">
+                            TALLY {String(item.tally_sync_status || 'pending').toUpperCase()}
+                          </StatusBadge>
+                        ) : isConfirmedApInvoice(item) && item.tally_sync_status === 'synced' ? (
+                          <StatusBadge status="completed">TALLY SYNCED</StatusBadge>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
