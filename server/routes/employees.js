@@ -5,8 +5,11 @@ const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
 const {
   hashPassword,
+  hashDefaultEmployeePassword,
+  isDefaultEmployeePassword,
   sanitizeEmployee,
   assertPasswordPolicy,
+  DEFAULT_EMPLOYEE_PASSWORD,
 } = require('../services/passwordService');
 
 const router = express.Router();
@@ -386,14 +389,20 @@ router.post('/', verifyEmployeeAuth, upload.fields([
       must_change_password: true,
     };
 
-    const plainPassword = password != null && String(password).trim() !== '' ? String(password) : null;
-    if (plainPassword) {
-      try {
+    // Blank password → default welcome*1*; custom password still requires a first change.
+    const plainPassword =
+      password != null && String(password).trim() !== ''
+        ? String(password).trim()
+        : DEFAULT_EMPLOYEE_PASSWORD;
+    try {
+      if (isDefaultEmployeePassword(plainPassword)) {
+        insertPayload.password_hash = await hashDefaultEmployeePassword();
+      } else {
         assertPasswordPolicy(plainPassword);
-      } catch (policyErr) {
-        return res.status(policyErr.status || 400).json({ error: policyErr.message });
+        insertPayload.password_hash = await hashPassword(plainPassword);
       }
-      insertPayload.password_hash = await hashPassword(plainPassword);
+    } catch (policyErr) {
+      return res.status(policyErr.status || 400).json({ error: policyErr.message });
     }
 
     const { data: newEmployee, error: insertError } = await supabase
@@ -526,11 +535,15 @@ router.put('/:id', verifyEmployeeAuth, upload.fields([
       password != null && String(password).trim() !== '' ? String(password).trim() : null;
     if (plainPassword) {
       try {
-        assertPasswordPolicy(plainPassword);
+        if (isDefaultEmployeePassword(plainPassword)) {
+          updatePayload.password_hash = await hashDefaultEmployeePassword();
+        } else {
+          assertPasswordPolicy(plainPassword);
+          updatePayload.password_hash = await hashPassword(plainPassword);
+        }
       } catch (policyErr) {
         return res.status(policyErr.status || 400).json({ error: policyErr.message });
       }
-      updatePayload.password_hash = await hashPassword(plainPassword);
       updatePayload.password = null;
       updatePayload.must_change_password = true;
       updatePayload.password_changed_at = null;

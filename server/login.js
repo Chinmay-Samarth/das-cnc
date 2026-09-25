@@ -8,6 +8,7 @@ const {
   setEmployeePassword,
   lazyUpgradePlaintextPassword,
   assertPasswordPolicy,
+  isDefaultEmployeePassword,
 } = require('./services/passwordService');
 
 const router = express.Router();
@@ -105,11 +106,27 @@ router.post('/login', authSensitiveLimiter, async (req, res) => {
 
     await lazyUpgradePlaintextPassword(employee, password);
 
+    // Still on the default welcome password → must change before using the app.
+    let mustChange = Boolean(employee.must_change_password);
+    if (isDefaultEmployeePassword(password)) {
+      mustChange = true;
+      if (!employee.must_change_password) {
+        await supabase
+          .from('employees')
+          .update({ must_change_password: true })
+          .eq('id', employee.id);
+      }
+    }
+
     const token = issueToken(employee);
+    const publicEmployee = employeePublicPayload({
+      ...employee,
+      must_change_password: mustChange,
+    });
 
     return res.json({
       token,
-      employee: employeePublicPayload(employee),
+      employee: publicEmployee,
     });
   } catch (err) {
     console.error('Login error:', err);
@@ -196,15 +213,18 @@ router.post('/change-password', authSensitiveLimiter, verifyEmployeeAuth, async 
       return res.status(403).json({ error: 'Account is inactive' });
     }
 
-    const mustChange = Boolean(employee.must_change_password);
-    if (!mustChange) {
-      if (!currentPassword) {
-        return res.status(400).json({ error: 'currentPassword is required' });
-      }
-      const ok = await verifyPassword(currentPassword, employee);
-      if (!ok) {
-        return res.status(401).json({ error: 'Current password is incorrect' });
-      }
+    if (!currentPassword) {
+      return res.status(400).json({ error: 'currentPassword is required' });
+    }
+    const ok = await verifyPassword(currentPassword, employee);
+    if (!ok) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    if (isDefaultEmployeePassword(newPassword)) {
+      return res.status(400).json({
+        error: 'Choose a different password. The default welcome password cannot be kept.',
+      });
     }
 
     await setEmployeePassword(employeeId, newPassword, { mustChange: false });

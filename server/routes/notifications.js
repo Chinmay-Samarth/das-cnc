@@ -12,6 +12,11 @@ const {
 } = require('../services/attendanceAlertEngine');
 const { evaluateTomorrowDeliveryStockAlerts } = require('../services/inventoryAlertEngine');
 const { evaluateSalesInvoiceOverdueAlerts } = require('../services/salesInvoiceAlertEngine');
+const { evaluatePurchaseInvoiceOverdueAlerts } = require('../services/purchaseInvoiceAlertEngine');
+const {
+  evaluatePurchaseInvoiceTallyUnsyncedAlerts,
+  evaluateSalesInvoiceTallyUnsyncedAlerts,
+} = require('../services/invoiceTallyAlertEngine');
 const { evaluateProductionAlerts } = require('../services/productionAlertEngine');
 const { evaluateReorderAlerts } = require('../services/reorderAlertEngine');
 
@@ -115,7 +120,19 @@ router.post(
     const reorder = await evaluateReorderAlerts();
     const production = await evaluateProductionAlerts();
     const invoices = await evaluateSalesInvoiceOverdueAlerts();
-    res.json({ attendance, inventory, reorder, production, invoices });
+    const purchaseOverdue = await evaluatePurchaseInvoiceOverdueAlerts();
+    const purchaseTally = await evaluatePurchaseInvoiceTallyUnsyncedAlerts();
+    const salesTally = await evaluateSalesInvoiceTallyUnsyncedAlerts();
+    res.json({
+      attendance,
+      inventory,
+      reorder,
+      production,
+      invoices,
+      purchaseOverdue,
+      purchaseTally,
+      salesTally,
+    });
   })
 );
 

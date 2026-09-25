@@ -21,9 +21,11 @@ const LIST_SELECT = `
   total_amount,
   tax_amount,
   base_amount,
+  round_off,
   customer_GSTIN,
   IRN,
   status,
+  review_status,
   supplier_id,
   file_url,
   created_at,
@@ -34,6 +36,10 @@ const LIST_SELECT = `
   payment_reference,
   payment_deduction,
   payment_remarks,
+  po_advance_amount,
+  tally_sync_status,
+  tally_sync_error,
+  tally_synced_at,
   suppliers(name, GSTIN)
 `;
 
@@ -112,7 +118,21 @@ async function listInvoicesByDateRange({ from, to, includeLines = false } = {}) 
 
   const { data, error } = await query;
   if (error) throw httpError(error.message, 500);
-  return data || [];
+
+  const invoices = data || [];
+  if (includeLines || !invoices.length) return invoices;
+
+  const girnMap = await loadGirnByInvoiceIds(invoices.map((row) => row.id));
+  return invoices.map((invoice) => {
+    const girns = girnMap.get(invoice.id) || [];
+    const primary = girns[0] || null;
+    return {
+      ...invoice,
+      has_girn: girns.length > 0,
+      girn_id: primary?.id || null,
+      girn_number: primary?.girn_number || null,
+    };
+  });
 }
 
 function toNumberOrNull(value) {
@@ -480,4 +500,5 @@ module.exports = {
   listInvoicesByDateRange,
   buildVendorInvoiceWorkbook,
   exportVendorInvoicesExcel,
+  loadGirnByInvoiceIds,
 };

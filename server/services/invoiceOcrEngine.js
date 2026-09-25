@@ -10,7 +10,7 @@ const supabase = createClient(
 );
 
 const INVOICE_OCR_URL =
-  process.env.INVOICE_OCR_URL || 'http://127.0.0.1:8000/parse';
+  process.env.INVOICE_OCR_URL || 'http://127.0.0.1:8001/parse';
 const INVOICE_OCR_HEALTH_URL =
   process.env.INVOICE_OCR_HEALTH_URL ||
   INVOICE_OCR_URL.replace(/\/parse\/?$/, '/health');
@@ -282,7 +282,12 @@ function wrapOcrError(err) {
   if (!err.response && (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND')) {
     detail =
       `Cannot reach Invoice OCR at ${INVOICE_OCR_URL}. ` +
-      'Start it with: uvicorn app.main:app --host 0.0.0.0 --port 8000';
+      'Start it with start_ocr_windows.bat (port 8080) or: uvicorn app.main:app --host 0.0.0.0 --port 8080';
+  } else if (!err.response && err.code === 'ECONNRESET') {
+    detail =
+      `Invoice OCR at ${INVOICE_OCR_URL} closed the connection (ECONNRESET). ` +
+      'The OCR process likely crashed mid-parse. Restart with start_ocr_windows.bat ' +
+      '(OCR_ENABLE_MKLDNN=false, single-thread PP-OCRv4) and try again.';
   } else if (!err.response && err.code === 'ECONNABORTED') {
     detail = `OCR request timed out after ${INVOICE_OCR_TIMEOUT_MS}ms`;
   }

@@ -29,6 +29,7 @@ const {
   parseInvoiceDateRange,
   listInvoicesByDateRange,
   exportVendorInvoicesExcel,
+  loadGirnByInvoiceIds,
 } = require('../services/invoiceExportEngine');
 const { buildReviewPayload, confirmReview, abandonReviewDraft } = require('../services/invoiceReviewEngine');
 const { buildDraftGirnFromInvoice } = require('../services/girnDraftEngine');
@@ -264,12 +265,10 @@ router.get('/:id/review', verifyEmployeeAuth, async (req, res) => {
 router.post('/:id/confirm-review', verifyEmployeeAuth, async (req, res) => {
   try {
     const invoice = await confirmReview(req.params.id, req.body || {}, actorId(req));
-    const includeDraft = req.body?.include_girn_draft || req.query.context === 'girn';
-    const response = { invoice };
-    if (includeDraft) {
-      response.draft_girn = await buildDraftGirnFromInvoice(invoice, actorId(req));
-    }
-    return res.json(response);
+    // Always build a GIRN draft — confirmed purchase invoices are due for
+    // Register & review next (Tally purchase sync runs on GIRN register).
+    const draft_girn = await buildDraftGirnFromInvoice(invoice, actorId(req));
+    return res.json({ invoice, draft_girn });
   } catch (err) {
     console.error('Invoice review confirm error:', err);
     return sendServiceError(res, err);
@@ -311,11 +310,18 @@ router.get('/:id', verifyEmployeeAuth, async (req, res) => {
       0
     );
 
+    const girnMap = await loadGirnByInvoiceIds([invoiceId]);
+    const girns = girnMap.get(invoiceId) || [];
+    const primaryGirn = girns[0] || null;
+
     return res.json({
       invoice: {
         ...invoice,
         po_advance_amount: poAdvance || invoice.po_advance_amount || 0,
         amount_due_after_advance,
+        has_girn: girns.length > 0,
+        girn_id: primaryGirn?.id || null,
+        girn_number: primaryGirn?.girn_number || null,
       },
       needs_review,
       ocr_confidence_level: invoice.ocr_confidence_level,

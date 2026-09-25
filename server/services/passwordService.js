@@ -3,6 +3,8 @@ const { createClient } = require('@supabase/supabase-js');
 
 const BCRYPT_ROUNDS = 12;
 const MIN_PASSWORD_LENGTH = 8;
+/** Default password for new employees until they change it. */
+const DEFAULT_EMPLOYEE_PASSWORD = 'welcome*1*';
 
 let supabase;
 function getSupabase() {
@@ -19,8 +21,25 @@ function assertPasswordPolicy(plain) {
     err.status = 400;
     throw err;
   }
+  if (value === DEFAULT_EMPLOYEE_PASSWORD) {
+    const err = new Error(
+      'Choose a different password. The default welcome password cannot be kept.'
+    );
+    err.status = 400;
+    throw err;
+  }
   return value;
 }
+
+function isDefaultEmployeePassword(plain) {
+  return String(plain || '') === DEFAULT_EMPLOYEE_PASSWORD;
+}
+
+/** Hash for the default welcome password (create / admin reset). */
+async function hashDefaultEmployeePassword() {
+  return bcrypt.hash(DEFAULT_EMPLOYEE_PASSWORD, BCRYPT_ROUNDS);
+}
+
 
 async function hashPassword(plain) {
   return bcrypt.hash(assertPasswordPolicy(plain), BCRYPT_ROUNDS);
@@ -131,7 +150,10 @@ async function migratePlaintextPasswords() {
 module.exports = {
   BCRYPT_ROUNDS,
   MIN_PASSWORD_LENGTH,
+  DEFAULT_EMPLOYEE_PASSWORD,
   assertPasswordPolicy,
+  isDefaultEmployeePassword,
+  hashDefaultEmployeePassword,
   hashPassword,
   verifyPassword,
   sanitizeEmployee,
