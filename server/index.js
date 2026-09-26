@@ -66,6 +66,7 @@ app.use('/api/masters', require('./routes/masters/inspectionPlans'));
 app.use('/api/masters', require('./routes/masters/activityFlows'));
 app.use('/api/masters', require('./routes/masters'));
 app.use('/api/invoices', require('./routes/invoices'))
+app.use('/api/media', require('./routes/mediaProxy'));
 app.use('/api/sales-invoices', require('./routes/salesInvoices'));
 app.use('/api/suppliers', require('./routes/supplier'));
 app.use('/api/customers', require('./routes/customers'))
