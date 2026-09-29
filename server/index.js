@@ -6,6 +6,7 @@ const cron       = require('node-cron');
 const axios      = require('axios');
 const helmet     = require('helmet');
 const rateLimit  = require('express-rate-limit');
+const { rateLimitKey } = require('./utils/rateLimitKey');
 const { markAbsentees } = require('./services/attendanceEngine');
 const { syncBiometricData } = require('./services/biometricSync');
 const { evaluateAttendanceAlerts } = require('./services/attendanceAlertEngine');
@@ -53,6 +54,7 @@ const apiLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKey,
   message: { error: 'Too many requests. Slow down and try again.' },
 });
 app.use('/api', apiLimiter);

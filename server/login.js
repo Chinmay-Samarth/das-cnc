@@ -1,6 +1,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
+const { rateLimitKey } = require('./utils/rateLimitKey');
 const { createClient } = require('@supabase/supabase-js');
 const { computeAccessLevel } = require('./utils/accessLevel');
 const {
@@ -26,6 +27,7 @@ const authSensitiveLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKey,
   message: { error: 'Too many attempts. Try again in 15 minutes.' },
 });
 
