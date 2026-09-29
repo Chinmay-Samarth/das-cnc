@@ -16,12 +16,11 @@ function getSocketUrl() {
   if (import.meta.env.VITE_SOCKET_URL) {
     return import.meta.env.VITE_SOCKET_URL;
   }
-  if (import.meta.env.DEV) {
-    return window.location.origin;
+  const apiUrl = import.meta.env.VITE_API_URL;
+  if (apiUrl && /^https?:\/\//i.test(apiUrl)) {
+    return apiUrl.replace(/\/api\/?$/, '');
   }
-  // const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-  const apiUrl = import.meta.env.VITE_API_URL || 'https://das-cnc.onrender.com/api';
-  return apiUrl.replace(/\/api\/?$/, '');
+  return window.location.origin;
 }
 
 export function SocketProvider({ children }) {
