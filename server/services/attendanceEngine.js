@@ -86,6 +86,33 @@ function timeToMinutes(timeStr) {
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
+/**
+ * Device PunchDate is DD/MM/YYYY (TextFileDataMMYYYY).
+ * Never pass those strings to Date() — that reads MM/DD and files 10 June onto 6 October.
+ */
+function parseSlashDate(timestamp) {
+  const ddmm = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/.exec(timestamp);
+  if (!ddmm) return null;
+  return {
+    day: parseInt(ddmm[1], 10),
+    month: parseInt(ddmm[2], 10),
+    year: parseInt(ddmm[3], 10),
+    hours: ddmm[4] != null ? parseInt(ddmm[4], 10) : 0,
+    minutes: ddmm[5] != null ? parseInt(ddmm[5], 10) : 0,
+  };
+}
+
+/** Prefer the device PunchDate over a previously stored captured_at that may have been swapped. */
+function deviceCapturedAt(captured_at, raw_payload) {
+  const punchDate = raw_payload && typeof raw_payload === 'object'
+    ? raw_payload.PunchDate || raw_payload.punchDate
+    : null;
+  if (typeof punchDate === 'string' && parseSlashDate(punchDate.trim())) {
+    return punchDate.trim();
+  }
+  return captured_at;
+}
+
 function parseLocalTimestamp(timestamp) {
   let year;
   let month;
@@ -94,13 +121,13 @@ function parseLocalTimestamp(timestamp) {
   let minutes;
 
   if (typeof timestamp === 'string') {
-    const ddmm = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(timestamp);
+    const ddmm = parseSlashDate(timestamp.trim());
     if (ddmm) {
-      day = parseInt(ddmm[1], 10);
-      month = parseInt(ddmm[2], 10);
-      year = parseInt(ddmm[3], 10);
-      hours = parseInt(ddmm[4], 10);
-      minutes = parseInt(ddmm[5], 10);
+      day = ddmm.day;
+      month = ddmm.month;
+      year = ddmm.year;
+      hours = ddmm.hours;
+      minutes = ddmm.minutes;
     } else {
       const iso = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(timestamp);
       if (iso) {
@@ -109,7 +136,7 @@ function parseLocalTimestamp(timestamp) {
         day = parseInt(iso[3], 10);
         hours = parseInt(iso[4], 10);
         minutes = parseInt(iso[5], 10);
-      } else {
+      } else if (!timestamp.includes('/')) {
         const dateObj = new Date(timestamp);
         year = dateObj.getFullYear();
         month = dateObj.getMonth() + 1;
@@ -377,7 +404,20 @@ async function ingestBiometricLog({ employee_code, punch_id, captured_at, raw_pa
     .limit(1)
     .maybeSingle();
   if (findErr) throw findErr;
-  if (existing) return existing;
+  if (existing) {
+    // Heal logs stored via MM/DD (10/06/2026 → 6 Oct) so a later reprocess cannot
+    // close the wrong calendar day.
+    if (localTimestampToISO(existing.captured_at) !== captured_at) {
+      const { error: healErr } = await supabase
+        .from('biometric_logs')
+        .update({ captured_at })
+        .eq('employee_code', code)
+        .eq('punch_id', punch_id);
+      if (healErr) throw healErr;
+      return { ...existing, captured_at };
+    }
+    return existing;
+  }
 
   const row = {
     employee_code: code,
@@ -654,11 +694,12 @@ async function processBiometricEvent(payload, options = {}) {
   }
 
   const { employee_code, punch_id, captured_at, raw_payload, event_type: softHint } = payload || {};
-  if (!employee_code || punch_id == null || !captured_at) {
+  const sourceTime = deviceCapturedAt(captured_at, raw_payload);
+  if (!employee_code || punch_id == null || !sourceTime) {
     return failResult('MISSING_FIELDS');
   }
 
-  const punchTime = localTimestampToISO(captured_at);
+  const punchTime = localTimestampToISO(sourceTime);
   let biometricLogId = null;
 
   try {
@@ -1214,6 +1255,7 @@ module.exports = {
   TERMINAL_ERRORS,
   parseLocalTimestamp,
   localTimestampToISO,
+  deviceCapturedAt,
   isInLunchBand,
   LUNCH_START_MINUTES,
   LUNCH_END_MINUTES,

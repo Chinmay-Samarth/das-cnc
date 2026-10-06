@@ -13,6 +13,8 @@ const {
   classifyPunchForSession,
   resolveShiftAndDate,
   isInLunchBand,
+  parseLocalTimestamp,
+  deviceCapturedAt,
 } = require('../services/attendanceEngine');
 const { nextSyncCursor } = require('../services/biometricSync');
 
@@ -139,6 +141,16 @@ function run() {
       '2026-01-27 19:00:00'
     ) === 'CHECK_OUT',
     'skipped lunch evening out'
+  );
+
+  // Device dates are DD/MM. 10/06 is 10 June, not 6 October.
+  const juneTen = parseLocalTimestamp('10/06/2026 20:07:00');
+  assert(juneTen.dateStr === '2026-06-10' && juneTen.hours === 20 && juneTen.minutes === 7, '10/06 is 10 June 20:07');
+  const octSix = parseLocalTimestamp('06/10/2026 08:01:00');
+  assert(octSix.dateStr === '2026-10-06' && octSix.hours === 8, '06/10 is 6 October');
+  assert(
+    deviceCapturedAt('2026-10-06 20:07:00', { PunchDate: '10/06/2026 20:07:00' }) === '10/06/2026 20:07:00',
+    'PunchDate wins over a swapped captured_at'
   );
 
   const cursor = nextSyncCursor('100', [
