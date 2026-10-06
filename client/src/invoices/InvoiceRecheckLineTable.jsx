@@ -1,6 +1,6 @@
 import MasterItemSelect from '../girn/MasterItemSelect';
 import { CATEGORY_OPTIONS, getCategoryConfig, hasMasterLink } from '../girn/girnCategoryConfig';
-import { Trash2 } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 
 function fmt(value) {
   const n = Number(value);
@@ -13,6 +13,7 @@ export default function InvoiceRecheckLineTable({
   onMasterSelect,
   onCategoryChange,
   onRemove,
+  onAdd,
 }) {
   return (
     <div className="invoice-recheck-lines">
@@ -32,7 +33,7 @@ export default function InvoiceRecheckLineTable({
           {lines.length === 0 ? (
             <tr>
               <td colSpan={7} className="invoice-recheck-empty">
-                No line items. Confirm will save the invoice without lines.
+                No line items. Add a line if the invoice has items OCR did not pick up.
               </td>
             </tr>
           ) : null}
@@ -44,10 +45,23 @@ export default function InvoiceRecheckLineTable({
             return (
               <tr key={idx}>
                 <td>
-                  <div className="invoice-recheck-line-name">{line.scanned_description || line.description || '—'}</div>
-                  {line.match_confidence && line.match_confidence !== 'high' ? (
-                    <span className="invoice-recheck-match muted">{line.match_confidence} match</span>
-                  ) : null}
+                  {line.manual || !(line.scanned_description || line.description) ? (
+                    <input
+                      type="text"
+                      className="invoice-recheck-input"
+                      value={line.scanned_description || line.item_description || ''}
+                      onChange={(e) => onChange(idx, 'scanned_description', e.target.value)}
+                      placeholder="Invoice line"
+                      aria-label={`Invoice line ${idx + 1}`}
+                    />
+                  ) : (
+                    <>
+                      <div className="invoice-recheck-line-name">{line.scanned_description || line.description || '—'}</div>
+                      {line.match_confidence && line.match_confidence !== 'high' ? (
+                        <span className="invoice-recheck-match muted">{line.match_confidence} match</span>
+                      ) : null}
+                    </>
+                  )}
                 </td>
                 <td>
                   <select
@@ -120,6 +134,12 @@ export default function InvoiceRecheckLineTable({
           })}
         </tbody>
       </table>
+      <div className="invoice-recheck-tax-footer">
+        <button type="button" className="invoice-recheck-add-tax" onClick={onAdd}>
+          <Plus size={15} />
+          Add line item
+        </button>
+      </div>
     </div>
   );
 }

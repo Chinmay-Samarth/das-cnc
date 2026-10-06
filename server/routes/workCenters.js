@@ -10,6 +10,7 @@ const {
   addMachineToCenter,
   removeMachineFromCenter,
 } = require('../services/workCenterEngine');
+const { isAdminUser } = require('../utils/accessLevel');
 
 const router = express.Router();
 const supabase = createClient(
@@ -338,6 +339,96 @@ router.delete(
     if (error) throw error;
     if (!data) {
       return res.status(404).json({ error: 'Work center not found' });
+    }
+
+    return res.json({ success: true });
+  })
+);
+
+// Tables whose rows are production history for a work center. Any row blocks a
+// permanent delete so routes, cards and efficiency records are never orphaned.
+const WORK_CENTER_HISTORY_TABLES = [
+  { table: 'activity_flow_nodes', label: 'activity flow steps' },
+  { table: 'production_campaigns', label: 'campaigns' },
+  { table: 'production_horizon_waves', label: 'horizon waves' },
+  { table: 'production_cards', label: 'daily production cards' },
+  { table: 'production_op_cards', label: 'operation cards' },
+  { table: 'production_lots', label: 'production lots' },
+  { table: 'production_card_op_completions', label: 'card completions' },
+  { table: 'production_lot_op_completions', label: 'lot completions' },
+  { table: 'worker_efficiency_entries', label: 'efficiency entries' },
+  { table: 'wc_day_contingencies', label: 'acting-manager days' },
+];
+
+function isMissingTableError(error) {
+  const code = String(error?.code || '');
+  return code === '42P01' || code === 'PGRST205';
+}
+
+async function findWorkCenterHistory(workCenterId) {
+  const found = [];
+  for (const { table, label } of WORK_CENTER_HISTORY_TABLES) {
+    const { count, error } = await supabase
+      .from(table)
+      .select('id', { count: 'exact', head: true })
+      .eq('work_center_id', workCenterId);
+    if (error) {
+      if (isMissingTableError(error)) continue;
+      throw error;
+    }
+    if (count) found.push(`${count} ${label}`);
+  }
+  return found;
+}
+
+// DELETE /api/work-centers/:id/permanent — hard delete when the center has no history
+router.delete(
+  '/:id/permanent',
+  verifyEmployeeAuth,
+  wrap(async (req, res) => {
+    if (!isAdminUser(req.user)) {
+      return res.status(403).json({ error: 'Only admins can delete work centers' });
+    }
+    if (!isValidUUID(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid work center id' });
+    }
+
+    const { data: existing, error: findErr } = await supabase
+      .from('work_centers')
+      .select('id, name')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (findErr) throw findErr;
+    if (!existing) {
+      return res.status(404).json({ error: 'Work center not found' });
+    }
+
+    const history = await findWorkCenterHistory(req.params.id);
+    if (history.length) {
+      return res.status(409).json({
+        error: `${existing.name || 'This work center'} has production history (${history.join(
+          ', '
+        )}) and cannot be deleted. Deactivate it instead.`,
+        history,
+      });
+    }
+
+    for (const table of ['employee_work_centers', 'work_center_machines']) {
+      const { error } = await supabase.from(table).delete().eq('work_center_id', req.params.id);
+      if (error && !isMissingTableError(error)) throw error;
+    }
+
+    const { error: delErr } = await supabase
+      .from('work_centers')
+      .delete()
+      .eq('id', req.params.id);
+    if (delErr) {
+      if (String(delErr.code) === '23503') {
+        return res.status(409).json({
+          error: 'This work center is still referenced by other records. Deactivate it instead.',
+        });
+      }
+      throw delErr;
     }
 
     return res.json({ success: true });

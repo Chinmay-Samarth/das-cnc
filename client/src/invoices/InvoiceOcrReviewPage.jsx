@@ -213,7 +213,13 @@ export default function InvoiceOcrReviewPage() {
   function handleLineChange(idx, field, value) {
     setLines((prev) => {
       const next = [...prev];
-      next[idx] = recalcLine({ ...next[idx], [field]: value });
+      const patch = { [field]: value };
+      if (field === 'scanned_description') patch.description = value;
+      if (field === 'item_description' && !String(next[idx].scanned_description || '').trim()) {
+        patch.description = value;
+        patch.scanned_description = value;
+      }
+      next[idx] = recalcLine({ ...next[idx], ...patch });
       return next;
     });
   }
@@ -249,6 +255,23 @@ export default function InvoiceOcrReviewPage() {
 
   function handleRemoveLine(idx) {
     setLines((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function handleAddLine() {
+    setLines((prev) => [
+      ...prev,
+      recalcLine({
+        manual: true,
+        scanned_description: '',
+        item_description: '',
+        item_category: 'raw_material',
+        master_record_id: null,
+        master_record_label: '',
+        quantity: '',
+        unit_price: '',
+        total: 0,
+      }),
+    ]);
   }
 
   function syncHeaderTotal(nextHeader, nextTaxes = taxes) {
@@ -361,10 +384,17 @@ export default function InvoiceOcrReviewPage() {
         round_off: roundOff,
         tax_amount: taxAmount,
         tax_items: normalizedTaxes,
-        lines: lines.map((line) => ({
-          ...line,
-          scanned_description: line.scanned_description || line.description || '',
-        })),
+        lines: lines
+          .filter((line) => {
+            const text = String(line.scanned_description || line.description || line.item_description || '').trim();
+            const qty = line.quantity === '' || line.quantity == null ? null : Number(line.quantity);
+            const rate = line.unit_price === '' || line.unit_price == null ? null : Number(line.unit_price);
+            return Boolean(text || line.master_record_id || qty != null || rate != null);
+          })
+          .map((line) => ({
+            ...line,
+            scanned_description: line.scanned_description || line.description || line.item_description || '',
+          })),
       };
 
       const { data } = await api.post(`/invoices/${id}/confirm-review`, payload);
@@ -610,6 +640,7 @@ export default function InvoiceOcrReviewPage() {
               onMasterSelect={handleMasterSelect}
               onCategoryChange={handleCategoryChange}
               onRemove={handleRemoveLine}
+              onAdd={handleAddLine}
             />
           </div>
 

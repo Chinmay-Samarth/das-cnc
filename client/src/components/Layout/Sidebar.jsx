@@ -30,6 +30,7 @@ import {
   IndianRupee,
   Plus,
   ShoppingCart,
+  Image,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'das-sidebar-open-sections';
@@ -72,6 +73,7 @@ const NAV_SECTIONS = [
       { to: '/suppliers', label: 'Suppliers', icon: Package },
       { to: '/stock', label: 'Stock', icon: Warehouse },
       { to: '/girn', label: 'GIRN', icon: ClipboardList },
+      { to: '/images', label: 'Images', icon: Image },
       { to: '/invoices', label: 'Purchase Invoices', icon: Receipt },
       { to: '/purchase-payments', label: 'Purchase Payments', icon: Banknote },
       { to: '/sales-invoices', label: 'Sales Invoices', icon: IndianRupee },

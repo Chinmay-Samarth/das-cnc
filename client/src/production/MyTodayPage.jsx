@@ -4,7 +4,6 @@ import {
   CalendarDays,
   ChevronDown,
   ChevronRight,
-  Copy,
   Package,
   RefreshCw,
   UserCheck,
@@ -13,7 +12,14 @@ import {
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
 import { useSocket } from '../socket/socketContext';
-import { PageHeader, EmptyState, StatusBadge, TruncatedText } from '../components/mes';
+import {
+  PageHeader,
+  EmptyState,
+  StatusBadge,
+  TruncatedText,
+  ShopCardPrintDialog,
+  LotCardSheet,
+} from '../components/mes';
 import { appAlert } from '../components/dialog';
 import { formatDisplayDate } from '../utils/dateFormat';
 import FormSearchSelect from '../components/shared/FormSearchSelect';
@@ -116,63 +122,25 @@ function EfficiencyHero({ efficiency, good, goal, opsCompletedToday, hasActive }
   );
 }
 
-function LotReceiptModal({ lot, cardLabel, onClose }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copyLotNumber() {
-    try {
-      await navigator.clipboard.writeText(String(lot.lot_number));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* ignore */
-    }
-  }
-
+function LotReceiptModal({ lot, cardLabel, row, onClose }) {
   return (
-    <div className="pc-modal-backdrop" role="presentation" onClick={onClose}>
-      <div
-        className="pc-modal lot-receipt-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="lot-receipt-title"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <p className="lot-receipt-eyebrow">Lot card ready</p>
-        <h2 id="lot-receipt-title">Write this lot number on the card</h2>
-        <p className="muted" style={{ margin: '0 0 16px' }}>
-          Send this lot card with the manufactured components to the next step
-          {cardLabel ? ` for ${cardLabel}` : ''}.
-        </p>
-        <div className="lot-receipt-number" aria-live="polite">
-          {lot.lot_number}
-        </div>
-        <div className="lot-receipt-meta">
-          <span>
-            Qty <strong>{Number(lot.quantity || 0)}</strong>
-          </span>
-          {lot.current_node_label ? (
-            <span>
-              Next <strong>{lot.current_node_label}</strong>
-              {lot.current_node_type ? ` (${lot.current_node_type})` : ''}
-            </span>
-          ) : lot.ready_for_dispatch ? (
-            <span>
-              Next <strong>Ready for Dispatch</strong>
-            </span>
-          ) : null}
-        </div>
-        <div className="pc-modal-actions" style={{ marginTop: 20 }}>
-          <button type="button" className="mes-btn mes-btn-secondary" onClick={copyLotNumber}>
-            <Copy size={16} />
-            {copied ? 'Copied' : 'Copy lot #'}
-          </button>
-          <button type="button" className="mes-btn mes-btn-primary" onClick={onClose} autoFocus>
-            Got it — send lot
-          </button>
-        </div>
-      </div>
-    </div>
+    <ShopCardPrintDialog
+      eyebrow="Lot card ready"
+      title="Print the lot card"
+      subtitle={`Send this card with the manufactured components to the next step${
+        cardLabel ? ` for ${cardLabel}` : ''
+      }. Write the GIRN number and machine number on the card.`}
+      onConfirmPrinted={onClose}
+    >
+      <LotCardSheet
+        lotNumber={lot.lot_number}
+        componentName={cardLabel}
+        date={row?.date}
+        operator={row?.operator}
+        operation={row?.operation}
+        quantity={row?.quantity}
+      />
+    </ShopCardPrintDialog>
   );
 }
 
@@ -781,6 +749,7 @@ export default function MyTodayPage() {
 function ManagerMyToday({ floorOnly, navigate }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { subscribe } = useSocket();
+  const { user } = useAuth();
   const [managedWcs, setManagedWcs] = useState([]);
   const [selectedWc, setSelectedWc] = useState('');
   const [command, setCommand] = useState(null);
@@ -883,6 +852,7 @@ function ManagerMyToday({ floorOnly, navigate }) {
 
     setBusyId(card.id);
     setError(null);
+    const postedGood = postForm.good !== '' ? Number(postForm.good) : 0;
     try {
       let receiptLot = null;
 
@@ -922,6 +892,15 @@ function ManagerMyToday({ floorOnly, navigate }) {
           lot: receiptLot,
           cardLabel: command?.active_campaign?.component_label || null,
           unlockEfficiency: true,
+          row: {
+            date: formatDisplayDate(card.work_date || plantTodayStr()),
+            operator: user?.name || '',
+            operation:
+              card.current_node_label ||
+              command?.active_campaign?.operation_label ||
+              '',
+            quantity: postedGood || Number(receiptLot.quantity || 0) || '',
+          },
         });
       }
 
@@ -1336,6 +1315,7 @@ function ManagerMyToday({ floorOnly, navigate }) {
         <LotReceiptModal
           lot={lotReceipt.lot}
           cardLabel={lotReceipt.cardLabel}
+          row={lotReceipt.row}
           onClose={() => {
             if (lotReceipt.unlockEfficiency) setEfficiencyUnlocked(true);
             setLotReceipt(null);

@@ -72,6 +72,7 @@ app.use('/api/customers', require('./routes/customers'))
 app.use('/api/girn', require('./routes/girn'));
 app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/search', require('./routes/search'));
+app.use('/api/image-library', require('./routes/imageLibrary'));
 app.use('/api/work-centers', require('./routes/workCenters'));
 app.use('/api/blanket-pos', require('./routes/blanketPos'));
 app.use('/api/purchase-orders', require('./routes/purchaseOrders'));
