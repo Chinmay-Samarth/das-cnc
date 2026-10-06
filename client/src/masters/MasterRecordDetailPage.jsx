@@ -181,7 +181,7 @@ function RepeatableSectionView({ section, repeatableValues }) {
   }
 
   return (
-    <div className="mrd-repeat-table-wrap">
+    <div className="app-table-wrap">
       <table className="app-table">
         <thead>
           <tr>
@@ -239,7 +239,7 @@ function MasterRecordStockTab({ recordId }) {
   if (!rows.length) return <p className="muted">No stock recorded for this item yet.</p>
 
   return (
-    <div className="employees-table-wrap">
+    <div className="app-table-wrap">
       <table className="app-table">
         <thead>
           <tr>

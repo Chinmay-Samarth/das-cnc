@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRight, CalendarRange, Factory, RefreshCw, Rows3 } from 'lucide-react';
+import { CalendarRange, Factory, Package, RefreshCw, Rows3, Target, Warehouse } from 'lucide-react';
 import api from '../api/client';
 import {
   PageHeader,
@@ -10,7 +10,9 @@ import {
   StatusBadge,
   TruncatedText,
 } from '../components/mes';
+import FormSearchSelect from '../components/shared/FormSearchSelect';
 import { appAlert, appConfirm } from '../components/dialog';
+import { formatDisplayDate } from '../utils/dateFormat';
 import HorizonGantt from './HorizonGantt';
 
 function addMonths(dateStr, months) {
@@ -46,12 +48,46 @@ function waveStatusLabel(status) {
   return status || '—';
 }
 
+function qty(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return n.toLocaleString('en-IN', { maximumFractionDigits: 1 });
+}
+
+function rateLabel(campaign) {
+  if (campaign.template?.pcs_per_day) return `${campaign.template.pcs_per_day}/day`;
+  if (campaign.run_time_per_unit_minutes) return `${campaign.run_time_per_unit_minutes} min/pc`;
+  return '';
+}
+
+function partCover(campaign, horizonDays, riskIds) {
+  if (riskIds.has(campaign.master_record_id)) return 'risk';
+  const runOut = Number(campaign.run_out_days);
+  if (!Number.isFinite(runOut)) return 'covered';
+  if (horizonDays > 0 && runOut >= horizonDays) return 'covered';
+  return 'tight';
+}
+
+function CoverBadge({ state }) {
+  if (state === 'covered') return <StatusBadge status="met">Covered</StatusBadge>;
+  if (state === 'tight') return <StatusBadge status="ready">Tight</StatusBadge>;
+  return <StatusBadge status="blocked">At risk</StatusBadge>;
+}
+
+function warningTitle(warning) {
+  if (warning.code === 'run_out_buffer') return 'Run-out buffer';
+  if (warning.code === 'starvation') return 'Starvation risk';
+  return 'Warning';
+}
+
+const NONE = [];
+
 export default function HorizonPlannerPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [workCenters, setWorkCenters] = useState([]);
   const [accessReady, setAccessReady] = useState(false);
-  const [view, setView] = useState('queue');
+  const [view, setView] = useState('table');
   const [form, setForm] = useState({
     work_center_id: '',
     horizon_start: todayStr(),
@@ -99,7 +135,6 @@ export default function HorizonPlannerPage() {
       try {
         const { data } = await api.get('/work-centers');
         const raw = data.work_centers || data || [];
-        // Open for everyone: all active centers (fall back to full list if none flagged active)
         const active = raw.filter((wc) => wc.is_active !== false);
         const centers = (active.length ? active : raw).slice().sort((a, b) =>
           String(a.code || a.name || '').localeCompare(String(b.code || b.name || ''))
@@ -184,47 +219,111 @@ export default function HorizonPlannerPage() {
     return () => clearTimeout(t);
   }, [runPreview, accessReady, form.work_center_id]);
 
+  const selectedWc = workCenters.find((wc) => wc.id === form.work_center_id) || null;
+  const campaigns = preview?.campaigns ?? NONE;
+  const blockers = preview?.blockers ?? NONE;
+  const warnings = preview?.warnings ?? NONE;
+  const horizonDays = Number(preview?.horizon_working_days) || 0;
+
+  const riskIds = useMemo(() => {
+    const ids = new Set();
+    for (const warning of warnings) {
+      if (warning.code === 'starvation' || warning.code === 'run_out_buffer') {
+        if (warning.master_record_id) ids.add(warning.master_record_id);
+      }
+    }
+    return ids;
+  }, [warnings]);
+
   const metrics = useMemo(() => {
-    const camps = preview?.campaigns || [];
-    const demand = camps.reduce((s, c) => s + Number(c.demand_qty || 0), 0);
-    const days = camps.reduce((s, c) => s + Number(c.production_days || c.capacity?.productionDays || 0), 0);
+    let demand = 0;
+    let coveredQty = 0;
+    let fg = 0;
+    let wip = 0;
+    let days = 0;
+    let shortest = null;
+    let covered = 0;
+    let tight = 0;
+    let risk = 0;
+
+    for (const campaign of campaigns) {
+      const demandQty = Number(campaign.demand_qty) || 0;
+      const fgQty = Number(campaign.fg_stock) || 0;
+      const wipQty = Number(campaign.wip_stock) || 0;
+      demand += demandQty;
+      coveredQty += Math.min(demandQty, fgQty + wipQty);
+      fg += fgQty;
+      wip += wipQty;
+      days += Number(campaign.production_days || campaign.capacity?.productionDays || 0);
+      const runOut = Number(campaign.run_out_days);
+      if (Number.isFinite(runOut) && (shortest == null || runOut < shortest)) shortest = runOut;
+      const state = partCover(campaign, horizonDays, riskIds);
+      if (state === 'covered') covered += 1;
+      else if (state === 'tight') tight += 1;
+      else risk += 1;
+    }
+
+    const coveragePct = demand > 0 ? Math.round((coveredQty / demand) * 100) : campaigns.length ? 100 : null;
+    let coverageTone = 'neutral';
+    if (campaigns.length) {
+      if (risk > 0) coverageTone = 'danger';
+      else if (tight > 0 || (coveragePct != null && coveragePct < 100)) coverageTone = 'amber';
+      else coverageTone = 'success';
+    }
+
+    const loadTone = horizonDays > 0 && days > horizonDays ? 'amber' : 'neutral';
+
     return {
-      campaigns: camps.length,
+      campaigns: campaigns.length,
       demand,
       days,
+      fg,
+      wip,
+      stock: fg + wip,
+      shortest,
+      covered,
+      tight,
+      risk,
+      coveragePct,
+      coverageTone,
+      loadTone,
       canRelease: !!(preview?.can_release ?? preview?.can_lock),
     };
-  }, [preview]);
+  }, [campaigns, horizonDays, preview, riskIds]);
 
-  const riskIds = useMemo(
-    () =>
-      (preview?.warnings || [])
-        .filter((w) => w.code === 'starvation' || w.code === 'run_out_buffer')
-        .map((w) => w.master_record_id)
-        .filter(Boolean),
-    [preview]
-  );
+  const blocked = !metrics.canRelease || blockers.length > 0;
+  const canClickRelease =
+    !!form.work_center_id &&
+    !blocked &&
+    (!warnings.length || ackWarnings) &&
+    !releasing;
 
   const selectedWcWaves = useMemo(
     () =>
       form.work_center_id
-        ? (waves || []).filter((w) => w.work_center_id === form.work_center_id)
+        ? (waves || [])
+            .filter((w) => w.work_center_id === form.work_center_id)
+            .slice()
+            .sort((a, b) => (b.horizon_index || 0) - (a.horizon_index || 0))
         : [],
     [waves, form.work_center_id]
   );
 
-  const canClickRelease =
-    !!form.work_center_id &&
-    metrics.canRelease &&
-    (!preview?.warnings?.length || ackWarnings) &&
-    !releasing;
+  const wcOptions = useMemo(
+    () =>
+      workCenters.map((wc) => ({
+        value: wc.id,
+        label: wc.code ? `${wc.code} · ${wc.name}` : wc.name,
+      })),
+    [workCenters]
+  );
 
   async function handleRelease() {
     if (!canClickRelease) return;
-    if (preview?.warnings?.length) {
+    if (warnings.length) {
       const ok = await appConfirm({
         title: 'Acknowledge release warnings?',
-        message: preview.warnings.map((w) => w.reason).join('\n'),
+        message: warnings.map((w) => w.reason).join('\n'),
         confirmLabel: 'Release anyway',
       });
       if (!ok) return;
@@ -259,33 +358,21 @@ export default function HorizonPlannerPage() {
   }
 
   const showLobby = accessReady && !form.work_center_id;
+  const hasIssues = blockers.length > 0 || warnings.length > 0;
+  const periodHint = `${formatDisplayDate(form.horizon_start)} → ${formatDisplayDate(form.horizon_end)} · ${form.hours_per_day} h/day`;
+  const subtitle = selectedWc
+    ? [selectedWc.code, selectedWc.name].filter(Boolean).join(' — ')
+    : '';
 
   return (
     <div className="mes-shell mes-shell-wide">
       <PageHeader
         eyebrow="Shop floor"
         title="Horizon Planner"
+        subtitle={subtitle || undefined}
         actions={
           form.work_center_id ? (
             <>
-              <div className="mes-view-toggle" role="group" aria-label="View mode">
-                <button
-                  type="button"
-                  className={`mes-view-toggle-btn${view === 'queue' ? ' is-active' : ''}`}
-                  onClick={() => setView('queue')}
-                >
-                  <Rows3 size={16} />
-                  Queue
-                </button>
-                <button
-                  type="button"
-                  className={`mes-view-toggle-btn${view === 'gantt' ? ' is-active' : ''}`}
-                  onClick={() => setView('gantt')}
-                >
-                  <CalendarRange size={16} />
-                  Gantt
-                </button>
-              </div>
               <button type="button" className="mes-btn mes-btn-secondary" onClick={runPreview} disabled={loading}>
                 <RefreshCw size={15} />
                 Refresh
@@ -294,6 +381,13 @@ export default function HorizonPlannerPage() {
                 type="button"
                 className="mes-btn mes-btn-primary"
                 disabled={!canClickRelease}
+                title={
+                  blocked
+                    ? 'Resolve blockers before release'
+                    : warnings.length && !ackWarnings
+                      ? 'Acknowledge warnings in the panel before release'
+                      : undefined
+                }
                 onClick={handleRelease}
               >
                 {releasing ? 'Releasing…' : 'Release to floor'}
@@ -316,15 +410,10 @@ export default function HorizonPlannerPage() {
       ) : null}
 
       {showLobby && workCenters.length > 0 ? (
-        <section className="mes-card" style={{ padding: 16 }} aria-label="Work center lobby">
-          <h2 className="mes-section-title" style={{ marginTop: 0, marginBottom: 6, fontSize: 16 }}>
-            Choose a work center
-          </h2>
-          <p className="muted" style={{ marginTop: 0, marginBottom: 14 }}>
-            Horizon waves are scoped per work center — capacity, ranking, and release stay on one floor.
-            All work centers are open for planning right now.
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <section className="mes-card hp-lobby" aria-label="Work center lobby">
+          <h2 className="hp-panel-title">Choose a work center</h2>
+          <p className="muted hp-lead">Pick a floor to set the horizon, then review coverage and stock before release.</p>
+          <div className="hp-lobby-list">
             {workCenters.map((wc) => {
               const wave = latestWaveForWc(waves, wc.id);
               return (
@@ -344,10 +433,10 @@ export default function HorizonPlannerPage() {
                       <StatusBadge status="planned">No wave yet</StatusBadge>
                     )}
                   </div>
-                  <p className="mes-list-item-meta" style={{ marginBottom: 0 }}>
+                  <p className="mes-list-item-meta hp-meta">
                     {wc.code || '—'}
                     {wave?.horizon_start
-                      ? ` · Wave ${wave.horizon_index}: ${wave.horizon_start} → ${wave.horizon_end}`
+                      ? ` · Wave ${wave.horizon_index}: ${formatDisplayDate(wave.horizon_start)} → ${formatDisplayDate(wave.horizon_end)}`
                       : ''}
                     {wc.hours_per_day ? ` · ${wc.hours_per_day} h/day` : ''}
                   </p>
@@ -360,234 +449,230 @@ export default function HorizonPlannerPage() {
 
       {form.work_center_id ? (
         <>
-          <div className="hp-wc-bar" style={{ marginBottom: 12 }}>
-            {workCenters.length > 1 ? (
-              <div className="mes-view-toggle hp-wc-chips" role="group" aria-label="Work center">
-                {workCenters.map((wc) => (
-                  <button
-                    key={wc.id}
-                    type="button"
-                    className={`mes-view-toggle-btn${form.work_center_id === wc.id ? ' is-active' : ''}`}
-                    onClick={() => selectWorkCenter(wc.id)}
-                  >
-                    {wc.code || wc.name}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-                {workCenters[0]?.code ? `${workCenters[0].code} — ` : ''}
-                {workCenters[0]?.name || 'Work center'}
-              </p>
-            )}
-            {workCenters.length > 1 ? (
-              <button type="button" className="mes-btn mes-btn-secondary" onClick={clearWorkCenter}>
-                All centers
-              </button>
-            ) : null}
-          </div>
-
-          <div className="mes-filters" style={{ marginBottom: 16 }}>
-            <label>
-              Horizon start
-              <input
-                type="date"
-                value={form.horizon_start}
-                onChange={(e) => setForm((f) => ({ ...f, horizon_start: e.target.value }))}
-              />
-            </label>
-            <label>
-              Horizon end
-              <input
-                type="date"
-                value={form.horizon_end}
-                onChange={(e) => setForm((f) => ({ ...f, horizon_end: e.target.value }))}
-              />
-            </label>
-            <label>
-              Hours / day
-              <select
-                value={form.hours_per_day}
-                onChange={(e) => setForm((f) => ({ ...f, hours_per_day: Number(e.target.value) }))}
+          <section className="mes-card hp-plan-bar" aria-label="Horizon settings">
+            <div className="mes-filters hp-plan-fields">
+              {workCenters.length > 1 ? (
+                <label className="hp-wc-field">
+                  Work center
+                  <FormSearchSelect
+                    value={form.work_center_id}
+                    onChange={(value) => (value ? selectWorkCenter(value) : clearWorkCenter())}
+                    options={wcOptions}
+                    placeholder="Choose a work center"
+                    emptyMessage="No work centers"
+                  />
+                </label>
+              ) : null}
+              <label>
+                Horizon start
+                <input
+                  type="date"
+                  value={form.horizon_start}
+                  onChange={(e) => setForm((f) => ({ ...f, horizon_start: e.target.value }))}
+                />
+              </label>
+              <label>
+                Horizon end
+                <input
+                  type="date"
+                  value={form.horizon_end}
+                  onChange={(e) => setForm((f) => ({ ...f, horizon_end: e.target.value }))}
+                />
+              </label>
+              <label>
+                Hours / day
+                <select
+                  value={form.hours_per_day}
+                  onChange={(e) => setForm((f) => ({ ...f, hours_per_day: Number(e.target.value) }))}
+                >
+                  {[8, 9, 10].map((h) => (
+                    <option key={h} value={h}>
+                      {h} h
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="mes-view-toggle" role="group" aria-label="View mode">
+              <button
+                type="button"
+                className={`mes-view-toggle-btn${view === 'table' ? ' is-active' : ''}`}
+                onClick={() => setView('table')}
               >
-                {[8, 9, 10].map((h) => (
-                  <option key={h} value={h}>
-                    {h} h
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+                <Rows3 size={16} />
+                Table
+              </button>
+              <button
+                type="button"
+                className={`mes-view-toggle-btn${view === 'gantt' ? ' is-active' : ''}`}
+                onClick={() => setView('gantt')}
+              >
+                <CalendarRange size={16} />
+                Gantt
+              </button>
+            </div>
+          </section>
 
           {loading && !preview ? <p className="muted">Loading preview…</p> : null}
 
-          {(preview?.blockers || []).map((b, i) => (
-            <AlertBanner key={`b-${i}`} tone="danger" title="Cannot release">
-              {b.reason}
-            </AlertBanner>
-          ))}
-
-          {(preview?.warnings || []).map((w, i) => (
-            <AlertBanner
-              key={`w-${i}`}
-              tone="amber"
-              title={w.code === 'run_out_buffer' ? 'Run-out buffer warning' : 'Starvation risk'}
-            >
-              {w.reason}
-            </AlertBanner>
-          ))}
-
-          {preview?.warnings?.length ? (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-              <input
-                type="checkbox"
-                checked={ackWarnings}
-                onChange={(e) => setAckWarnings(e.target.checked)}
-              />
-              I understand the warnings and still want to release to the floor
-            </label>
-          ) : null}
-
           {preview ? (
-            <div className="mes-metric-grid" style={{ marginBottom: 16 }}>
-              <MetricCard label="Campaigns" value={metrics.campaigns} tone="info" />
-              <MetricCard label="Demand qty" value={metrics.demand} />
-              <MetricCard label="Est. days" value={metrics.days} hint={`${form.hours_per_day} h/day`} />
+            <div className="mes-metric-grid">
               <MetricCard
-                label="Release"
-                value={metrics.canRelease ? 'Ready' : 'Blocked'}
-                tone={metrics.canRelease ? 'success' : 'danger'}
+                label="Horizon"
+                value={horizonDays ? `${horizonDays}d` : '—'}
+                hint={periodHint}
+                icon={CalendarRange}
+              />
+              <MetricCard
+                label="Coverage"
+                value={metrics.coveragePct == null ? '—' : `${metrics.coveragePct}%`}
+                hint={
+                  metrics.campaigns
+                    ? `${metrics.covered} covered · ${metrics.tight} tight · ${metrics.risk} at risk`
+                    : 'No demand in this window'
+                }
+                icon={Target}
+                tone={metrics.coverageTone}
+              />
+              <MetricCard
+                label="Stock"
+                value={qty(metrics.stock)}
+                hint={`FG ${qty(metrics.fg)} · WIP ${qty(metrics.wip)}${
+                  metrics.shortest != null ? ` · shortest run-out ${metrics.shortest.toFixed(1)}d` : ''
+                }`}
+                icon={Warehouse}
+              />
+              <MetricCard
+                label="Load"
+                value={`${qty(metrics.days)}d`}
+                hint={`${metrics.campaigns} campaign${metrics.campaigns === 1 ? '' : 's'} · ${horizonDays || '—'} working days`}
+                icon={Package}
+                tone={metrics.loadTone}
               />
             </div>
           ) : null}
 
-          {preview && view === 'queue' ? (
-            <div className="mes-card" style={{ padding: 0, overflow: 'hidden' }}>
-              {(preview.campaigns || []).length === 0 ? (
-                <EmptyState
-                  icon={Factory}
-                  title="No demand routable at this work center"
-                  description="Nothing in this window has a schedulable activity-flow node on this center. Check AF routing, generate delivery schedules from blanket POs, or widen the horizon dates."
-                />
-              ) : (
-                <div className="data-table-wrap">
-                  <table className="app-table">
-                    <thead>
-                      <tr>
-                        <th>Rank</th>
-                        <th>Component</th>
-                        <th>Run-out (d)</th>
-                        <th>Priority</th>
-                        <th>Demand</th>
-                        <th>Est. hours</th>
-                        <th>Days</th>
-                        <th>Earliest due</th>
-                        <th>Rate</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {preview.campaigns.map((c) => (
-                        <tr
-                          key={c.master_record_id}
-                          className={c.demand_rank === 1 ? 'is-focus-row' : ''}
-                        >
-                          <td>
-                            <strong>#{c.demand_rank}</strong>
-                          </td>
-                          <td>
-                            <TruncatedText>{c.component_label || c.master_record_id}</TruncatedText>
-                          </td>
-                          <td>
-                            {Number.isFinite(c.run_out_days) ? Number(c.run_out_days).toFixed(1) : '—'}
-                          </td>
-                          <td>
-                            {c.priority_score != null ? Number(c.priority_score).toFixed(3) : '—'}
-                          </td>
-                          <td>{c.demand_qty}</td>
-                          <td>{c.capacity?.totalHours ?? '—'}</td>
-                          <td>{c.production_days || c.capacity?.productionDays || '—'}</td>
-                          <td>{c.earliest_due || '—'}</td>
-                          <td>
-                            {c.template?.pcs_per_day
-                              ? `${c.template.pcs_per_day}/day`
-                              : c.run_time_per_unit_minutes
-                                ? `${c.run_time_per_unit_minutes} min/pc`
-                                : '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+          <div className={`hp-review${hasIssues ? '' : ' is-full'}`}>
+            <div className="hp-review-main">
+              {preview && view === 'table' ? (
+                <div className="mes-card hp-table-card">
+                  {campaigns.length === 0 ? (
+                    <EmptyState
+                      icon={Factory}
+                      title="No demand routable at this work center"
+                      description="Nothing in this window has a schedulable activity-flow node on this center. Check AF routing, generate delivery schedules from blanket POs, or widen the horizon dates."
+                    />
+                  ) : (
+                    <div className="data-table-wrap">
+                      <table className="app-table">
+                        <thead>
+                          <tr>
+                            <th>Rank</th>
+                            <th>Component</th>
+                            <th>Cover</th>
+                            <th>Demand</th>
+                            <th>FG</th>
+                            <th>WIP</th>
+                            <th>Run-out</th>
+                            <th>Est. days</th>
+                            <th>Earliest due</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {campaigns.map((campaign) => {
+                            const rate = rateLabel(campaign);
+                            const runOut = Number(campaign.run_out_days);
+                            return (
+                              <tr
+                                key={campaign.master_record_id}
+                                className={campaign.demand_rank === 1 ? 'is-focus-row' : ''}
+                              >
+                                <td>
+                                  <strong>#{campaign.demand_rank}</strong>
+                                </td>
+                                <td>
+                                  <div className="hp-component">
+                                    <TruncatedText>
+                                      {campaign.component_label || campaign.master_record_id}
+                                    </TruncatedText>
+                                    {rate ? <span className="hp-component-rate">{rate}</span> : null}
+                                  </div>
+                                </td>
+                                <td>
+                                  <CoverBadge state={partCover(campaign, horizonDays, riskIds)} />
+                                </td>
+                                <td>{qty(campaign.demand_qty)}</td>
+                                <td>{qty(campaign.fg_stock)}</td>
+                                <td>{qty(campaign.wip_stock)}</td>
+                                <td>{Number.isFinite(runOut) ? `${runOut.toFixed(1)}d` : '—'}</td>
+                                <td>{campaign.production_days || campaign.capacity?.productionDays || '—'}</td>
+                                <td>{formatDisplayDate(campaign.earliest_due)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          ) : null}
+              ) : null}
 
-          {preview && view === 'gantt' ? (
-            <div className="mes-card" style={{ padding: 12 }}>
-              <HorizonGantt
-                campaigns={preview.campaigns || []}
-                horizonStart={form.horizon_start}
-                starvationIds={riskIds}
-              />
+              {preview && view === 'gantt' ? (
+                <div className="mes-card hp-gantt-card">
+                  <HorizonGantt
+                    campaigns={campaigns}
+                    horizonStart={form.horizon_start}
+                    starvationIds={[...riskIds]}
+                  />
+                </div>
+              ) : null}
             </div>
-          ) : null}
+
+            {hasIssues ? (
+              <aside className="mes-card hp-warn-panel" aria-label="Release warnings">
+                <h2 className="hp-panel-title">Review before release</h2>
+                <div className="hp-warn-list">
+                  {blockers.map((blocker, index) => (
+                    <AlertBanner key={`b-${index}`} tone="danger" title="Cannot release">
+                      {blocker.reason}
+                    </AlertBanner>
+                  ))}
+                  {warnings.map((warning, index) => (
+                    <AlertBanner key={`w-${index}`} tone="amber" title={warningTitle(warning)}>
+                      {warning.reason}
+                    </AlertBanner>
+                  ))}
+                </div>
+                {warnings.length && !blocked ? (
+                  <label className="hp-ack">
+                    <input
+                      type="checkbox"
+                      checked={ackWarnings}
+                      onChange={(e) => setAckWarnings(e.target.checked)}
+                    />
+                    I understand these warnings and still want to release
+                  </label>
+                ) : null}
+              </aside>
+            ) : null}
+          </div>
 
           {selectedWcWaves.length ? (
-            <section style={{ marginTop: 24 }}>
-              <h2 className="mes-section-title" style={{ fontSize: 16, marginBottom: 8 }}>
-                Horizon waves
-              </h2>
-              <div className="data-table-wrap">
-                <table className="app-table">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Window</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedWcWaves.slice(0, 12).map((w) => (
-                      <tr key={w.id}>
-                        <td>{w.horizon_index}</td>
-                        <td>
-                          {w.horizon_start}{' '}
-                          <ArrowRight style={{ display: 'inline' }} size={16} /> {w.horizon_end}
-                        </td>
-                        <td>
-                          <StatusBadge status={w.status}>{waveStatusLabel(w.status)}</StatusBadge>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            <section className="hp-waves" aria-label="Earlier horizon waves">
+              <h2 className="hp-panel-title">Earlier waves</h2>
+              <ul className="hp-wave-list">
+                {selectedWcWaves.slice(0, 12).map((wave) => (
+                  <li key={wave.id}>
+                    <span className="hp-wave-index">Wave {wave.horizon_index}</span>
+                    <span className="hp-wave-window">
+                      {formatDisplayDate(wave.horizon_start)} → {formatDisplayDate(wave.horizon_end)}
+                    </span>
+                    <StatusBadge status={wave.status}>{waveStatusLabel(wave.status)}</StatusBadge>
+                  </li>
+                ))}
+              </ul>
             </section>
           ) : null}
-
-          <div
-            style={{
-              position: 'sticky',
-              bottom: 0,
-              marginTop: 20,
-              padding: '12px 0',
-              background: 'var(--surface, #fff)',
-              borderTop: '1px solid var(--border, #e5e7eb)',
-              display: 'flex',
-              justifyContent: 'flex-end',
-              gap: 8,
-            }}
-          >
-            <button
-              type="button"
-              className="mes-btn mes-btn-primary"
-              disabled={!canClickRelease}
-              onClick={handleRelease}
-            >
-              {releasing ? 'Releasing…' : 'Release to floor'}
-            </button>
-          </div>
         </>
       ) : null}
     </div>

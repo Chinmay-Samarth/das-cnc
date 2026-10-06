@@ -58,6 +58,13 @@ export const SEARCHABLE_PAGES = [
     keywords: ['suppliers', 'supplier', 'vendor'],
   },
   {
+    id: 'page-images',
+    title: 'Images',
+    subtitle: 'Search stored invoices, orders, employee and master files',
+    path: '/images',
+    keywords: ['images', 'image', 'photos', 'files', 'documents', 'pdf'],
+  },
+  {
     id: 'page-invoices',
     title: 'Purchase Invoices',
     path: '/invoices',

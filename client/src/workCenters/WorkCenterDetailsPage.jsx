@@ -11,7 +11,8 @@ import {
   Save,
 } from 'lucide-react';
 import api from '../api/client';
-import { appConfirm } from '../components/dialog';
+import { useAuth } from '../auth/authContext';
+import { appAlert, appConfirm } from '../components/dialog';
 import AvailableMachineSelect from './AvailableMachineSelect';
 import { AlertBanner, EmptyState, FormActions, MetricCard, StatusBadge, TruncatedText } from '../components/mes';
 
@@ -55,6 +56,9 @@ export default function WorkCenterDetailsPage() {
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const { hasAccess } = useAuth();
+  const isAdmin = hasAccess('ADMIN');
   const [error, setError] = useState(null);
   const [machineError, setMachineError] = useState(null);
   const [selectedMachine, setSelectedMachine] = useState(null);
@@ -226,6 +230,31 @@ export default function WorkCenterDetailsPage() {
     }
   };
 
+  const handleDelete = async () => {
+    const label = workCenter?.name || 'this work center';
+    if (
+      !(await appConfirm({
+        title: 'Delete work center',
+        message: `Permanently delete ${label}? Its machine links and operator assignments will be removed. This cannot be undone.`,
+        confirmLabel: 'Delete',
+        tone: 'danger',
+      }))
+    )
+      return;
+    setDeleting(true);
+    try {
+      await api.delete(`/work-centers/${id}/permanent`);
+      navigate('/work-centers', { replace: true });
+    } catch (err) {
+      setDeleting(false);
+      await appAlert({
+        title: 'Cannot delete work center',
+        message: err.response?.data?.error || 'Unable to delete work center.',
+        tone: 'danger',
+      });
+    }
+  };
+
   const handleAddMachine = async () => {
     if (!selectedMachine?.machine_record_id) {
       setMachineError('Select a machine to add.');
@@ -381,6 +410,17 @@ export default function WorkCenterDetailsPage() {
             {workCenter?.is_active ? (
               <button type="button" className="neutral-button" onClick={handleDeactivate}>
                 Deactivate
+              </button>
+            ) : null}
+            {isAdmin && workCenter ? (
+              <button
+                type="button"
+                className="neutral-button neutral-button--danger"
+                onClick={handleDelete}
+                disabled={deleting}
+              >
+                <Trash2 size={16} />
+                {deleting ? 'Deleting…' : 'Delete'}
               </button>
             ) : null}
           </div>

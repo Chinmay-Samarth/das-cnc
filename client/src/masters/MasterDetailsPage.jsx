@@ -124,8 +124,8 @@ function RepeatableSectionView({ section, repeatableValues }) {
   }
 
   return (
-    <div className="md-repeat-table-wrap">
-      <table className="md-repeat-table">
+    <div className="app-table-wrap">
+      <table className="app-table">
         <thead>
           <tr>
             {section.fields.map(f => (

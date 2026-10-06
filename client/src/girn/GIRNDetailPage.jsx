@@ -22,6 +22,8 @@ import {
   PageHeader,
   ProgressBar,
   StatusBadge,
+  ShopCardPrintDialog,
+  GirnTagSheet,
 } from '../components/mes';
 
 const fmt = (val) =>
@@ -328,7 +330,7 @@ function ItemsTab({ items }) {
   );
 }
 
-function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspection }) {
+function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspection, onAutoApproved }) {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
@@ -438,6 +440,7 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
       if (data?.lot_number) setLotNumber(data.lot_number);
       if (data?.auto_approved) {
         setAutoApprovedMsg('All inspections passed — GIRN was auto-approved and admin was notified.');
+        onAutoApproved?.();
       }
     } catch (err) {
       setSaveError(err.response?.data?.error || 'Unable to submit inspection.');
@@ -708,7 +711,7 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
   );
 }
 
-function InspectionTab({ girn, items, onSaveInspection }) {
+function InspectionTab({ girn, items, onSaveInspection, onAutoApproved }) {
   const isPending = girn.status === 'pending_inspection';
   const inspectableItems = items.filter((item) =>
     requiresInspection(item.item_category || 'raw_material')
@@ -761,6 +764,7 @@ function InspectionTab({ girn, items, onSaveInspection }) {
           isPending={isPending}
           onSave={onSaveInspection}
           initialInspection={item.inspection}
+          onAutoApproved={onAutoApproved}
         />
       ))}
     </div>
@@ -777,6 +781,7 @@ export default function GIRNDetailPage() {
   const [tab, setTab] = useState('overview');
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState(null);
+  const [girnPrintLines, setGirnPrintLines] = useState(null);
   const { subscribe, joinGirnRoom, leaveGirnRoom } = useSocket();
 
   const loadGirn = useCallback(async () => {
@@ -915,9 +920,48 @@ export default function GIRNDetailPage() {
         ) : tab === 'items' ? (
           <ItemsTab items={items} />
         ) : (
-          <InspectionTab girn={girn} items={items} onSaveInspection={handleSaveInspection} />
+          <InspectionTab
+            girn={girn}
+            items={items}
+            onSaveInspection={handleSaveInspection}
+            onAutoApproved={() => {
+              const lines = (girn?.items || []).map((item) => ({
+                id: item.id,
+                supplierName: girn.supplier_name,
+                materialName:
+                  item.master_record_label ||
+                  item.raw_material_label ||
+                  item.item_description ||
+                  item.item_code ||
+                  '—',
+                girnNumber: girn.girn_number,
+                receivedDate: formatDisplayDate(girn.received_date, ''),
+                quantity: item.quantity,
+              }));
+              setGirnPrintLines(lines.length ? lines : null);
+            }}
+          />
         )}
       </section>
+      {girnPrintLines?.length ? (
+        <ShopCardPrintDialog
+          eyebrow="GIRN approved"
+          title="Print the identification tag"
+          subtitle="Inspection passed and this GIRN was auto-approved. Print one tag for each received line."
+          onConfirmPrinted={() => setGirnPrintLines(null)}
+        >
+          {girnPrintLines.map((line) => (
+            <GirnTagSheet
+              key={line.id}
+              supplierName={line.supplierName}
+              materialName={line.materialName}
+              girnNumber={line.girnNumber}
+              receivedDate={line.receivedDate}
+              quantity={line.quantity}
+            />
+          ))}
+        </ShopCardPrintDialog>
+      ) : null}
     </main>
   );
 }

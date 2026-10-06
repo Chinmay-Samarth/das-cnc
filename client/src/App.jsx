@@ -14,6 +14,7 @@ import HomePage from './home/HomePage';
 import { MastersNavProvider } from './context/MastersNavContext';
 import { InvoiceUploadQueueProvider } from './invoices/InvoiceUploadQueueContext';
 import AppLayout from './components/Layout/AppLayout';
+import ImageLibraryPage from './library/ImageLibraryPage';
 import InvoicesPage from './pages/InvoicesPage';
 import InvoiceDetails from './components/Invoices/InvoiceDetails';
 import InvoiceOcrReviewPage from './invoices/InvoiceOcrReviewPage';
@@ -226,6 +227,7 @@ export default function App() {
               <Route path="/suppliers/:id/edit" element={<SupplierDetailsPage />} />
               <Route path="/components" element={<ComponentRedirect />} />
               <Route path="/components/:id" element={<ComponentDetailRedirect />} />
+              <Route path="/images" element={<ImageLibraryPage />} />
               <Route path="/invoices" element={<InvoicesPage />} />
               <Route path="/purchase-payments" element={<PurchasePaymentsPage />} />
               <Route path="/invoices/:id/review" element={<InvoiceOcrReviewPage />} />

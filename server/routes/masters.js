@@ -89,6 +89,94 @@ async function getMasterSchema(masterId) {
   return Object.values(sectionsMap).sort((a, b) => a.order - b.order)
 }
 
+function listableColumns(sections) {
+  const columns = []
+  for (const section of sections || []) {
+    for (const field of section.fields || []) {
+      columns.push({
+        id: field.id,
+        label: field.label,
+        field_type: field.field_type,
+        section: section.name,
+        repeatable: Boolean(section.is_repeatable),
+      })
+    }
+  }
+  return columns
+}
+
+function fileLabel(url) {
+  const text = String(url || '').trim()
+  if (!text) return ''
+  const name = text.split('?')[0].split('/').pop()
+  return name || 'File'
+}
+
+function cellText(row, labelById) {
+  const urls = Array.isArray(row.file_urls) ? row.file_urls.filter(Boolean) : []
+  if (urls.length > 1) return `${urls.length} files`
+  if (urls.length === 1) return fileLabel(urls[0])
+  if (row.file_url) return fileLabel(row.file_url)
+  if (row.linked_record_id && labelById[row.linked_record_id]) return labelById[row.linked_record_id]
+  return row.value == null ? '' : String(row.value)
+}
+
+async function fetchRecordFieldValues(recordIds, fieldIds) {
+  const rows = []
+  const chunkSize = Math.max(1, Math.floor(800 / fieldIds.length))
+  for (let i = 0; i < recordIds.length; i += chunkSize) {
+    const chunk = recordIds.slice(i, i + chunkSize)
+    const { data, error } = await supabase
+      .from('record_values')
+      .select('record_id, field_id, value, file_url, file_urls, linked_record_id')
+      .in('record_id', chunk)
+      .in('field_id', fieldIds)
+    if (error) throw { status: 500, message: error.message }
+    rows.push(...(data || []))
+  }
+  return rows
+}
+
+async function lookupRecordLabels(recordIds) {
+  const unique = [...new Set(recordIds)]
+  const labelById = {}
+  for (let i = 0; i < unique.length; i += 200) {
+    const chunk = unique.slice(i, i + 200)
+    const { data, error } = await supabase
+      .from('v_master_lookup')
+      .select('record_id, label')
+      .in('record_id', chunk)
+    if (error) throw { status: 500, message: error.message }
+    for (const row of data || []) labelById[row.record_id] = row.label
+  }
+  return labelById
+}
+
+async function fetchRepeatableFieldValues(recordIds, fieldIds) {
+  const wanted = new Set(fieldIds)
+  const rows = []
+  for (let i = 0; i < recordIds.length; i += 100) {
+    const chunk = recordIds.slice(i, i + 100)
+    const { data, error } = await supabase
+      .from('record_section_rows')
+      .select('record_id, row_order, record_section_values(field_id, value, file_url, file_urls, linked_record_id)')
+      .in('record_id', chunk)
+      .order('row_order', { ascending: true })
+    if (error) throw { status: 500, message: error.message }
+    for (const row of data || []) {
+      for (const cell of row.record_section_values || []) {
+        if (!wanted.has(cell.field_id)) continue
+        rows.push({
+          record_id: row.record_id,
+          row_order: row.row_order ?? 0,
+          ...cell,
+        })
+      }
+    }
+  }
+  return rows
+}
+
 async function relatedMasterSourceTypes(fields) {
   const ids = [...new Set((fields || []).map((f) => f.related_master_id).filter(Boolean))]
   if (!ids.length) return {}
@@ -799,14 +887,7 @@ router.get('/:slug/record', async(req,res)=>{
 
     // ── Dynamic master ─────────────────────────────────────────────────────────
   const sections = await getMasterSchema(master.id)
-
-  const columns = (sections[0]?.fields || [])
-    .slice(0, 3)
-    .map(f => ({
-      id: f.id,
-      label: f.label
-    }))
-
+  const columns = listableColumns(sections)
 
   const { data: records, count, error } = await supabase
     .from('master_records')
@@ -825,48 +906,45 @@ router.get('/:slug/record', async(req,res)=>{
   }
 
   const recordIds = records.map(r => r.id)
-  const fieldIds = columns.map(c => c.id)
+  const flatIds = columns.filter((column) => !column.repeatable).map((column) => column.id)
+  const repeatIds = columns.filter((column) => column.repeatable).map((column) => column.id)
+  const [flatValues, repeatValues] = await Promise.all([
+    flatIds.length ? fetchRecordFieldValues(recordIds, flatIds) : [],
+    repeatIds.length ? fetchRepeatableFieldValues(recordIds, repeatIds) : [],
+  ])
+  const labelById = await lookupRecordLabels(
+    [...flatValues, ...repeatValues].map((row) => row.linked_record_id).filter(Boolean)
+  )
 
-  const { data: values, error: valuesError } = await supabase
-    .from('record_values')
-    .select('record_id, field_id, value')
-    .in('record_id', recordIds)
-    .in('field_id', fieldIds)
-
-  if (valuesError) {
-    throw { status: 500, message: valuesError.message }
-  }
-
-  // Build lookup:
-  // {
-  //   recordId: {
-  //     fieldId: value
-  //   }
-  // }
   const valuesMap = {}
-
-  for (const value of values || []) {
-    if (!valuesMap[value.record_id]) {
-      valuesMap[value.record_id] = {}
-    }
-
-    valuesMap[value.record_id][value.field_id] = value.value
+  for (const row of flatValues) {
+    if (!valuesMap[row.record_id]) valuesMap[row.record_id] = {}
+    valuesMap[row.record_id][row.field_id] = cellText(row, labelById)
+  }
+  const repeatBuckets = {}
+  for (const row of repeatValues) {
+    const key = `${row.record_id}:${row.field_id}`
+    if (!repeatBuckets[key]) repeatBuckets[key] = []
+    repeatBuckets[key].push(row)
+  }
+  for (const bucket of Object.values(repeatBuckets)) {
+    bucket.sort((a, b) => a.row_order - b.row_order)
+    const text = bucket.map((row) => cellText(row, labelById)).filter(Boolean).join(' · ')
+    const first = bucket[0]
+    if (!valuesMap[first.record_id]) valuesMap[first.record_id] = {}
+    valuesMap[first.record_id][first.field_id] = text
   }
 
-  let result = records.map(record => ({
+  const result = records.map(record => ({
     id: record.id,
     created_at: record.created_at,
     values: valuesMap[record.id] || {}
   }))
 
-  // Search against visible columns
-
-
   res.json({
     columns,
     records: result,
     total: count,
-
   })
 })
 

@@ -23,8 +23,16 @@ export default function ComponentSelect({
       disabled={disabled}
       fetchOptions={fetchOptions}
       emptyMessage="No components found."
-      mapOption={(option) => ({ id: option.id, value: option.id, label: option.label })}
-      onChange={(id, option) => onChange({ id, label: option?.label || '' })}
+      mapOption={(option) => {
+        const id = option.record_id || option.id;
+        return { id, value: id, label: option.label };
+      }}
+      onChange={(id, option) =>
+        onChange({
+          id: id || option?.record_id || option?.id || '',
+          label: option?.label || '',
+        })
+      }
     />
   );
 }
