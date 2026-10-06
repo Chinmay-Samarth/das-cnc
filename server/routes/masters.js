@@ -99,6 +99,7 @@ function listableColumns(sections) {
         field_type: field.field_type,
         section: section.name,
         repeatable: Boolean(section.is_repeatable),
+        related_master_slug: field.related_master_slug || null,
       })
     }
   }
@@ -112,11 +113,20 @@ function fileLabel(url) {
   return name || 'File'
 }
 
-function cellText(row, labelById) {
+function relationId(row, field) {
+  if (field?.field_type !== 'relation') return null
+  if (row.linked_record_id) return row.linked_record_id
+  const raw = row.value == null ? '' : String(row.value).trim()
+  return isValidUUID(raw) ? raw : null
+}
+
+function cellText(row, labelById, field) {
   const urls = Array.isArray(row.file_urls) ? row.file_urls.filter(Boolean) : []
   if (urls.length > 1) return `${urls.length} files`
   if (urls.length === 1) return fileLabel(urls[0])
   if (row.file_url) return fileLabel(row.file_url)
+  const related = relationId(row, field)
+  if (related && labelById[related]) return labelById[related]
   if (row.linked_record_id && labelById[row.linked_record_id]) return labelById[row.linked_record_id]
   return row.value == null ? '' : String(row.value)
 }
@@ -906,6 +916,7 @@ router.get('/:slug/record', async(req,res)=>{
   }
 
   const recordIds = records.map(r => r.id)
+  const fieldById = Object.fromEntries(columns.map((column) => [column.id, column]))
   const flatIds = columns.filter((column) => !column.repeatable).map((column) => column.id)
   const repeatIds = columns.filter((column) => column.repeatable).map((column) => column.id)
   const [flatValues, repeatValues] = await Promise.all([
@@ -913,13 +924,13 @@ router.get('/:slug/record', async(req,res)=>{
     repeatIds.length ? fetchRepeatableFieldValues(recordIds, repeatIds) : [],
   ])
   const labelById = await lookupRecordLabels(
-    [...flatValues, ...repeatValues].map((row) => row.linked_record_id).filter(Boolean)
+    [...flatValues, ...repeatValues].map((row) => relationId(row, fieldById[row.field_id])).filter(Boolean)
   )
 
   const valuesMap = {}
   for (const row of flatValues) {
     if (!valuesMap[row.record_id]) valuesMap[row.record_id] = {}
-    valuesMap[row.record_id][row.field_id] = cellText(row, labelById)
+    valuesMap[row.record_id][row.field_id] = cellText(row, labelById, fieldById[row.field_id])
   }
   const repeatBuckets = {}
   for (const row of repeatValues) {
@@ -929,7 +940,7 @@ router.get('/:slug/record', async(req,res)=>{
   }
   for (const bucket of Object.values(repeatBuckets)) {
     bucket.sort((a, b) => a.row_order - b.row_order)
-    const text = bucket.map((row) => cellText(row, labelById)).filter(Boolean).join(' · ')
+    const text = bucket.map((row) => cellText(row, labelById, fieldById[row.field_id])).filter(Boolean).join(' · ')
     const first = bucket[0]
     if (!valuesMap[first.record_id]) valuesMap[first.record_id] = {}
     valuesMap[first.record_id][first.field_id] = text

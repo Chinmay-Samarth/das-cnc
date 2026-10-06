@@ -28,7 +28,16 @@ function columnStorageKey(slug) {
 }
 
 function defaultColumnIds(available) {
-  return available.slice(0, 3).map((column) => column.id)
+  const listed = available.filter((column) => !column.repeatable && column.field_type !== 'file' && column.field_type !== 'multi_file')
+  const source = listed.length ? listed : available
+  return source.slice(0, 5).map((column) => column.id)
+}
+
+function flatTwinId(id, available) {
+  const column = available.find((item) => item.id === id)
+  if (!column?.repeatable) return id
+  const flat = available.find((item) => !item.repeatable && item.label === column.label)
+  return flat?.id || id
 }
 
 function readSavedColumnIds(slug, available) {
@@ -36,7 +45,15 @@ function readSavedColumnIds(slug, available) {
   try {
     const raw = JSON.parse(localStorage.getItem(columnStorageKey(slug)) || 'null')
     if (Array.isArray(raw)) {
-      const kept = raw.filter((id) => known.has(id))
+      const kept = []
+      const seen = new Set()
+      for (const id of raw) {
+        if (!known.has(id)) continue
+        const next = flatTwinId(id, available)
+        if (seen.has(next)) continue
+        seen.add(next)
+        kept.push(next)
+      }
       if (kept.length) return kept
     }
   } catch {
@@ -45,8 +62,33 @@ function readSavedColumnIds(slug, available) {
   return defaultColumnIds(available)
 }
 
-function displayCell(column, value) {
+function columnHeading(column, columns) {
+  const duplicated = columns.some((other) => other.id !== column.id && other.label === column.label)
+  if (!duplicated || !column.section) return column.label
+  return `${column.label} (${column.section})`
+}
+
+function valueForColumn(record, column, columns) {
+  const direct = record.values?.[column.id]
+  if (direct != null && String(direct).trim() !== '') return direct
+  const twin = columns.find((other) => (
+    other.id !== column.id
+    && other.label === column.label
+    && record.values?.[other.id] != null
+    && String(record.values[other.id]).trim() !== ''
+  ))
+  return twin ? record.values[twin.id] : direct
+}
+
+const RECORD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function displayCell(column, value, labels) {
   if (value == null || value === '') return '—'
+  if (column.field_type === 'relation') {
+    const id = String(value).trim()
+    const label = column.related_master_slug ? labels?.[`${column.related_master_slug}:${id}`] : null
+    if (label) return label
+  }
   if (column.field_type === 'date') return formatDisplayDate(value)
   return String(value)
 }
@@ -66,6 +108,7 @@ export default function MasterPage() {
   const [columns, setColumns] = useState([])
   const [selectedIds, setSelectedIds] = useState([])
   const [columnOpen, setColumnOpen] = useState(false)
+  const [relationLabels, setRelationLabels] = useState({})
   const columnRef = useRef(null)
 
     
@@ -96,6 +139,7 @@ export default function MasterPage() {
             field_type: field.field_type,
             section: section.name,
             repeatable: Boolean(section.is_repeatable),
+            related_master_slug: field.related_master_slug || null,
           })
         }
       }
@@ -119,7 +163,50 @@ export default function MasterPage() {
 
   useEffect(() => { loadRecords() }, [loadRecords])
   useEffect(() => { setPage(1) },   [search, slug])
-  useEffect(() => { setColumnOpen(false) }, [slug])
+  useEffect(() => { setColumnOpen(false); setRelationLabels({}) }, [slug])
+
+  useEffect(() => {
+    const wanted = []
+    const seen = new Set()
+    for (const column of columns) {
+      if (column.field_type !== 'relation' || !column.related_master_slug) continue
+      for (const record of records) {
+        const raw = valueForColumn(record, column, columns)
+        const id = typeof raw === 'string' ? raw.trim() : ''
+        if (!RECORD_ID.test(id)) continue
+        const key = `${column.related_master_slug}:${id}`
+        if (seen.has(key) || relationLabels[key]) continue
+        seen.add(key)
+        wanted.push({ key, slug: column.related_master_slug, id })
+      }
+    }
+    if (!wanted.length) return undefined
+    let cancelled = false
+    Promise.all(wanted.map(async (item) => {
+      try {
+        const res = await api.get(`/masters/${item.slug}/lookup`, { params: { record_id: item.id } })
+        const match = Array.isArray(res.data)
+          ? res.data.find((row) => row.record_id === item.id)
+          : null
+        return [item.key, match?.label || null]
+      } catch {
+        return [item.key, null]
+      }
+    })).then((pairs) => {
+      if (cancelled) return
+      setRelationLabels((current) => {
+        const next = { ...current }
+        let changed = false
+        for (const [key, label] of pairs) {
+          if (!label || next[key] === label) continue
+          next[key] = label
+          changed = true
+        }
+        return changed ? next : current
+      })
+    })
+    return () => { cancelled = true }
+  }, [columns, records, relationLabels])
 
   const columnKey = columns.map((column) => column.id).join(',')
   useEffect(() => {
@@ -134,11 +221,18 @@ export default function MasterPage() {
     const query = search.trim().toLowerCase()
     const matches = records.filter((record)=>{
       if(!query) return true;
-      return Object.values(record.values || {}).join(' ').toLowerCase().includes(query)
+      const parts = Object.values(record.values || {})
+      for (const column of columns) {
+        parts.push(displayCell(column, valueForColumn(record, column, columns), relationLabels))
+      }
+      return parts.join(' ').toLowerCase().includes(query)
     })
 
-    return sortBy(matches, sortKey, sortAsc, (row) => row.values?.[sortKey] ?? '')
-  }, [records, search, sortKey, sortAsc])
+    const sortColumn = columns.find((column) => column.id === sortKey)
+    return sortBy(matches, sortKey, sortAsc, (row) => (
+      sortColumn ? valueForColumn(row, sortColumn, columns) : (row.values?.[sortKey] ?? '')
+    ))
+  }, [records, search, sortKey, sortAsc, columns, relationLabels])
 
   const visibleColumns = useMemo(() => {
     const chosen = new Set(selectedIds)
@@ -316,7 +410,7 @@ export default function MasterPage() {
                                 <span className="mp-column-box" aria-hidden="true">
                                   {checked ? <Check size={12} strokeWidth={3} /> : null}
                                 </span>
-                                <span className="mp-column-name">{column.label}</span>
+                                <span className="mp-column-name">{columnHeading(column, columns)}</span>
                               </label>
                             )
                           })}
@@ -353,7 +447,7 @@ export default function MasterPage() {
               <tr>
                 {visibleColumns.map((c) => (
                   <th key={c.id} onClick={() => handleSort(`${c.id}`)}>
-                    {c.label}
+                    {columnHeading(c, columns)}
                     <span className="sort-indicator">
                       {sortKey === `${c.id}` ? (sortAsc ? ' ▲' : ' ▼') : ''}
                     </span>
@@ -376,8 +470,8 @@ export default function MasterPage() {
                   style={{ cursor: 'pointer' }}
                 >
                   {visibleColumns.map((c) => {
-                    const value = r.values?.[c.id]
-                    return <td key={c.id}>{displayCell(c, value)}</td>
+                    const value = valueForColumn(r, c, columns)
+                    return <td key={c.id}>{displayCell(c, value, relationLabels)}</td>
                   })}
                 </tr>
               ))}
