@@ -2,6 +2,7 @@ const { createClient } = require('@supabase/supabase-js');
 const {
   TERMINAL_DISPATCH_TYPES,
   SCHEDULABLE_TYPES,
+  PATH_GATE_TYPES,
 } = require('../config/activityFlowTypes');
 const { generateComponentLotNumber } = require('./componentLotEngine');
 const { todayDateString } = require('./blanketPosEngine');
@@ -9,6 +10,7 @@ const {
   loadFlowGraph,
   resolveNextTravelerNode,
   priorSchedulableOnPath,
+  walkPrimaryPath,
 } = require('./activityFlowRoute');
 
 const supabase = createClient(
@@ -479,6 +481,16 @@ async function mintLotFromScheduleCard(card, { quantity, scrapQty = 0, sourceNod
     .single();
   if (error) throw error;
 
+  if (sourceNode) {
+    await recordLotOpCompletion(lot, {
+      activity_flow_node_id: sourceNode,
+      employee_id: actorEmployeeId || card.assigned_employee_id || null,
+      good_qty: qty,
+      scrap_qty: toNumber(scrapQty),
+      work_center_id: card.work_center_id || null,
+    });
+  }
+
   // Prefer park at next schedulable op (WIP inventory) when mid-route
   const shouldPark =
     next &&
@@ -544,6 +556,16 @@ async function mintLotFromCommitment(campaign, commitment, { quantity, scrapQty 
     .select('*')
     .single();
   if (error) throw error;
+
+  if (sourceNode) {
+    await recordLotOpCompletion(lot, {
+      activity_flow_node_id: sourceNode,
+      employee_id: actorEmployeeId || null,
+      good_qty: qty,
+      scrap_qty: toNumber(scrapQty),
+      work_center_id: campaign.work_center_id || null,
+    });
+  }
 
   const placed = await assignLotToNode(lot.id, next, workDate, {
     afVersionId: campaign.activity_flow_version_id,
@@ -1716,6 +1738,62 @@ async function reassignLot(lotId, employeeId) {
   return { lot: updated, assignee: emp, previous_employee_id: previousEmployeeId };
 }
 
+const LOT_CARD_ROWS = 7;
+
+async function lotCardLine(lot, nodeId) {
+  const afVersionId = await getAfVersionIdForLot(lot);
+  let stops = [];
+  if (afVersionId) {
+    const { nodes, edges } = await loadFlowGraph(afVersionId);
+    stops = walkPrimaryPath(nodes, edges).filter((node) => PATH_GATE_TYPES.has(node.activity_type));
+  }
+  const rowCount = stops.length;
+  if (!nodeId || !isValidUUID(String(nodeId))) {
+    return { row_count: rowCount, card_line: null };
+  }
+  const rowIndex = stops.findIndex((node) => node.id === nodeId);
+  if (rowIndex < 0) return { row_count: rowCount, card_line: null };
+  if (rowIndex >= LOT_CARD_ROWS) {
+    return {
+      row_count: rowCount,
+      card_line: { row_index: rowIndex, overflow: true },
+    };
+  }
+
+  const { data: comps, error } = await supabase
+    .from('production_lot_op_completions')
+    .select('completed_at, employee_id, good_qty, activity_flow_node_id')
+    .eq('production_lot_id', lot.id)
+    .eq('activity_flow_node_id', nodeId)
+    .order('completed_at', { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  const completion = comps?.[0];
+  if (!completion) return { row_count: rowCount, card_line: null };
+
+  let operator = '';
+  if (completion.employee_id && isValidUUID(completion.employee_id)) {
+    const { data: employee, error: empErr } = await supabase
+      .from('employees')
+      .select('full_name')
+      .eq('id', completion.employee_id)
+      .maybeSingle();
+    if (empErr) throw empErr;
+    operator = employee?.full_name || '';
+  }
+
+  return {
+    row_count: rowCount,
+    card_line: {
+      row_index: rowIndex,
+      date: completion.completed_at,
+      operator,
+      operation: stops[rowIndex]?.label || '',
+      quantity: completion.good_qty,
+    },
+  };
+}
+
 async function listLotOpCompletions(lotId) {
   if (!isValidUUID(lotId)) throw httpError('Invalid lot id');
   const { data, error } = await supabase
@@ -1746,6 +1824,7 @@ module.exports = {
   dispatchLot,
   reassignLot,
   listLotOpCompletions,
+  lotCardLine,
   recordLotOpCompletion,
   healFalseReadyForDispatch,
 };

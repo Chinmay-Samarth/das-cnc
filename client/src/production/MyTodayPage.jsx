@@ -122,23 +122,41 @@ function EfficiencyHero({ efficiency, good, goal, opsCompletedToday, hasActive }
   );
 }
 
-function LotReceiptModal({ lot, cardLabel, row, onClose }) {
+function LotReceiptModal({ lot, cardLabel, row, lineOnly, overflow, onClose }) {
+  if (overflow) {
+    return (
+      <ShopCardPrintDialog
+        eyebrow="Lot card full"
+        title="This operation is past the last line"
+        subtitle="The lot card has no blank line left for this operation, so nothing was sent to the printer."
+        allowPrint={false}
+        onConfirmPrinted={onClose}
+      />
+    );
+  }
+
+  const reprint = lineOnly != null;
   return (
     <ShopCardPrintDialog
-      eyebrow="Lot card ready"
-      title="Print the lot card"
-      subtitle={`Send this card with the manufactured components to the next step${
-        cardLabel ? ` for ${cardLabel}` : ''
-      }. Write the GIRN number and machine number on the card.`}
+      eyebrow={reprint ? 'Next operation' : 'Lot card ready'}
+      title={reprint ? 'Print the next operation line' : 'Print the lot card'}
+      subtitle={
+        reprint
+          ? 'Feed the same lot card, in the same orientation. Only this operation line will print.'
+          : `Send this card with the manufactured components to the next step${
+              cardLabel ? ` for ${cardLabel}` : ''
+            }. Write the GIRN number and machine number on the card.`
+      }
       onConfirmPrinted={onClose}
     >
       <LotCardSheet
         lotNumber={lot.lot_number}
         componentName={cardLabel}
-        date={row?.date}
-        operator={row?.operator}
-        operation={row?.operation}
-        quantity={row?.quantity}
+        onlyRowIndex={reprint ? lineOnly.rowIndex : null}
+        date={reprint ? lineOnly.date : row?.date}
+        operator={reprint ? lineOnly.operator : row?.operator}
+        operation={reprint ? lineOnly.operation : row?.operation}
+        quantity={reprint ? lineOnly.quantity : row?.quantity}
       />
     </ShopCardPrintDialog>
   );
@@ -931,6 +949,34 @@ function ManagerMyToday({ floorOnly, navigate }) {
         scrap_qty: form.scrap !== '' ? Number(form.scrap) : undefined,
         done_for_day: true,
       });
+      if (op.production_lot_id && op.activity_flow_node_id) {
+        try {
+          const { data: lotData } = await api.get(`/production/lots/${op.production_lot_id}`, {
+            params: { node_id: op.activity_flow_node_id },
+          });
+          const line = lotData?.card_line;
+          if (line?.overflow) {
+            setLotReceipt({
+              lot: lotData.lot || { lot_number: op.lot_number },
+              overflow: true,
+            });
+          } else if (line && line.row_index != null) {
+            setLotReceipt({
+              lot: lotData.lot || { lot_number: op.lot_number },
+              cardLabel: op.component_label || null,
+              lineOnly: {
+                rowIndex: line.row_index,
+                date: formatDisplayDate(line.date, ''),
+                operator: line.operator || '',
+                operation: line.operation || op.current_node_label || '',
+                quantity: line.quantity ?? (form.good !== '' ? Number(form.good) : ''),
+              },
+            });
+          }
+        } catch (lineErr) {
+          console.error('Lot card line lookup failed:', lineErr);
+        }
+      }
       setIncomingForms((prev) => {
         const next = { ...prev };
         delete next[op.id];
@@ -1316,6 +1362,8 @@ function ManagerMyToday({ floorOnly, navigate }) {
           lot={lotReceipt.lot}
           cardLabel={lotReceipt.cardLabel}
           row={lotReceipt.row}
+          lineOnly={lotReceipt.lineOnly}
+          overflow={lotReceipt.overflow}
           onClose={() => {
             if (lotReceipt.unlockEfficiency) setEfficiencyUnlocked(true);
             setLotReceipt(null);

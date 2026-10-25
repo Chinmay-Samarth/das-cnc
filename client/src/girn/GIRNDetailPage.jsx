@@ -790,9 +790,11 @@ export default function GIRNDetailPage() {
       setError(null);
       const { data } = await api.get(`/girn/${id}`);
       setGirn(data.girn);
+      return data.girn;
     } catch (err) {
       console.error('GIRN detail error:', err);
       setError(err.response?.data?.error || 'Unable to load GIRN.');
+      return null;
     } finally {
       setLoading(false);
     }
@@ -816,12 +818,55 @@ export default function GIRNDetailPage() {
     return unsubscribe;
   }, [subscribe, id, loadGirn]);
 
+  function signedInActor() {
+    if (!user?.name) return '';
+    return user.code ? `${user.name} (${user.code})` : user.name;
+  }
+
+  function tagLines(record, status) {
+    if (!record) return [];
+    const actorName = status === 'rejected' ? record.rejecter_name : record.approver_name;
+    const actorCode = status === 'rejected' ? record.rejecter_code : record.approver_code;
+    const decidedBy = actorName
+      ? actorCode
+        ? `${actorName} (${actorCode})`
+        : actorName
+      : signedInActor();
+    return (record.items || []).map((item) => {
+      const category = getCategoryConfig(item.item_category || 'raw_material');
+      const unit = String(item.unit || (category.quantityType === 'kg' ? 'kg' : 'nos'))
+        .trim()
+        .toLowerCase();
+      const isKg = unit === 'kg' || unit === 'kgs';
+      return {
+        id: item.id,
+        status,
+        decidedBy,
+        supplierName: record.supplier_name,
+        materialName:
+          item.master_record_label ||
+          item.raw_material_label ||
+          item.item_description ||
+          item.item_code ||
+          '—',
+        girnNumber: record.girn_number,
+        receivedDate: formatDisplayDate(record.received_date, ''),
+        quantityKg: isKg ? item.quantity : '',
+        quantityNos: isKg ? '' : item.quantity,
+      };
+    });
+  }
+
   async function handleAction(type, payload = {}) {
     setActionLoading(true);
     setActionError(null);
     try {
       await api.post(`/girn/${id}/${type}`, payload);
-      await loadGirn();
+      const updated = await loadGirn();
+      if (type === 'reject') {
+        const lines = tagLines(updated, 'rejected');
+        setGirnPrintLines(lines.length ? lines : null);
+      }
     } catch (err) {
       console.error(`GIRN ${type} error:`, err);
       setActionError(err.response?.data?.error || `Unable to ${type} GIRN.`);
@@ -841,7 +886,11 @@ export default function GIRNDetailPage() {
           }
         : undefined
     );
-    await loadGirn();
+    const updated = await loadGirn();
+    if (data?.auto_approved) {
+      const lines = tagLines(updated, 'approved');
+      setGirnPrintLines(lines.length ? lines : null);
+    }
     return { data };
   }
 
@@ -924,40 +973,32 @@ export default function GIRNDetailPage() {
             girn={girn}
             items={items}
             onSaveInspection={handleSaveInspection}
-            onAutoApproved={() => {
-              const lines = (girn?.items || []).map((item) => ({
-                id: item.id,
-                supplierName: girn.supplier_name,
-                materialName:
-                  item.master_record_label ||
-                  item.raw_material_label ||
-                  item.item_description ||
-                  item.item_code ||
-                  '—',
-                girnNumber: girn.girn_number,
-                receivedDate: formatDisplayDate(girn.received_date, ''),
-                quantity: item.quantity,
-              }));
-              setGirnPrintLines(lines.length ? lines : null);
-            }}
           />
         )}
       </section>
       {girnPrintLines?.length ? (
         <ShopCardPrintDialog
-          eyebrow="GIRN approved"
+          eyebrow={girnPrintLines[0].status === 'rejected' ? 'GIRN rejected' : 'GIRN approved'}
           title="Print the identification tag"
-          subtitle="Inspection passed and this GIRN was auto-approved. Print one tag for each received line."
+          subtitle={
+            girnPrintLines[0].status === 'rejected'
+              ? 'This GIRN was rejected. Print one tag for each received line.'
+              : 'Inspection passed and this GIRN was auto-approved. Print one tag for each received line.'
+          }
           onConfirmPrinted={() => setGirnPrintLines(null)}
         >
           {girnPrintLines.map((line) => (
             <GirnTagSheet
               key={line.id}
+              status={line.status}
+              approvedBy={line.status === 'approved' ? line.decidedBy : ''}
+              rejectedBy={line.status === 'rejected' ? line.decidedBy : ''}
               supplierName={line.supplierName}
               materialName={line.materialName}
               girnNumber={line.girnNumber}
               receivedDate={line.receivedDate}
-              quantity={line.quantity}
+              quantityKg={line.quantityKg}
+              quantityNos={line.quantityNos}
             />
           ))}
         </ShopCardPrintDialog>
