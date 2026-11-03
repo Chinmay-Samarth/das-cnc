@@ -65,7 +65,7 @@ export default function AddInvoiceButton({ onUploaded }) {
       <input
         ref={inputRef}
         type="file"
-        accept="image/*,application/pdf"
+        accept=".jpg,.jpeg,.jfif,.png,.gif,.webp,.bmp,.tif,.tiff,.pdf,image/*,application/pdf"
         style={{ display: 'none' }}
         onChange={handleChange}
       />

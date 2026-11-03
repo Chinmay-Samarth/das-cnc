@@ -462,13 +462,14 @@ export default function InvoiceOcrReviewPage() {
         <div className="invoice-recheck-layout">
           <section className="mes-card invoice-recheck-pdf">
             <header className="invoice-recheck-panel-head">
-              <h2 className="invoice-recheck-panel-title">Source PDF</h2>
+              <h2 className="invoice-recheck-panel-title">Source file</h2>
             </header>
             <InvoicePdfViewer
               file={invoice?.file_url || queueJob?.previewUrl}
+              fileName={queueJob?.fileName || ''}
               title={invoice?.invoice_number || queueJob?.fileName || 'Scanned invoice'}
               loading={!invoice?.file_url && !queueJob?.previewUrl}
-              emptyTitle="Uploading PDF…"
+              emptyTitle="Uploading…"
               emptyDescription="The file will appear here once upload finishes."
             />
           </section>
@@ -497,7 +498,7 @@ export default function InvoiceOcrReviewPage() {
       <PageHeader
         eyebrow="Accounts payable"
         title="Recheck scanned invoice"
-        subtitle="Match the PDF, fix supplier and lines, then confirm."
+        subtitle="Match the source file, fix supplier and lines, then confirm."
         actions={
           <StatusBadge status="pending">OCR {ocrPct}%</StatusBadge>
         }
@@ -521,14 +522,15 @@ export default function InvoiceOcrReviewPage() {
       <div className="invoice-recheck-layout">
         <section className="mes-card invoice-recheck-pdf">
           <header className="invoice-recheck-panel-head">
-            <h2 className="invoice-recheck-panel-title">Source PDF</h2>
+            <h2 className="invoice-recheck-panel-title">Source file</h2>
             <p className="invoice-recheck-panel-hint">Use this as the source of truth while reviewing.</p>
           </header>
           <InvoicePdfViewer
             file={invoice?.file_url}
+            fileName={invoice?.file_url || ''}
             title={invoice?.invoice_number || 'Scanned invoice'}
             loading={false}
-            emptyTitle="PDF unavailable"
+            emptyTitle="File unavailable"
             emptyDescription="The uploaded file could not be previewed."
           />
         </section>

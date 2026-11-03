@@ -24,32 +24,48 @@ function isRemoteHttpUrl(value) {
   return typeof value === 'string' && /^https?:\/\//i.test(value);
 }
 
+const IMAGE_EXT_RE = /\.(png|jpe?g|jfif|gif|webp|bmp|svg|tiff?|heic|heif)$/i;
+
 function isImageMime(type) {
   return /^image\//i.test(String(type || ''));
 }
 
 function isPdfMime(type) {
-  return /pdf/i.test(String(type || ''));
+  return /(application\/pdf|application\/x-pdf|text\/pdf|\bpdf\b)/i.test(String(type || ''));
+}
+
+function isGenericMime(type) {
+  const value = String(type || '').toLowerCase();
+  return (
+    !value ||
+    value === 'application/octet-stream' ||
+    value === 'binary/octet-stream' ||
+    value.startsWith('application/octet-stream')
+  );
 }
 
 function guessKindFromUrl(url) {
   const path = String(url || '').split('?')[0].toLowerCase();
-  if (/\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i.test(path)) return 'image';
+  if (IMAGE_EXT_RE.test(path)) return 'image';
   if (/\.pdf$/i.test(path)) return 'pdf';
   return null;
 }
 
-function detectMediaKind(mime, url) {
+function detectMediaKind(mime, url, fileName) {
   if (isImageMime(mime)) return 'image';
-  if (isPdfMime(mime)) return 'pdf';
-  return guessKindFromUrl(url) || 'pdf';
+  const fromName = guessKindFromUrl(fileName) || guessKindFromUrl(url);
+  // Prefer filename/URL when storage/proxy reports a generic or wrong PDF type for images.
+  if (fromName === 'image') return 'image';
+  if (!isGenericMime(mime) && isPdfMime(mime)) return 'pdf';
+  return fromName || 'pdf';
 }
 
 export default function InvoicePdfViewer({
   file,
+  fileName = '',
   title = 'Invoice',
   emptyTitle = 'No file yet',
-  emptyDescription = 'Upload an invoice PDF or image to preview it here.',
+  emptyDescription = 'Upload an invoice PDF or image (JPG, PNG, etc.) to preview it here.',
   emptyActionLabel,
   onEmptyAction,
   loading: externalLoading = false,
@@ -103,9 +119,35 @@ export default function InvoicePdfViewer({
       }
 
       if (!isRemoteHttpUrl(file)) {
-        setResolvedFile(file);
-        setMediaKind(guessKindFromUrl(file) || 'pdf');
-        setResolving(false);
+        setResolving(true);
+        setResolvedFile(null);
+        try {
+          let kind = detectMediaKind('', file, fileName);
+          if (typeof file === 'string' && file.startsWith('blob:')) {
+            const blob = await fetch(file).then((r) => r.blob());
+            if (cancelled) return;
+            kind = detectMediaKind(blob.type, file, fileName);
+          } else if (typeof File !== 'undefined' && file instanceof File) {
+            kind = detectMediaKind(file.type, file.name, fileName);
+          } else if (typeof Blob !== 'undefined' && file instanceof Blob) {
+            kind = detectMediaKind(file.type, fileName);
+          }
+          if (cancelled) return;
+          setMediaKind(kind);
+          setResolvedFile(file);
+          if (kind === 'image') {
+            setNumPages(1);
+            setPageNumber(1);
+          }
+        } catch (err) {
+          console.error('Invoice local file load failed', err);
+          if (!cancelled) {
+            setResolveError(err.message || 'Failed to load file');
+            setResolvedFile(null);
+          }
+        } finally {
+          if (!cancelled) setResolving(false);
+        }
         return;
       }
 
@@ -130,8 +172,14 @@ export default function InvoicePdfViewer({
           }
           throw new Error(message);
         }
-        const kind = detectMediaKind(contentType, file);
-        objectUrl = URL.createObjectURL(data);
+        const kind = detectMediaKind(contentType, file, fileName);
+        objectUrl = URL.createObjectURL(
+          data instanceof Blob && data.type
+            ? data
+            : new Blob([data], {
+                type: kind === 'image' ? 'image/jpeg' : contentType || 'application/pdf',
+              }),
+        );
         setMediaKind(kind);
         setResolvedFile(objectUrl);
         if (kind === 'image') {
@@ -166,7 +214,7 @@ export default function InvoicePdfViewer({
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [file]);
+  }, [file, fileName]);
 
   const startDrag = useCallback((clientX, clientY) => {
     dragRef.current = {

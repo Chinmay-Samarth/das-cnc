@@ -36,6 +36,21 @@ function isAllowedStorageUrl(raw) {
   return isSupabase || isLocal;
 }
 
+function guessContentTypeFromUrl(raw) {
+  const path = String(raw || '').split('?')[0].toLowerCase();
+  if (/\.pdf$/i.test(path)) return 'application/pdf';
+  if (/\.jpe?g$/i.test(path) || /\.jfif$/i.test(path)) return 'image/jpeg';
+  if (/\.png$/i.test(path)) return 'image/png';
+  if (/\.gif$/i.test(path)) return 'image/gif';
+  if (/\.webp$/i.test(path)) return 'image/webp';
+  if (/\.bmp$/i.test(path)) return 'image/bmp';
+  if (/\.svg$/i.test(path)) return 'image/svg+xml';
+  if (/\.tiff?$/i.test(path)) return 'image/tiff';
+  if (/\.heic$/i.test(path)) return 'image/heic';
+  if (/\.heif$/i.test(path)) return 'image/heif';
+  return null;
+}
+
 /**
  * Same-origin PDF/file proxy so browsers can load Supabase public URLs in
  * react-pdf (direct XHR often fails CORS even when opening the URL in a tab works).
@@ -54,8 +69,12 @@ router.get('/proxy', verifyEmployeeAuth, async (req, res) => {
       maxContentLength: 40 * 1024 * 1024,
       validateStatus: (status) => status >= 200 && status < 400,
     });
+    const upstreamType = String(upstream.headers['content-type'] || '').split(';')[0].trim();
+    const guessed = guessContentTypeFromUrl(url);
     const contentType =
-      upstream.headers['content-type'] || 'application/pdf';
+      (!upstreamType || /^application\/octet-stream$/i.test(upstreamType)) && guessed
+        ? guessed
+        : upstreamType || guessed || 'application/octet-stream';
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'private, max-age=60');
     res.setHeader('Content-Disposition', 'inline');
