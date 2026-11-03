@@ -4,6 +4,8 @@
  */
 
 export const FINANCE_ALLOWED_PREFIXES = [
+  '/customers',
+  '/suppliers',
   '/invoices',
   '/purchase-payments',
   '/sales-invoices',
@@ -14,6 +16,8 @@ export const FINANCE_ALLOWED_PREFIXES = [
 export const FINANCE_ALLOWED_EXACT = [];
 
 export const FINANCE_NAV_PATHS = new Set([
+  '/customers',
+  '/suppliers',
   '/invoices',
   '/purchase-payments',
   '/sales-invoices',
