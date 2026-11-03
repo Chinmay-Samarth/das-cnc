@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Download, Receipt, X } from 'lucide-react';
+import { Download, Receipt, Trash2, X } from 'lucide-react';
 import AddInvoiceButton from '../components/Invoices/AddInvoiceButton';
 import api from '../api/client';
 import { formatDisplayDate, toISODateString } from '../utils/dateFormat';
 import { PageHeader, EmptyState, StatusBadge, AlertBanner } from '../components/mes';
-import { appAlert } from '../components/dialog';
+import { appAlert, appConfirm } from '../components/dialog';
 import { useAuth } from '../auth/authContext';
 import PurchaseOrdersTab from '../procurement/PurchaseOrdersTab';
 import FormSearchSelect from '../components/shared/FormSearchSelect';
@@ -137,6 +137,7 @@ export default function InvoicesPage() {
   const [exportFrom, setExportFrom] = useState(monthRange.from);
   const [exportTo, setExportTo] = useState(monthRange.to);
   const [exporting, setExporting] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
 
   const exportDateError = useMemo(() => {
     if (!exportOpen) return '';
@@ -218,6 +219,32 @@ export default function InvoicesPage() {
       return;
     }
     navigate(`/invoices/${item.id}`);
+  }
+
+  async function handleDeleteNeedsReview(item, event) {
+    event.stopPropagation();
+    const ok = await appConfirm({
+      title: 'Delete invoice draft?',
+      message: `Delete ${item.invoice_number || 'this'} unscanned / needs-review invoice? This cannot be undone.`,
+      tone: 'danger',
+      confirmLabel: 'Delete',
+      cancelLabel: 'Keep',
+    });
+    if (!ok) return;
+
+    setDeletingId(item.id);
+    try {
+      await api.post(`/invoices/${item.id}/abandon-review`);
+      setInvoices((current) => current.filter((row) => row.id !== item.id));
+    } catch (err) {
+      await appAlert({
+        title: 'Could not delete',
+        message: err.response?.data?.error || 'Unable to delete this invoice draft.',
+        tone: 'danger',
+      });
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   function toggleExportPanel() {
@@ -424,10 +451,14 @@ export default function InvoicesPage() {
                     Status
                     <span className="sort-indicator">{sortMark('status')}</span>
                   </th>
+                  <th style={{ width: 88 }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredInvoices.map((item) => (
+                {filteredInvoices.map((item) => {
+                  const displayStatus = invoiceDisplayStatus(item);
+                  const canDelete = displayStatus === 'needs_review' || displayStatus === 'error';
+                  return (
                   <tr
                     key={item.id}
                     role="button"
@@ -453,8 +484,8 @@ export default function InvoicesPage() {
                     <td>{formatDisplayDate(item.due_date)}</td>
                     <td>
                       <div className="invoice-status-stack">
-                        <StatusBadge status={statusTone(invoiceDisplayStatus(item))}>
-                          {statusLabel(invoiceDisplayStatus(item))}
+                        <StatusBadge status={statusTone(displayStatus)}>
+                          {statusLabel(displayStatus)}
                         </StatusBadge>
                         {isGirnDue(item) ? (
                           <StatusBadge status="ready">GIRN DUE</StatusBadge>
@@ -468,8 +499,26 @@ export default function InvoicesPage() {
                         ) : null}
                       </div>
                     </td>
+                    <td onClick={(event) => event.stopPropagation()}>
+                      {canDelete ? (
+                        <button
+                          type="button"
+                          className="mes-btn mes-btn-secondary"
+                          style={{ padding: '4px 8px' }}
+                          title="Delete draft"
+                          disabled={deletingId === item.id}
+                          onClick={(event) => handleDeleteNeedsReview(item, event)}
+                        >
+                          <Trash2 size={14} />
+                          {deletingId === item.id ? '…' : 'Delete'}
+                        </button>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

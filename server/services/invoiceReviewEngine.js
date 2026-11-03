@@ -334,10 +334,31 @@ async function confirmReview(invoiceId, body, actorId) {
   }
 
   const lines = Array.isArray(body.lines) ? body.lines : [];
-  const supplierId = body.supplier_id || invoice.supplier_id;
+  let supplierId = body.supplier_id || invoice.supplier_id;
 
   if (!supplierId) {
-    const err = new Error('Supplier is required before confirming review');
+    const { supplierPayloadFromInvoice, ensureSupplier } = require('./girnSupplierEngine');
+    try {
+      const suggested = supplierPayloadFromInvoice(invoice);
+      if (suggested.name || suggested.GSTIN) {
+        supplierId = await ensureSupplier(suggested);
+        if (supplierId) {
+          const { error: linkErr } = await supabase
+            .from('invoices')
+            .update({ supplier_id: supplierId })
+            .eq('id', invoiceId);
+          if (linkErr) throw linkErr;
+        }
+      }
+    } catch (ensureErr) {
+      console.error('Confirm-review supplier ensure failed:', ensureErr.message || ensureErr);
+    }
+  }
+
+  if (!supplierId) {
+    const err = new Error(
+      'Supplier is required before confirming review. The scanned supplier could not be linked automatically — select a supplier and try again.'
+    );
     err.status = 400;
     throw err;
   }
