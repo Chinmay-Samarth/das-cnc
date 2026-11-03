@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -12,12 +12,17 @@ import {
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
+import api from '../../api/client';
 import { appPrompt } from '../dialog';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url,
 ).toString();
+
+function isRemoteHttpUrl(value) {
+  return typeof value === 'string' && /^https?:\/\//i.test(value);
+}
 
 export default function InvoicePdfViewer({
   file,
@@ -41,6 +46,9 @@ export default function InvoicePdfViewer({
   const [actionMessage, setActionMessage] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [resolvedFile, setResolvedFile] = useState(null);
+  const [resolving, setResolving] = useState(false);
+  const [resolveError, setResolveError] = useState(null);
 
   const onDocLoad = useCallback(({ numPages: next }) => {
     setNumPages(next);
@@ -51,6 +59,70 @@ export default function InvoicePdfViewer({
     pdfScrollRef.current = node;
     if (node) setPdfWidth(Math.max(240, node.getBoundingClientRect().width - 48));
   }, []);
+
+  // Remote Supabase URLs often open in a new tab but fail in react-pdf (CORS).
+  // Fetch through our API and feed a blob: URL to the viewer.
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = null;
+
+    async function resolveFile() {
+      setResolveError(null);
+      setNumPages(null);
+      setPageNumber(1);
+
+      if (!file) {
+        setResolvedFile(null);
+        setResolving(false);
+        return;
+      }
+
+      if (!isRemoteHttpUrl(file)) {
+        setResolvedFile(file);
+        setResolving(false);
+        return;
+      }
+
+      setResolving(true);
+      setResolvedFile(null);
+      try {
+        const { data } = await api.get('/media/proxy', {
+          params: { url: file },
+          responseType: 'blob',
+          timeout: 120000,
+        });
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(data);
+        setResolvedFile(objectUrl);
+      } catch (err) {
+        console.error('PDF proxy load failed', err);
+        if (cancelled) return;
+        let message = err.message || 'Failed to load PDF';
+        const data = err?.response?.data;
+        if (data instanceof Blob) {
+          try {
+            const text = await data.text();
+            const parsed = JSON.parse(text);
+            if (parsed?.error) message = parsed.error;
+          } catch {
+            /* keep message */
+          }
+        } else if (data?.error) {
+          message = data.error;
+        }
+        setResolveError(message);
+        setResolvedFile(null);
+      } finally {
+        if (!cancelled) setResolving(false);
+      }
+    }
+
+    resolveFile();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [file]);
 
   const startDrag = useCallback((clientX, clientY) => {
     dragRef.current = {
@@ -82,7 +154,7 @@ export default function InvoicePdfViewer({
 
   useEffect(() => {
     setPan({ x: 0, y: 0 });
-  }, [scale, pageNumber, file]);
+  }, [scale, pageNumber, resolvedFile]);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -118,7 +190,9 @@ export default function InvoicePdfViewer({
 
     const cleanup = () => {
       if (iframe.parentNode) document.body.removeChild(iframe);
-      if (url.startsWith('blob:') && url !== file) URL.revokeObjectURL(url);
+      if (url.startsWith('blob:') && url !== resolvedFile && url !== file) {
+        URL.revokeObjectURL(url);
+      }
     };
 
     iframe.onload = () => {
@@ -142,7 +216,11 @@ export default function InvoicePdfViewer({
   };
 
   const handlePrint = async () => {
-    if (!file) return;
+    if (!resolvedFile && !file) return;
+    if (resolvedFile && String(resolvedFile).startsWith('blob:')) {
+      printPdf(resolvedFile);
+      return;
+    }
     try {
       const response = await fetch(file);
       if (!response.ok) throw new Error('fetch failed');
@@ -194,6 +272,7 @@ export default function InvoicePdfViewer({
   };
 
   const showEmpty = !file && !externalLoading;
+  const showLoading = externalLoading || resolving || (file && !resolvedFile && !resolveError);
 
   return (
     <div ref={pdfPanelRef} className="invoice-pdf-panel">
@@ -204,7 +283,7 @@ export default function InvoicePdfViewer({
             className="invoice-pdf-icon-btn"
             onClick={() => setScale((s) => Math.max(0.5, +(s - 0.25).toFixed(2)))}
             aria-label="Zoom out"
-            disabled={!file}
+            disabled={!resolvedFile}
           >
             <ZoomOut size={15} />
           </button>
@@ -214,7 +293,7 @@ export default function InvoicePdfViewer({
             className="invoice-pdf-icon-btn"
             onClick={() => setScale((s) => Math.min(2.5, +(s + 0.25).toFixed(2)))}
             aria-label="Zoom in"
-            disabled={!file}
+            disabled={!resolvedFile}
           >
             <ZoomIn size={15} />
           </button>
@@ -224,7 +303,7 @@ export default function InvoicePdfViewer({
             type="button"
             className="invoice-pdf-icon-btn"
             onClick={() => setPageNumber((p) => Math.max(1, p - 1))}
-            disabled={!file || pageNumber <= 1}
+            disabled={!resolvedFile || pageNumber <= 1}
             aria-label="Previous page"
           >
             <ChevronLeft size={15} />
@@ -236,7 +315,7 @@ export default function InvoicePdfViewer({
             type="button"
             className="invoice-pdf-icon-btn"
             onClick={() => setPageNumber((p) => Math.min(numPages || 1, p + 1))}
-            disabled={!file || !numPages || pageNumber >= numPages}
+            disabled={!resolvedFile || !numPages || pageNumber >= numPages}
             aria-label="Next page"
           >
             <ChevronRight size={15} />
@@ -247,14 +326,14 @@ export default function InvoicePdfViewer({
       <div
         ref={pdfContainerRef}
         className="invoice-pdf-area"
-        style={{ cursor: file ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
+        style={{ cursor: resolvedFile ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
         onMouseDown={(e) => {
-          if (!file || e.button !== 0 || e.target.closest('button')) return;
+          if (!resolvedFile || e.button !== 0 || e.target.closest('button')) return;
           e.preventDefault();
           startDrag(e.clientX, e.clientY);
         }}
         onTouchStart={(e) => {
-          if (!file || e.target.closest('button')) return;
+          if (!resolvedFile || e.target.closest('button')) return;
           const touch = e.touches[0];
           if (!touch) return;
           startDrag(touch.clientX, touch.clientY);
@@ -278,15 +357,20 @@ export default function InvoicePdfViewer({
               </button>
             ) : null}
           </div>
-        ) : externalLoading || !file ? (
+        ) : showLoading ? (
           <div className="invoice-pdf-placeholder">Loading PDF…</div>
+        ) : resolveError && !resolvedFile ? (
+          <div className="invoice-pdf-placeholder">
+            Failed to load PDF.
+            {resolveError ? ` (${resolveError})` : ''}
+          </div>
         ) : (
           <div
             className="invoice-pdf-canvas"
             style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}
           >
             <Document
-              file={file}
+              file={resolvedFile}
               onLoadSuccess={onDocLoad}
               loading={<div className="invoice-pdf-placeholder">Loading…</div>}
               error={<div className="invoice-pdf-placeholder">Failed to load PDF.</div>}
