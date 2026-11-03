@@ -4,38 +4,20 @@
  */
 
 export const FINANCE_ALLOWED_PREFIXES = [
-  '/customers',
-  '/suppliers',
-  '/stock',
-  '/girn',
   '/invoices',
-  '/images',
+  '/purchase-payments',
   '/sales-invoices',
   '/sales-payments',
-  '/production/outsource',
-  '/production/dispatch',
-  '/production/cards',
-  '/blanket-pos',
-  '/delivery-schedules',
   '/account',
 ];
 
-export const FINANCE_ALLOWED_EXACT = ['/production'];
+export const FINANCE_ALLOWED_EXACT = [];
 
 export const FINANCE_NAV_PATHS = new Set([
-  '/customers',
-  '/suppliers',
-  '/stock',
-  '/girn',
   '/invoices',
-  '/images',
+  '/purchase-payments',
   '/sales-invoices',
   '/sales-payments',
-  '/production/outsource',
-  '/production/dispatch',
-  '/production',
-  '/blanket-pos',
-  '/delivery-schedules',
 ]);
 
 export const QC_ALLOWED_PREFIXES = [
@@ -54,7 +36,7 @@ const ROLE_ACCESS = {
     prefixes: FINANCE_ALLOWED_PREFIXES,
     exact: FINANCE_ALLOWED_EXACT,
     navPaths: FINANCE_NAV_PATHS,
-    home: '/girn',
+    home: '/invoices',
   },
   QC: {
     prefixes: QC_ALLOWED_PREFIXES,

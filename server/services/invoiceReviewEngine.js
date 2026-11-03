@@ -267,6 +267,8 @@ async function buildReviewPayload(invoiceId) {
 
   const lines = await buildReviewLines(invoice);
   const warnings = Array.isArray(invoice.ocr_warnings) ? invoice.ocr_warnings : [];
+  const { supplierPayloadFromInvoice } = require('./girnSupplierEngine');
+  const suggestedSupplier = supplierPayloadFromInvoice(invoice);
 
   return {
     invoice: {
@@ -280,6 +282,15 @@ async function buildReviewPayload(invoiceId) {
       needs_review:
         invoice.review_status === 'needs_review' ||
         invoice.status === 'needs_review',
+    },
+    suggested_supplier: {
+      name: suggestedSupplier.name || null,
+      GSTIN: suggestedSupplier.GSTIN || null,
+      billing_address: suggestedSupplier.billing_address || null,
+      account_number: suggestedSupplier.account_number || null,
+      IFSC: suggestedSupplier.ifsc || null,
+      email: suggestedSupplier.email || null,
+      state: suggestedSupplier.state || null,
     },
     lines,
   };

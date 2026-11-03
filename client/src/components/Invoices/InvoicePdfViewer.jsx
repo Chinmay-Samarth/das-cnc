@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -95,10 +95,30 @@ export default function InvoicePdfViewer({
         objectUrl = URL.createObjectURL(data);
         setResolvedFile(objectUrl);
       } catch (err) {
+<<<<<<< HEAD
         console.error('PDF proxy load failed, falling back to direct URL', err);
         if (cancelled) return;
         setResolveError(err?.response?.data?.error || err.message || 'Failed to load PDF');
         setResolvedFile(file);
+=======
+        console.error('PDF proxy load failed', err);
+        if (cancelled) return;
+        let message = err.message || 'Failed to load PDF';
+        const data = err?.response?.data;
+        if (data instanceof Blob) {
+          try {
+            const text = await data.text();
+            const parsed = JSON.parse(text);
+            if (parsed?.error) message = parsed.error;
+          } catch {
+            /* keep message */
+          }
+        } else if (data?.error) {
+          message = data.error;
+        }
+        setResolveError(message);
+        setResolvedFile(null);
+>>>>>>> master
       } finally {
         if (!cancelled) setResolving(false);
       }
@@ -346,6 +366,11 @@ export default function InvoicePdfViewer({
           </div>
         ) : showLoading ? (
           <div className="invoice-pdf-placeholder">Loading PDF…</div>
+        ) : resolveError && !resolvedFile ? (
+          <div className="invoice-pdf-placeholder">
+            Failed to load PDF.
+            {resolveError ? ` (${resolveError})` : ''}
+          </div>
         ) : (
           <div
             className="invoice-pdf-canvas"
