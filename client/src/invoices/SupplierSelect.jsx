@@ -10,8 +10,14 @@ export default function SupplierSelect({
   placeholder = 'Search supplier…',
 }) {
   const [options, setOptions] = useState([]);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(label || '');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!value && label && !search) {
+      setSearch(label);
+    }
+  }, [label, value, search]);
 
   useEffect(() => {
     let cancelled = false;

@@ -86,20 +86,27 @@ export default function InvoicePdfViewer({
       setResolving(true);
       setResolvedFile(null);
       try {
-        const { data } = await api.get('/media/proxy', {
+        const { data, headers } = await api.get('/media/proxy', {
           params: { url: file },
           responseType: 'blob',
           timeout: 120000,
         });
         if (cancelled) return;
+        const contentType = String(headers?.['content-type'] || data?.type || '');
+        if (/json|text|html/i.test(contentType)) {
+          let message = 'PDF proxy returned an error response';
+          try {
+            const text = await data.text();
+            const parsed = JSON.parse(text);
+            if (parsed?.error) message = parsed.error;
+          } catch {
+            /* keep message */
+          }
+          throw new Error(message);
+        }
         objectUrl = URL.createObjectURL(data);
         setResolvedFile(objectUrl);
       } catch (err) {
-        console.error('PDF proxy load failed, falling back to direct URL', err);
-        if (cancelled) return;
-        setResolveError(err?.response?.data?.error || err.message || 'Failed to load PDF');
-        setResolvedFile(file);
-
         console.error('PDF proxy load failed', err);
         if (cancelled) return;
         let message = err.message || 'Failed to load PDF';

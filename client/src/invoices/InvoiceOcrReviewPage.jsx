@@ -9,7 +9,7 @@ import {
   PageHeader,
   StatusBadge,
 } from '../components/mes';
-import { appAlert, appForm } from '../components/dialog';
+import { appAlert } from '../components/dialog';
 import { getCategoryConfig } from '../girn/girnCategoryConfig';
 import InvoiceRecheckLineTable from './InvoiceRecheckLineTable';
 import InvoiceRecheckTaxTable, { normalizeTaxRows, recalcTax } from './InvoiceRecheckTaxTable';
@@ -76,7 +76,7 @@ export default function InvoiceOcrReviewPage() {
   const [supplierId, setSupplierId] = useState('');
   const [supplierLabel, setSupplierLabel] = useState('');
   const [suggestedSupplier, setSuggestedSupplier] = useState(null);
-  const [creatingSupplier, setCreatingSupplier] = useState(false);
+  const [supplierLedger, setSupplierLedger] = useState(null);
   const [header, setHeader] = useState({
     invoice_number: '',
     invoice_date: '',
@@ -119,9 +119,15 @@ export default function InvoiceOcrReviewPage() {
       setLines((data.lines || inv.line_items || []).map(recalcLine));
       const nextTaxes = normalizeTaxRows(inv.tax_items, inv.base_amount);
       setTaxes(nextTaxes);
+      const suggested = data.suggested_supplier || null;
+      setSuggestedSupplier(suggested);
+      setSupplierLedger(data.supplier_ledger || null);
       setSupplierId(inv.supplier_id || '');
-      setSupplierLabel(inv.suppliers?.name || '');
-      setSuggestedSupplier(data.suggested_supplier || null);
+      setSupplierLabel(
+        inv.suppliers?.name ||
+          suggested?.name ||
+          ''
+      );
       const baseAmount = inv.base_amount ?? '';
       const roundOff = inv.round_off ?? '';
       const taxAmount = sumTaxAmount(nextTaxes);
@@ -334,118 +340,6 @@ export default function InvoiceOcrReviewPage() {
       setHeader((h) => syncHeaderTotal(h, next));
       return next;
     });
-  }
-
-  async function handleCreateSupplier() {
-    const seed = suggestedSupplier || {};
-    const values = await appForm({
-      title: 'Create supplier',
-      message: 'Use the scanned details, fill anything missing, then create and link this invoice.',
-      confirmLabel: creatingSupplier ? 'Creating…' : 'Create supplier',
-      wide: true,
-      fields: [
-        {
-          name: 'name',
-          label: 'Supplier name',
-          required: true,
-          defaultValue: seed.name || '',
-          placeholder: 'As printed on the invoice',
-        },
-        {
-          name: 'GSTIN',
-          label: 'GSTIN',
-          required: true,
-          defaultValue: seed.GSTIN || '',
-          placeholder: 'e.g. 29ABCDE1234F1Z5',
-        },
-        {
-          name: 'ledger_name',
-          label: 'Ledger name',
-          defaultValue: seed.name || '',
-          placeholder: 'Exact Tally ledger name',
-        },
-        {
-          name: 'account_number',
-          label: 'Account number',
-          required: true,
-          defaultValue: seed.account_number || '',
-          placeholder: 'Bank account number',
-        },
-        {
-          name: 'IFSC',
-          label: 'IFSC',
-          defaultValue: seed.IFSC || '',
-          placeholder: 'Bank IFSC',
-        },
-        {
-          name: 'billing_address',
-          label: 'Billing address',
-          defaultValue: seed.billing_address || '',
-          placeholder: 'Address from the invoice',
-        },
-        {
-          name: 'email',
-          label: 'Email',
-          defaultValue: seed.email || '',
-          placeholder: 'supplier@example.com',
-        },
-        {
-          name: 'contact_number',
-          label: 'Contact number',
-          defaultValue: '',
-          placeholder: 'Phone number',
-        },
-      ],
-    });
-    if (!values) return;
-
-    const name = String(values.name || '').trim();
-    const GSTIN = String(values.GSTIN || '').trim();
-    const account_number = String(values.account_number || '').trim();
-    if (!name || !GSTIN || !account_number) {
-      await appAlert({
-        title: 'Could not create supplier',
-        message: 'Name, GSTIN, and account number are required.',
-        tone: 'danger',
-      });
-      return;
-    }
-
-    setCreatingSupplier(true);
-    setError('');
-    try {
-      const payload = new FormData();
-      payload.append('name', name);
-      payload.append('GSTIN', GSTIN);
-      payload.append('account_number', account_number);
-      payload.append('ledger_name', String(values.ledger_name || '').trim());
-      payload.append('IFSC', String(values.IFSC || '').trim());
-      payload.append('billing_address', String(values.billing_address || '').trim());
-      payload.append('email', String(values.email || '').trim());
-      payload.append('contact_number', String(values.contact_number || '').trim());
-      payload.append('customer_recommended', 'false');
-
-      const { data } = await api.post('/suppliers', payload);
-      const created = data?.supplier;
-      if (!created?.id) {
-        throw new Error('Supplier was created without an id');
-      }
-      setSupplierId(created.id);
-      setSupplierLabel(created.name || name);
-      await appAlert({
-        title: 'Supplier created',
-        message: `${created.name || name} is linked to this invoice.`,
-        tone: 'success',
-      });
-    } catch (err) {
-      await appAlert({
-        title: 'Could not create supplier',
-        message: err.response?.data?.error || err.message || 'Unable to create supplier.',
-        tone: 'danger',
-      });
-    } finally {
-      setCreatingSupplier(false);
-    }
   }
 
   async function handleConfirm() {
@@ -680,24 +574,33 @@ export default function InvoiceOcrReviewPage() {
                     setSupplierId(sid);
                     setSupplierLabel(label);
                   }}
-                  disabled={creatingSupplier}
                 />
-                {!supplierId ? (
-                  <div className="invoice-recheck-supplier-create">
-                    <p className="muted" style={{ margin: '8px 0 6px' }}>
-                      {suggestedSupplier?.name || suggestedSupplier?.GSTIN
-                        ? 'No matching supplier found. Create one from the scanned details.'
-                        : 'If the supplier is not in the list, create them here.'}
-                    </p>
-                    <button
-                      type="button"
-                      className="mes-btn mes-btn-secondary"
-                      onClick={handleCreateSupplier}
-                      disabled={creatingSupplier || submitting}
-                    >
-                      {creatingSupplier ? 'Creating…' : 'Create supplier'}
-                    </button>
-                  </div>
+                {supplierLedger?.status === 'created' ? (
+                  <p className="muted" style={{ margin: '8px 0 0' }}>
+                    This supplier was not in the ledger. It was created automatically from the
+                    scan
+                    {supplierLabel ? (
+                      <>
+                        {' '}
+                        (<strong>{supplierLabel}</strong>)
+                      </>
+                    ) : null}
+                    .
+                  </p>
+                ) : null}
+                {!supplierId && suggestedSupplier?.name ? (
+                  <p className="muted" style={{ margin: '8px 0 0' }}>
+                    Scanned supplier <strong>{suggestedSupplier.name}</strong>
+                    {suggestedSupplier.GSTIN ? ` · GSTIN ${suggestedSupplier.GSTIN}` : ''} is
+                    not in the ledger and could not be created automatically. Pick or fix the
+                    supplier before confirming.
+                  </p>
+                ) : null}
+                {!supplierId && !suggestedSupplier?.name ? (
+                  <p className="muted" style={{ margin: '8px 0 0' }}>
+                    No supplier was found on the scan. Search the ledger and select one before
+                    confirming.
+                  </p>
                 ) : null}
               </label>
 

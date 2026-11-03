@@ -86,15 +86,28 @@ function supplierPayloadFromOcrDoc(doc) {
   if (doc.supplier && typeof doc.supplier === 'object') {
     return {
       name: clean(doc.supplier.name),
-      GSTIN: clean(doc.supplier.gstin),
-      state: clean(doc.supplier.billing_state),
-      IFSC: clean(doc.bank?.ifsc),
+      GSTIN: clean(doc.supplier.gstin || doc.supplier.GSTIN),
+      state: clean(doc.supplier.billing_state || doc.supplier.state),
+      IFSC: clean(doc.bank?.ifsc || doc.bank?.IFSC),
       account_number: clean(doc.bank?.account_number),
       email: clean(doc.supplier.email),
       billing_address: clean(
-        doc.supplier.billing_address || doc.supplier.current_address
+        doc.supplier.billing_address || doc.supplier.current_address || doc.supplier.address
       ),
-      contact_phone: clean(doc.supplier.phone),
+      contact_phone: clean(doc.supplier.phone || doc.supplier.contact_number),
+    };
+  }
+
+  if (typeof doc.supplier === 'string' && clean(doc.supplier)) {
+    return {
+      name: clean(doc.supplier),
+      GSTIN: clean(doc.supplier_gstin || doc.gstin || doc.GSTIN),
+      state: clean(doc.supplier_state || doc.state),
+      IFSC: clean(doc.bank?.ifsc || doc.ifsc || doc.IFSC),
+      account_number: clean(doc.bank?.account_number || doc.account_number),
+      email: clean(doc.supplier_email || doc.email),
+      billing_address: clean(doc.supplier_address || doc.billing_address),
+      contact_phone: clean(doc.supplier_phone || doc.contact_number),
     };
   }
 
@@ -114,8 +127,13 @@ function supplierPayloadFromOcrDoc(doc) {
   }
 
   return {
-    name: doc?.supplier_name?.value || null,
-    GSTIN: gstin,
+    name:
+      clean(doc?.supplier_name?.value) ||
+      clean(doc?.supplier_name) ||
+      clean(doc?.vendor_name?.value) ||
+      clean(doc?.vendor_name) ||
+      null,
+    GSTIN: gstin || clean(doc?.gstin) || clean(doc?.GSTIN),
     state: doc?.supplier_address?.fields?.state?.value || null,
     IFSC: payment.swift?.value || null,
     account_number: payment.account_number?.value || null,

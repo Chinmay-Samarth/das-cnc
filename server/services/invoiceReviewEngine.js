@@ -258,17 +258,41 @@ async function buildReviewLines(invoice) {
 }
 
 async function buildReviewPayload(invoiceId) {
-  const invoice = await getInvoice(invoiceId);
+  let invoice = await getInvoice(invoiceId);
   if (!invoice) {
     const err = new Error('Invoice not found');
     err.status = 404;
     throw err;
   }
 
+  const { supplierPayloadFromInvoice, ensureSupplier } = require('./girnSupplierEngine');
+  let suggestedSupplier = supplierPayloadFromInvoice(invoice);
+  let supplierLedger = { status: invoice.supplier_id ? 'linked' : 'missing', created: false };
+
+  if (!invoice.supplier_id && (suggestedSupplier.name || suggestedSupplier.GSTIN)) {
+    try {
+      const supplierId = await ensureSupplier(suggestedSupplier);
+      if (supplierId) {
+        const { error: linkErr } = await supabase
+          .from('invoices')
+          .update({ supplier_id: supplierId })
+          .eq('id', invoiceId);
+        if (linkErr) throw linkErr;
+        invoice = await getInvoice(invoiceId);
+        suggestedSupplier = supplierPayloadFromInvoice(invoice);
+        supplierLedger = {
+          status: 'created',
+          created: true,
+        };
+      }
+    } catch (err) {
+      console.error('Auto-create supplier on invoice review failed:', err.message || err);
+      supplierLedger = { status: 'missing', created: false };
+    }
+  }
+
   const lines = await buildReviewLines(invoice);
   const warnings = Array.isArray(invoice.ocr_warnings) ? invoice.ocr_warnings : [];
-  const { supplierPayloadFromInvoice } = require('./girnSupplierEngine');
-  const suggestedSupplier = supplierPayloadFromInvoice(invoice);
 
   return {
     invoice: {
@@ -283,6 +307,7 @@ async function buildReviewPayload(invoiceId) {
         invoice.review_status === 'needs_review' ||
         invoice.status === 'needs_review',
     },
+    supplier_ledger: supplierLedger,
     suggested_supplier: {
       name: suggestedSupplier.name || null,
       GSTIN: suggestedSupplier.GSTIN || null,

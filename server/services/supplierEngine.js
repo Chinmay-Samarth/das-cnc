@@ -39,6 +39,7 @@ async function createSupplierFromInvoice(dataBody){
 
         const insertPayload= {
             name: name,
+            ledger_name: name || null,
             contact_number: contact_number,
             GSTIN: GSTIN,
             state: state,
