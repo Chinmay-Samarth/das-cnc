@@ -12863,6 +12863,32 @@ button:hover:not(:disabled) {
   font-weight: 600;
 }
 
+.sample-cards-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 440px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.sample-cards-fields {
+  margin-bottom: 0;
+}
+
+.sample-cards-second-title {
+  margin-top: 18px;
+}
+
+.sample-cards-preview {
+  max-height: none;
+  justify-items: center;
+}
+
+@media (max-width: 960px) {
+  .sample-cards-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .shop-card-dialog {
   width: min(760px, 100%);
   max-height: calc(100vh - 32px);
@@ -12903,12 +12929,19 @@ button:hover:not(:disabled) {
   display: none;
 }
 
-.shop-card-head,
+.lot-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: start;
+  gap: 2mm;
+  margin-bottom: 2mm;
+}
+
 .girn-tag-head {
+  position: relative;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  align-items: flex-start;
+  min-height: 12mm;
   margin-bottom: 2mm;
 }
 
@@ -12919,6 +12952,33 @@ button:hover:not(:disabled) {
 }
 
 .shop-card-lotno {
+  justify-self: center;
+  align-self: center;
+  text-align: center;
+  max-width: 48mm;
+  padding: 1mm 2.5mm;
+  border: 1.5px solid #0f172a;
+  transform: translateX(-8mm);
+}
+
+.lot-card-ids {
+  justify-self: end;
+  width: 100%;
+  max-width: 62mm;
+}
+
+.lot-card-ids .shop-card-field {
+  margin: 0 0 0.8mm;
+  font-size: 7.5pt;
+}
+
+.lot-card-ids .shop-card-field > span:first-child {
+  flex: 0 0 24mm;
+  font-size: 6.5pt;
+}
+
+.lot-card-ids .shop-card-field strong {
+  font-size: 8pt;
   text-align: right;
 }
 
@@ -12933,8 +12993,10 @@ button:hover:not(:disabled) {
 }
 
 .shop-card-lotno strong {
-  font-size: 14pt;
+  display: block;
+  font-size: 16pt;
   letter-spacing: 0.03em;
+  white-space: nowrap;
 }
 
 .shop-card-field {
@@ -12996,9 +13058,18 @@ button:hover:not(:disabled) {
 .shop-card-table td:nth-child(4) { width: 18mm; text-align: right; }
 
 .girn-tag-head h1 {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 1.5mm;
   margin: 0;
-  font-size: 16pt;
-  letter-spacing: 0.02em;
+  text-align: center;
+  font-size: 13pt;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-decoration: underline;
+  text-underline-offset: 1.2mm;
 }
 
 .girn-tag-value {
@@ -13009,17 +13080,42 @@ button:hover:not(:disabled) {
 }
 
 .girn-tag-material {
-  margin-bottom: 3mm;
+  margin-bottom: 1.5mm;
   font-weight: 600;
 }
 
-.girn-tag-grid {
-  display: grid;
-  grid-template-columns: 1.4fr 0.6fr;
-  gap: 4mm;
-  margin-top: 2mm;
+.girn-tag-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2mm;
 }
 
+.girn-tag-qty,
+.girn-tag-actor {
+  display: flex;
+  align-items: baseline;
+  gap: 3mm;
+  margin: 0 0 0.8mm;
+  font-size: 11pt;
+  font-weight: 700;
+}
+
+.girn-tag-qty > span:first-child,
+.girn-tag-actor > span:first-child {
+  flex: 0 0 24mm;
+  font-size: 8pt;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #475569;
+}
+
+.girn-tag-qty .shop-card-blank,
+.lot-card-ids .shop-card-blank {
+  flex: 1;
+  min-width: 12mm;
+}
+
+.girn-rejected-seal,
 .girn-approved-seal {
   margin: auto auto 1mm;
   width: 28mm;
@@ -13036,6 +13132,56 @@ button:hover:not(:disabled) {
   text-transform: uppercase;
   font-size: 8pt;
   box-shadow: inset 0 0 0 1px #15803d;
+}
+
+.girn-rejected-seal {
+  border-color: #b91c1c;
+  color: #b91c1c;
+  box-shadow: inset 0 0 0 1px #b91c1c;
+}
+
+.lot-card-line-only {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.lot-card-line-only .lot-card-guide,
+.lot-card-line-only .lot-card-guide * {
+  color: transparent;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.lot-card-line-only .lot-card-guide img {
+  visibility: hidden;
+}
+
+.lot-card-line-only .lot-card-line-ink,
+.lot-card-line-only .lot-card-line-ink * {
+  color: #0f172a;
+  border-color: transparent;
+  background: transparent;
+}
+
+.shop-card-preview .lot-card-line-only {
+  border-color: rgba(148, 163, 184, 0.7);
+}
+
+.shop-card-preview .lot-card-line-only .lot-card-guide,
+.shop-card-preview .lot-card-line-only .lot-card-guide * {
+  color: rgba(15, 23, 42, 0.28);
+  border-color: rgba(15, 23, 42, 0.2);
+}
+
+.shop-card-preview .lot-card-line-only .lot-card-guide img {
+  visibility: visible;
+  opacity: 0.28;
+}
+
+.shop-card-preview .lot-card-line-only .lot-card-line-ink,
+.shop-card-preview .lot-card-line-only .lot-card-line-ink * {
+  color: #0f172a;
 }
 
 @media print {
@@ -13074,5 +13220,23 @@ button:hover:not(:disabled) {
   body.shop-card-printing .shop-card:last-child {
     break-after: auto;
     page-break-after: auto;
+  }
+
+  body.shop-card-printing .shop-card-print-root .lot-card-line-only .lot-card-guide,
+  body.shop-card-printing .shop-card-print-root .lot-card-line-only .lot-card-guide * {
+    color: transparent !important;
+    border-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  body.shop-card-printing .shop-card-print-root .lot-card-line-only .lot-card-guide img {
+    visibility: hidden !important;
+  }
+
+  body.shop-card-printing .shop-card-print-root .lot-card-line-only .lot-card-line-ink,
+  body.shop-card-printing .shop-card-print-root .lot-card-line-only .lot-card-line-ink * {
+    color: #000 !important;
+    visibility: visible !important;
   }
 }

@@ -1,7 +1,7 @@
 import { Printer } from 'lucide-react';
 
-const LOGO_SRC = '/dascnclogo1.png';
-const BLANK_LOT_ROWS = 6;
+const LOGO_SRC = '/dascnclogo2.png';
+export const LOT_CARD_ROWS = 7;
 
 export function printShopCards() {
   document.body.classList.add('shop-card-printing');
@@ -13,7 +13,14 @@ export function printShopCards() {
   window.print();
 }
 
-export function ShopCardPrintDialog({ eyebrow, title, subtitle, onConfirmPrinted, children }) {
+export function ShopCardPrintDialog({
+  eyebrow,
+  title,
+  subtitle,
+  onConfirmPrinted,
+  allowPrint = true,
+  children,
+}) {
   return (
     <div className="pc-modal-backdrop shop-card-dialog-backdrop" role="presentation">
       <div
@@ -34,12 +41,14 @@ export function ShopCardPrintDialog({ eyebrow, title, subtitle, onConfirmPrinted
           {children}
         </div>
         <div className="pc-modal-actions" style={{ marginTop: 16 }}>
-          <button type="button" className="mes-btn mes-btn-secondary" onClick={printShopCards}>
-            <Printer size={16} />
-            Print
-          </button>
+          {allowPrint ? (
+            <button type="button" className="mes-btn mes-btn-secondary" onClick={printShopCards}>
+              <Printer size={16} />
+              Print
+            </button>
+          ) : null}
           <button type="button" className="mes-btn mes-btn-primary" onClick={onConfirmPrinted} autoFocus>
-            Confirm printed
+            {allowPrint ? 'Confirm printed' : 'Close'}
           </button>
         </div>
       </div>
@@ -47,54 +56,56 @@ export function ShopCardPrintDialog({ eyebrow, title, subtitle, onConfirmPrinted
   );
 }
 
-function blankRows(count) {
-  return Array.from({ length: count }, (_, index) => ({ key: `blank-${index}` }));
-}
-
 export function LotCardSheet({
   lotNumber,
   componentName,
+  girnNumber,
+  machineNumber,
   date,
   operator,
   operation,
   quantity,
+  onlyRowIndex = null,
 }) {
-  const rows = [
-    {
-      key: 'done',
-      date: date || '',
-      operator: operator || '',
-      operation: operation || '',
-      quantity: quantity ?? '',
-    },
-    ...blankRows(BLANK_LOT_ROWS),
-  ];
+  const lineOnly = onlyRowIndex != null && onlyRowIndex !== '';
+  const inkIndex = lineOnly ? Number(onlyRowIndex) : 0;
+  const rows = Array.from({ length: LOT_CARD_ROWS }, (_, index) => {
+    const show = lineOnly ? index === inkIndex : index === 0;
+    return {
+      key: `row-${index}`,
+      ink: lineOnly && show,
+      date: show ? date || '' : '',
+      operator: show ? operator || '' : '',
+      operation: show ? operation || '' : '',
+      quantity: show ? (quantity ?? '') : '',
+    };
+  });
 
   return (
-    <article className="shop-card lot-card">
-      <header className="shop-card-head">
+    <article className={`shop-card lot-card${lineOnly ? ' lot-card-line-only' : ''}`}>
+      <header className="lot-card-head lot-card-guide">
         <img src={LOGO_SRC} alt="DasCNC" className="shop-card-logo" />
         <div className="shop-card-lotno">
-          <span>Lot card</span>
           <strong>{lotNumber || '—'}</strong>
+        </div>
+        <div className="lot-card-ids">
+          <p className="shop-card-field">
+            <span>Component No.</span>
+            {componentName ? <strong>{componentName}</strong> : <span className="shop-card-blank" />}
+          </p>
+          <p className="shop-card-field">
+            <span>GIRN No.</span>
+            {girnNumber ? <strong>{girnNumber}</strong> : <span className="shop-card-blank" />}
+          </p>
+          <p className="shop-card-field">
+            <span>Machine No.</span>
+            {machineNumber ? <strong>{machineNumber}</strong> : <span className="shop-card-blank" />}
+          </p>
         </div>
       </header>
 
-      <p className="shop-card-field">
-        <span>Component</span>
-        <strong>{componentName || '—'}</strong>
-      </p>
-      <p className="shop-card-field">
-        <span>GIRN No.</span>
-        <span className="shop-card-blank" />
-      </p>
-      <p className="shop-card-field">
-        <span>Machine No.</span>
-        <span className="shop-card-blank" />
-      </p>
-
       <table className="shop-card-table">
-        <thead>
+        <thead className="lot-card-guide">
           <tr>
             <th>Date</th>
             <th>Operator</th>
@@ -104,7 +115,7 @@ export function LotCardSheet({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.key}>
+            <tr key={row.key} className={row.ink ? 'lot-card-line-ink' : 'lot-card-guide'}>
               <td>{row.date || ''}</td>
               <td>{row.operator || ''}</td>
               <td>{row.operation || ''}</td>
@@ -117,17 +128,29 @@ export function LotCardSheet({
   );
 }
 
+function formatQty(value) {
+  if (value == null || value === '') return '';
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return String(value);
+  return amount.toLocaleString('en-IN', { maximumFractionDigits: 3 });
+}
+
 export function GirnTagSheet({
   supplierName,
   materialName,
   girnNumber,
   receivedDate,
   quantity,
+  quantityKg,
+  quantityNos,
+  status = 'approved',
+  approvedBy,
+  rejectedBy,
 }) {
-  const qtyLabel =
-    quantity == null || quantity === ''
-      ? '—'
-      : Number(quantity).toLocaleString('en-IN', { maximumFractionDigits: 3 });
+  const rejected = status === 'rejected';
+  const actor = rejected ? rejectedBy || approvedBy : approvedBy || rejectedBy;
+  const kgs = formatQty(quantityKg);
+  const nos = formatQty(quantityNos != null && quantityNos !== '' ? quantityNos : quantityKg == null ? quantity : '');
 
   return (
     <article className="shop-card girn-tag">
@@ -136,11 +159,12 @@ export function GirnTagSheet({
         <h1>Identification Tag</h1>
       </header>
 
-      <p className="girn-tag-label">Description</p>
-      <p className="girn-tag-value">{supplierName || '—'}</p>
-      <p className="girn-tag-value girn-tag-material">{materialName || '—'}</p>
-
-      <div className="girn-tag-grid">
+      <div className="girn-tag-stack">
+        <div>
+          <p className="girn-tag-label">Description</p>
+          <p className="girn-tag-value">{supplierName || '—'}</p>
+          <p className="girn-tag-value girn-tag-material">{materialName || '—'}</p>
+        </div>
         <div>
           <p className="girn-tag-label">GIRN No. & Date</p>
           <p className="girn-tag-value">
@@ -150,12 +174,26 @@ export function GirnTagSheet({
         </div>
         <div>
           <p className="girn-tag-label">Qty</p>
-          <p className="girn-tag-value">{qtyLabel}</p>
+          <p className="girn-tag-qty">
+            <span>Kgs</span>
+            {kgs ? <strong>{kgs}</strong> : <span className="shop-card-blank" />}
+          </p>
+          <p className="girn-tag-qty">
+            <span>Nos</span>
+            {nos ? <strong>{nos}</strong> : <span className="shop-card-blank" />}
+          </p>
         </div>
+        <p className="girn-tag-actor">
+          <span>{rejected ? 'Rejected by' : 'Approved by'}</span>
+          <strong>{actor || '—'}</strong>
+        </p>
       </div>
 
-      <div className="girn-approved-seal" aria-label="Approved">
-        <span>Approved</span>
+      <div
+        className={rejected ? 'girn-rejected-seal' : 'girn-approved-seal'}
+        aria-label={rejected ? 'Rejected' : 'Approved'}
+      >
+        <span>{rejected ? 'Rejected' : 'Approved'}</span>
       </div>
     </article>
   );

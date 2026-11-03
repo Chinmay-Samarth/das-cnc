@@ -36,6 +36,7 @@ const {
   reassignLot,
   listReadyForDispatch,
   listLotOpCompletions,
+  lotCardLine,
   mergeLotsForDispatch,
   pinLotDeliverySchedule,
 } = require('../services/lotTravelerEngine');
@@ -552,7 +553,8 @@ router.get(
   wrap(async (req, res) => {
     const lot = await getLotById(req.params.id);
     const completions = await listLotOpCompletions(req.params.id);
-    return res.json({ lot, completions });
+    const { card_line, row_count } = await lotCardLine(lot, req.query.node_id);
+    return res.json({ lot, completions, card_line, row_count });
   })
 );
 

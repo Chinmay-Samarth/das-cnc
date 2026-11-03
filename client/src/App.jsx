@@ -11,6 +11,7 @@ import SuppliersPage from './suppliers/SuppliersPage';
 import AddSupplierPage from './suppliers/AddSupplierPage';
 import SupplierDetailsPage from './suppliers/SupplierDetailsPage';
 import HomePage from './home/HomePage';
+import SampleShopCardsPage from './home/SampleShopCardsPage';
 import { MastersNavProvider } from './context/MastersNavContext';
 import { InvoiceUploadQueueProvider } from './invoices/InvoiceUploadQueueContext';
 import AppLayout from './components/Layout/AppLayout';
@@ -208,6 +209,7 @@ export default function App() {
               <Route element={<RequireRestrictedPages />}>
               <Route element={<RequireAdmin />}>
                 <Route path="/home" element={<HomePage />} />
+                <Route path="/home/sample-cards" element={<SampleShopCardsPage />} />
                 <Route path="/notifications" element={<NotificationsPage />} />
                 <Route path="/purchase-orders" element={<PurchaseOrdersListPage />} />
                 <Route path="/purchase-orders/create" element={<CreatePurchaseOrderWizard />} />

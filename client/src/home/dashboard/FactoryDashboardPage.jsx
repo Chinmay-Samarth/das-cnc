@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Check, LayoutGrid, Pencil, RefreshCw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Check, LayoutGrid, Pencil, Printer, RefreshCw } from 'lucide-react';
 import { AlertBanner, EmptyState, PageHeader } from '../../components/mes';
 import { formatDisplayDate } from '../../utils/dateFormat';
 import useFactoryDashboard from './useFactoryDashboard';
@@ -22,6 +23,7 @@ import RevenuePulsePanel from './RevenuePulsePanel';
 import ProcurementSpendPanel from './ProcurementSpendPanel';
 
 export default function FactoryDashboardPage() {
+  const navigate = useNavigate();
   const { data, loading, error, reload } = useFactoryDashboard();
   const [layout, setLayout] = useState(readLayout);
   const [kpiOrder, setKpiOrder] = useState(readKpiOrder);
@@ -160,6 +162,14 @@ export default function FactoryDashboardPage() {
             >
               <LayoutGrid size={15} />
               Reset layout
+            </button>
+            <button
+              type="button"
+              className="neutral-button"
+              onClick={() => navigate('/home/sample-cards')}
+            >
+              <Printer size={15} />
+              Sample cards
             </button>
             <button
               type="button"
