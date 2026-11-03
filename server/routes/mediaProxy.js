@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 const express = require('express');
-=======
-﻿const express = require('express');
->>>>>>> master
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
 
