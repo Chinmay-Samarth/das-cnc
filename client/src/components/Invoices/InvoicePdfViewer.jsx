@@ -95,12 +95,11 @@ export default function InvoicePdfViewer({
         objectUrl = URL.createObjectURL(data);
         setResolvedFile(objectUrl);
       } catch (err) {
-<<<<<<< HEAD
         console.error('PDF proxy load failed, falling back to direct URL', err);
         if (cancelled) return;
         setResolveError(err?.response?.data?.error || err.message || 'Failed to load PDF');
         setResolvedFile(file);
-=======
+
         console.error('PDF proxy load failed', err);
         if (cancelled) return;
         let message = err.message || 'Failed to load PDF';
@@ -118,7 +117,6 @@ export default function InvoicePdfViewer({
         }
         setResolveError(message);
         setResolvedFile(null);
->>>>>>> master
       } finally {
         if (!cancelled) setResolving(false);
       }
