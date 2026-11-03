@@ -24,11 +24,32 @@ function isRemoteHttpUrl(value) {
   return typeof value === 'string' && /^https?:\/\//i.test(value);
 }
 
+function isImageMime(type) {
+  return /^image\//i.test(String(type || ''));
+}
+
+function isPdfMime(type) {
+  return /pdf/i.test(String(type || ''));
+}
+
+function guessKindFromUrl(url) {
+  const path = String(url || '').split('?')[0].toLowerCase();
+  if (/\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i.test(path)) return 'image';
+  if (/\.pdf$/i.test(path)) return 'pdf';
+  return null;
+}
+
+function detectMediaKind(mime, url) {
+  if (isImageMime(mime)) return 'image';
+  if (isPdfMime(mime)) return 'pdf';
+  return guessKindFromUrl(url) || 'pdf';
+}
+
 export default function InvoicePdfViewer({
   file,
   title = 'Invoice',
-  emptyTitle = 'No PDF yet',
-  emptyDescription = 'Generate the invoice PDF to preview it here.',
+  emptyTitle = 'No file yet',
+  emptyDescription = 'Upload an invoice PDF or image to preview it here.',
   emptyActionLabel,
   onEmptyAction,
   loading: externalLoading = false,
@@ -47,8 +68,11 @@ export default function InvoicePdfViewer({
   const [isDragging, setIsDragging] = useState(false);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [resolvedFile, setResolvedFile] = useState(null);
+  const [mediaKind, setMediaKind] = useState('pdf');
   const [resolving, setResolving] = useState(false);
   const [resolveError, setResolveError] = useState(null);
+
+  const isImage = mediaKind === 'image';
 
   const onDocLoad = useCallback(({ numPages: next }) => {
     setNumPages(next);
@@ -73,12 +97,14 @@ export default function InvoicePdfViewer({
 
       if (!file) {
         setResolvedFile(null);
+        setMediaKind('pdf');
         setResolving(false);
         return;
       }
 
       if (!isRemoteHttpUrl(file)) {
         setResolvedFile(file);
+        setMediaKind(guessKindFromUrl(file) || 'pdf');
         setResolving(false);
         return;
       }
@@ -93,8 +119,8 @@ export default function InvoicePdfViewer({
         });
         if (cancelled) return;
         const contentType = String(headers?.['content-type'] || data?.type || '');
-        if (/json|text|html/i.test(contentType)) {
-          let message = 'PDF proxy returned an error response';
+        if (/json|text\/html/i.test(contentType)) {
+          let message = 'File proxy returned an error response';
           try {
             const text = await data.text();
             const parsed = JSON.parse(text);
@@ -104,12 +130,18 @@ export default function InvoicePdfViewer({
           }
           throw new Error(message);
         }
+        const kind = detectMediaKind(contentType, file);
         objectUrl = URL.createObjectURL(data);
+        setMediaKind(kind);
         setResolvedFile(objectUrl);
+        if (kind === 'image') {
+          setNumPages(1);
+          setPageNumber(1);
+        }
       } catch (err) {
-        console.error('PDF proxy load failed', err);
+        console.error('Invoice file proxy load failed', err);
         if (cancelled) return;
-        let message = err.message || 'Failed to load PDF';
+        let message = err.message || 'Failed to load file';
         const data = err?.response?.data;
         if (data instanceof Blob) {
           try {
@@ -194,7 +226,24 @@ export default function InvoicePdfViewer({
     };
   }, [isDragging, moveDrag, endDrag]);
 
-  const printPdf = (url) => {
+  const printUrl = (url) => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      window.open(url, '_blank');
+      setActionMessage('Opened file in a new tab — use Ctrl+P to print');
+      return;
+    }
+
+    if (isImage) {
+      printWindow.document.write(
+        `<html><head><title>${title}</title></head><body style="margin:0;display:flex;justify-content:center;align-items:flex-start;background:#fff;">` +
+          `<img src="${url}" style="max-width:100%;height:auto;" onload="window.focus();window.print();" />` +
+          `</body></html>`
+      );
+      printWindow.document.close();
+      return;
+    }
+
     const iframe = document.createElement('iframe');
     iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:none;';
     iframe.src = url;
@@ -214,7 +263,7 @@ export default function InvoicePdfViewer({
           iframe.contentWindow?.print();
         } catch {
           window.open(file, '_blank');
-          setActionMessage('Opened PDF in a new tab — use Ctrl+P to print');
+          setActionMessage('Opened file in a new tab — use Ctrl+P to print');
         }
         setTimeout(cleanup, 1000);
       }, 300);
@@ -223,29 +272,29 @@ export default function InvoicePdfViewer({
     iframe.onerror = () => {
       cleanup();
       window.open(file, '_blank');
-      setActionMessage('Opened PDF in a new tab — use Ctrl+P to print');
+      setActionMessage('Opened file in a new tab — use Ctrl+P to print');
     };
   };
 
   const handlePrint = async () => {
     if (!resolvedFile && !file) return;
     if (resolvedFile && String(resolvedFile).startsWith('blob:')) {
-      printPdf(resolvedFile);
+      printUrl(resolvedFile);
       return;
     }
     try {
       const response = await fetch(file);
       if (!response.ok) throw new Error('fetch failed');
       const blob = await response.blob();
-      printPdf(URL.createObjectURL(blob));
+      printUrl(URL.createObjectURL(blob));
     } catch {
-      printPdf(file);
+      printUrl(file);
     }
   };
 
   const handleShare = async () => {
     if (!file || String(file).startsWith('blob:')) {
-      setActionMessage('Download the PDF to share a stored copy');
+      setActionMessage('Download the file to share a stored copy');
       return;
     }
     const shareData = { title, text: title, url: file };
@@ -315,19 +364,19 @@ export default function InvoicePdfViewer({
             type="button"
             className="invoice-pdf-icon-btn"
             onClick={() => setPageNumber((p) => Math.max(1, p - 1))}
-            disabled={!resolvedFile || pageNumber <= 1}
+            disabled={!resolvedFile || isImage || pageNumber <= 1}
             aria-label="Previous page"
           >
             <ChevronLeft size={15} />
           </button>
           <span className="invoice-pdf-toolbar-label">
-            Page {pageNumber} of {numPages ?? '…'}
+            {isImage ? 'Image' : `Page ${pageNumber} of ${numPages ?? '…'}`}
           </span>
           <button
             type="button"
             className="invoice-pdf-icon-btn"
             onClick={() => setPageNumber((p) => Math.min(numPages || 1, p + 1))}
-            disabled={!resolvedFile || !numPages || pageNumber >= numPages}
+            disabled={!resolvedFile || isImage || !numPages || pageNumber >= numPages}
             aria-label="Next page"
           >
             <ChevronRight size={15} />
@@ -370,10 +419,10 @@ export default function InvoicePdfViewer({
             ) : null}
           </div>
         ) : showLoading ? (
-          <div className="invoice-pdf-placeholder">Loading PDF…</div>
+          <div className="invoice-pdf-placeholder">Loading file…</div>
         ) : resolveError && !resolvedFile ? (
           <div className="invoice-pdf-placeholder">
-            Failed to load PDF.
+            Failed to load file.
             {resolveError ? ` (${resolveError})` : ''}
           </div>
         ) : (
@@ -381,26 +430,51 @@ export default function InvoicePdfViewer({
             className="invoice-pdf-canvas"
             style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}
           >
-            <Document
-              file={resolvedFile}
-              onLoadSuccess={onDocLoad}
-              loading={<div className="invoice-pdf-placeholder">Loading…</div>}
-              error={
-                <div className="invoice-pdf-placeholder">
-                  Failed to load PDF.
-                  {resolveError ? ` (${resolveError})` : ''}
-                </div>
-              }
-            >
-              {pdfWidth ? (
-                <Page
-                  pageNumber={pageNumber}
-                  width={pdfWidth * scale}
-                  renderTextLayer
-                  renderAnnotationLayer
-                />
-              ) : null}
-            </Document>
+            {isImage ? (
+              <img
+                src={resolvedFile}
+                alt={title}
+                className="invoice-pdf-image"
+                style={{
+                  width: pdfWidth ? `${pdfWidth * scale}px` : '100%',
+                  height: 'auto',
+                  display: 'block',
+                  maxWidth: 'none',
+                  userSelect: 'none',
+                  pointerEvents: 'none',
+                }}
+                draggable={false}
+                onLoad={() => {
+                  setNumPages(1);
+                  setPageNumber(1);
+                }}
+                onError={() => {
+                  setResolveError('Unable to display this image');
+                  setResolvedFile(null);
+                }}
+              />
+            ) : (
+              <Document
+                file={resolvedFile}
+                onLoadSuccess={onDocLoad}
+                loading={<div className="invoice-pdf-placeholder">Loading…</div>}
+                error={
+                  <div className="invoice-pdf-placeholder">
+                    Failed to load PDF.
+                    {resolveError ? ` (${resolveError})` : ''}
+                  </div>
+                }
+              >
+                {pdfWidth ? (
+                  <Page
+                    pageNumber={pageNumber}
+                    width={pdfWidth * scale}
+                    renderTextLayer
+                    renderAnnotationLayer
+                  />
+                ) : null}
+              </Document>
+            )}
           </div>
         )}
 
