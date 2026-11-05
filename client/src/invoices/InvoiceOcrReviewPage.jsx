@@ -56,6 +56,29 @@ function formatMoney(value) {
   return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function addDaysYmd(isoDate, days) {
+  const raw = String(isoDate || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const n = Number(days);
+  if (!Number.isFinite(n)) return null;
+  const d = new Date(`${raw}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function parseCreditDays(value) {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function dueDateFromCredit(invoiceDate, creditDays) {
+  const days = parseCreditDays(creditDays);
+  if (days == null) return null;
+  return addDaysYmd(invoiceDate, days);
+}
+
 export default function InvoiceOcrReviewPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -76,6 +99,7 @@ export default function InvoiceOcrReviewPage() {
   const [taxes, setTaxes] = useState([]);
   const [supplierId, setSupplierId] = useState('');
   const [supplierLabel, setSupplierLabel] = useState('');
+  const [supplierCreditDays, setSupplierCreditDays] = useState(null);
   const [suggestedSupplier, setSuggestedSupplier] = useState(null);
   const [supplierLedger, setSupplierLedger] = useState(null);
   const [header, setHeader] = useState({
@@ -129,6 +153,10 @@ export default function InvoiceOcrReviewPage() {
           suggested?.name ||
           ''
       );
+      const creditDays = parseCreditDays(inv.suppliers?.credit_period_days);
+      setSupplierCreditDays(creditDays);
+      const invoiceDate = inv.invoice_date || '';
+      const autoDue = dueDateFromCredit(invoiceDate, creditDays);
       const baseAmount = inv.base_amount ?? '';
       const roundOff = inv.round_off ?? '';
       const taxAmount = sumTaxAmount(nextTaxes);
@@ -136,8 +164,8 @@ export default function InvoiceOcrReviewPage() {
       const derivedTotal = computeHeaderTotal(baseAmount, taxAmount, roundOff);
       setHeader({
         invoice_number: inv.invoice_number || '',
-        invoice_date: inv.invoice_date || '',
-        due_date: inv.due_date || '',
+        invoice_date: invoiceDate,
+        due_date: autoDue || inv.due_date || '',
         total_amount: derivedTotal !== '' ? derivedTotal : inv.total_amount ?? '',
         base_amount: baseAmount,
         round_off: roundOff,
@@ -364,11 +392,29 @@ export default function InvoiceOcrReviewPage() {
 
     setHeader((h) => {
       const next = { ...h, [field]: value };
+      // Supplier credit period drives due date from invoice date.
+      if (field === 'invoice_date' && supplierCreditDays != null) {
+        const autoDue = dueDateFromCredit(value, supplierCreditDays);
+        if (autoDue) next.due_date = autoDue;
+      }
       // Keep grand total in sync when parts change; allow manual grand total edits.
       if (field === 'round_off') {
         return syncHeaderTotal(next);
       }
       return next;
+    });
+  }
+
+  function handleSupplierChange({ id: sid, label, credit_period_days }) {
+    setSupplierId(sid);
+    setSupplierLabel(label);
+    const days = parseCreditDays(credit_period_days);
+    setSupplierCreditDays(days);
+    if (days == null) return;
+    setHeader((h) => {
+      const autoDue = dueDateFromCredit(h.invoice_date, days);
+      if (!autoDue) return h;
+      return { ...h, due_date: autoDue };
     });
   }
 
@@ -698,10 +744,7 @@ export default function InvoiceOcrReviewPage() {
                 <SupplierSelect
                   value={supplierId}
                   label={supplierLabel}
-                  onChange={({ id: sid, label }) => {
-                    setSupplierId(sid);
-                    setSupplierLabel(label);
-                  }}
+                  onChange={handleSupplierChange}
                 />
                 {supplierLedger?.status === 'created' ? (
                   <p className="muted" style={{ margin: '8px 0 0' }}>
@@ -760,6 +803,16 @@ export default function InvoiceOcrReviewPage() {
                   value={header.due_date || ''}
                   onChange={(e) => handleHeaderField('due_date', e.target.value)}
                 />
+                {supplierCreditDays != null ? (
+                  <span className="muted" style={{ display: 'block', marginTop: 6, fontSize: '0.75rem' }}>
+                    Auto from supplier credit period · {supplierCreditDays} day
+                    {supplierCreditDays === 1 ? '' : 's'}
+                  </span>
+                ) : (
+                  <span className="muted" style={{ display: 'block', marginTop: 6, fontSize: '0.75rem' }}>
+                    No supplier credit period yet — set due date; days will be saved for this supplier
+                  </span>
+                )}
               </label>
             </div>
           </div>

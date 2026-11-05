@@ -106,6 +106,17 @@ function daysBetweenYmd(from, to) {
   return Math.round((end - start) / 86400000);
 }
 
+function addDaysYmd(isoDate, days) {
+  const raw = String(isoDate || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const n = Number(days);
+  if (!Number.isFinite(n)) return null;
+  const d = new Date(`${raw}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 async function nextRegisterSerial(createdAt) {
   const { year, month } = ymdPartsIst(createdAt);
   const start = new Date(`${isoDateUtc(year, month, 1)}T00:00:00+05:30`).toISOString();
@@ -225,7 +236,8 @@ async function getInvoice(invoiceId) {
         account_number,
         ifsc,
         GSTIN,
-        state
+        state,
+        credit_period_days
       )`)
     .eq('id', invoiceId)
     .maybeSingle();
@@ -358,7 +370,23 @@ async function processInvoiceOCR(invoiceId, file, publicUrl) {
   const lineItems = normalizeLineItems(ocrResult);
   const taxItems = normalizeTaxItems(ocrResult);
   const invoiceDate = toIsoDate(ocrResult?.invoice?.date);
-  const dueDate = toIsoDate(ocrResult?.invoice?.due_date);
+  let dueDate = toIsoDate(ocrResult?.invoice?.due_date);
+  let creditPeriodDays = daysBetweenYmd(invoiceDate, dueDate);
+
+  // Prefer supplier credit period when known — auto-assign due date from invoice date.
+  if (supplierId && invoiceDate) {
+    const { data: supplier } = await supabase
+      .from('suppliers')
+      .select('credit_period_days')
+      .eq('id', supplierId)
+      .maybeSingle();
+    const supplierDays = Number(supplier?.credit_period_days);
+    if (Number.isFinite(supplierDays) && supplierDays >= 0) {
+      creditPeriodDays = supplierDays;
+      dueDate = addDaysYmd(invoiceDate, supplierDays);
+    }
+  }
+
   const existing = await getInvoice(invoiceId);
   const registerSerial =
     existing?.register_serial || (await nextRegisterSerial(existing?.created_at || new Date()));
@@ -368,7 +396,7 @@ async function processInvoiceOCR(invoiceId, file, publicUrl) {
     invoice_number: emptyToNull(ocrResult?.invoice?.number),
     invoice_date: invoiceDate,
     due_date: dueDate,
-    credit_period_days: daysBetweenYmd(invoiceDate, dueDate),
+    credit_period_days: creditPeriodDays,
     register_serial: registerSerial,
     base_amount: toNumberOrNull(ocrResult?.totals?.base_amount),
     total_amount: toNumberOrNull(ocrResult?.totals?.total_amount),

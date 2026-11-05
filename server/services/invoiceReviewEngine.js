@@ -79,6 +79,48 @@ function round2(value) {
   return Math.round(n * 100) / 100;
 }
 
+function daysBetweenYmd(from, to) {
+  const fromStr = String(from || '').slice(0, 10);
+  const toStr = String(to || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromStr) || !/^\d{4}-\d{2}-\d{2}$/.test(toStr)) return null;
+  const start = Date.UTC(
+    Number(fromStr.slice(0, 4)),
+    Number(fromStr.slice(5, 7)) - 1,
+    Number(fromStr.slice(8, 10))
+  );
+  const end = Date.UTC(
+    Number(toStr.slice(0, 4)),
+    Number(toStr.slice(5, 7)) - 1,
+    Number(toStr.slice(8, 10))
+  );
+  return Math.round((end - start) / 86400000);
+}
+
+/** Persist credit period on supplier when they do not have one yet (new / unset). */
+async function learnSupplierCreditPeriod(supplierId, creditDays) {
+  if (!supplierId) return;
+  const days = Number(creditDays);
+  if (!Number.isFinite(days) || days < 0) return;
+
+  const { data: supplier, error } = await supabase
+    .from('suppliers')
+    .select('id, credit_period_days')
+    .eq('id', supplierId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!supplier) return;
+  if (supplier.credit_period_days != null && supplier.credit_period_days !== '') return;
+
+  const { error: updateError } = await supabase
+    .from('suppliers')
+    .update({
+      credit_period_days: days,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', supplierId);
+  if (updateError) throw updateError;
+}
+
 function toNumberOrNull(value) {
   if (value == null || value === '') return null;
   const n = Number(value);
@@ -461,13 +503,18 @@ async function confirmReview(invoiceId, body, actorId) {
     return text ? text : null;
   };
 
+  const invoiceDate = emptyDate(body.invoice_date ?? invoice.invoice_date);
+  const dueDate = emptyDate(body.due_date ?? invoice.due_date);
+  const creditPeriodDays = daysBetweenYmd(invoiceDate, dueDate);
+
   const updatePayload = {
     supplier_id: supplierId,
     line_items: normalizedLines,
     tax_items: taxItems,
     invoice_number: invoiceNumber,
-    invoice_date: emptyDate(body.invoice_date ?? invoice.invoice_date),
-    due_date: emptyDate(body.due_date ?? invoice.due_date),
+    invoice_date: invoiceDate,
+    due_date: dueDate,
+    credit_period_days: creditPeriodDays,
     total_amount: reconciled.total_amount,
     base_amount: reconciled.base_amount,
     round_off: reconciled.round_off,
@@ -483,6 +530,9 @@ async function confirmReview(invoiceId, body, actorId) {
 
   const { error } = await supabase.from('invoices').update(updatePayload).eq('id', invoiceId);
   if (error) throw error;
+
+  // New / unset suppliers: learn default due days from this invoice.
+  await learnSupplierCreditPeriod(supplierId, creditPeriodDays);
 
   // Drop abandoned OCR drafts of the same supplier invoice so Purchase Invoices
   // does not keep showing a stale "Needs review" row after confirm.

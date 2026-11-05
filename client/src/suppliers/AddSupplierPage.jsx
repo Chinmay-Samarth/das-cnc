@@ -20,6 +20,7 @@ const initialFormData = {
   account_type: '',
   IFSC: '',
   payment_details: '',
+  credit_period_days: '',
 };
 
 export default function AddSupplierPage() {
@@ -148,6 +149,20 @@ export default function AddSupplierPage() {
           <label htmlFor="IFSC">
             IFSC
             <input id="IFSC" type="text" name="IFSC" value={formData.IFSC} onChange={handleChange} placeholder="Bank IFSC" disabled={submitting} />
+          </label>
+          <label htmlFor="credit_period_days">
+            Due date credit days
+            <input
+              id="credit_period_days"
+              type="number"
+              min="0"
+              step="1"
+              name="credit_period_days"
+              value={formData.credit_period_days}
+              onChange={handleChange}
+              placeholder="e.g., 60"
+              disabled={submitting}
+            />
           </label>
           <label htmlFor="payment_details" className="form-span-2">
             Payment details

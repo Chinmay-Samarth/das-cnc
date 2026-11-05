@@ -127,7 +127,7 @@ router.get('/lookup', verifyEmployeeAuth, async (req, res) => {
     const search = (req.query.search || '').trim();
     let query = supabase
       .from('suppliers')
-      .select('id, name, GSTIN')
+      .select('id, name, GSTIN, credit_period_days')
       .order('name', { ascending: true })
       .limit(50);
 
@@ -144,6 +144,10 @@ router.get('/lookup', verifyEmployeeAuth, async (req, res) => {
         label: row.GSTIN ? `${row.name} · ${row.GSTIN}` : row.name,
         name: row.name,
         GSTIN: row.GSTIN,
+        credit_period_days:
+          row.credit_period_days == null || row.credit_period_days === ''
+            ? null
+            : Number(row.credit_period_days),
       })),
     });
   } catch (err) {

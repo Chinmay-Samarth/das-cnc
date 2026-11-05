@@ -28,6 +28,7 @@ const emptyFormData = {
   account_type: '',
   IFSC: '',
   payment_details: '',
+  credit_period_days: '',
 };
 
 const fmt = (value) => {
@@ -105,6 +106,10 @@ export default function SupplierDetailsPage() {
             account_type: match.account_type || '',
             IFSC: match.IFSC || '',
             payment_details: match.payment_details || '',
+            credit_period_days:
+              match.credit_period_days == null || match.credit_period_days === ''
+                ? ''
+                : String(match.credit_period_days),
           });
 
           setIsPdf(match.iso_certificate_url?.toLowerCase().includes('.pdf'))
@@ -279,6 +284,10 @@ export default function SupplierDetailsPage() {
           account_type: updated.account_type || '',
           IFSC: updated.IFSC || updated.ifsc || '',
           payment_details: updated.payment_details || '',
+          credit_period_days:
+            updated.credit_period_days == null || updated.credit_period_days === ''
+              ? ''
+              : String(updated.credit_period_days),
         });
         setIsPdf(Boolean(updated.iso_certificate_url?.toLowerCase().includes('.pdf')));
       }
@@ -403,6 +412,14 @@ export default function SupplierDetailsPage() {
                       <DetailItem label="Account Number" value={supplier.account_number} />
                       <DetailItem label="Account Type" value={supplier.account_type} />
                       <DetailItem label="IFSC" value={supplier.IFSC} />
+                      <DetailItem
+                        label="Due date credit days"
+                        value={
+                          supplier.credit_period_days != null && supplier.credit_period_days !== ''
+                            ? `${supplier.credit_period_days} days`
+                            : null
+                        }
+                      />
                       <DetailItem label="Payment Details" value={supplier.payment_details} />
                     </div>
                   </div>
@@ -753,6 +770,21 @@ export default function SupplierDetailsPage() {
                 name="IFSC"
                 value={formData.IFSC}
                 onChange={handleChange}
+                disabled={submitting}
+              />
+            </label>
+
+            <label htmlFor="credit_period_days">
+              Due date credit days
+              <input
+                id="credit_period_days"
+                type="number"
+                min="0"
+                step="1"
+                name="credit_period_days"
+                value={formData.credit_period_days}
+                onChange={handleChange}
+                placeholder="e.g., 60"
                 disabled={submitting}
               />
             </label>

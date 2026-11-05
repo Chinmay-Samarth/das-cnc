@@ -28,7 +28,15 @@ export default function SupplierSelect({
         .then(({ data }) => {
           if (cancelled) return;
           const rows = Array.isArray(data?.results) ? data.results : [];
-          setOptions(rows.map((row) => ({ value: row.id, label: row.label || row.name })));
+          setOptions(
+            rows.map((row) => ({
+              value: row.id,
+              label: row.label || row.name,
+              credit_period_days: row.credit_period_days ?? null,
+              name: row.name,
+              GSTIN: row.GSTIN,
+            }))
+          );
         })
         .catch(() => {
           if (!cancelled) setOptions([]);
@@ -49,7 +57,11 @@ export default function SupplierSelect({
       selectedLabel={label}
       onChange={(next) => {
         const match = options.find((o) => String(o.value) === String(next));
-        onChange({ id: next || '', label: match?.label || label || '' });
+        onChange({
+          id: next || '',
+          label: match?.label || label || '',
+          credit_period_days: match?.credit_period_days ?? null,
+        });
       }}
       options={options}
       placeholder={placeholder}
