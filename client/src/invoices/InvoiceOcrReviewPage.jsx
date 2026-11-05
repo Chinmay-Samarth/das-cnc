@@ -62,6 +62,7 @@ export default function InvoiceOcrReviewPage() {
   const [searchParams] = useSearchParams();
   const context = searchParams.get('context') || '';
   const returnTo = searchParams.get('return') || '';
+  const editMode = searchParams.get('mode') === 'edit';
   const { getJobByInvoiceId, dismissJob } = useInvoiceUploadQueue();
   const queueJob = getJobByInvoiceId(id);
   const handledCompleteRef = useRef(false);
@@ -219,6 +220,40 @@ export default function InvoiceOcrReviewPage() {
   const lineCount = lines.length;
   const ocrPct = Math.round((review?.ocr_confidence_level || 0) * 100);
 
+  const lineItemsTotal = useMemo(() => {
+    return round2(
+      lines.reduce((sum, line) => {
+        const text = String(
+          line.scanned_description || line.description || line.item_description || ''
+        ).trim();
+        const qty = line.quantity === '' || line.quantity == null ? null : Number(line.quantity);
+        const rate = line.unit_price === '' || line.unit_price == null ? null : Number(line.unit_price);
+        if (!(text || line.master_record_id || qty != null || rate != null)) return sum;
+        const total = Number(line.total);
+        return sum + (Number.isFinite(total) ? total : 0);
+      }, 0)
+    );
+  }, [lines]);
+
+  const expectedGrandTotal = useMemo(() => {
+    return computeHeaderTotal(header.base_amount, taxTotal, header.round_off);
+  }, [header.base_amount, header.round_off, taxTotal]);
+
+  const linesMatchSubtotal = useMemo(() => {
+    const subtotal = Number(header.base_amount);
+    if (!Number.isFinite(subtotal)) return false;
+    return Math.abs(lineItemsTotal - round2(subtotal)) < 0.005;
+  }, [header.base_amount, lineItemsTotal]);
+
+  const totalsBalanced = useMemo(() => {
+    if (expectedGrandTotal === '') return false;
+    const grand = Number(header.total_amount);
+    if (!Number.isFinite(grand)) return false;
+    return Math.abs(grand - Number(expectedGrandTotal)) < 0.005;
+  }, [expectedGrandTotal, header.total_amount]);
+
+  const canSaveTotals = linesMatchSubtotal && totalsBalanced;
+
   function handleLineChange(idx, field, value) {
     setLines((prev) => {
       const next = [...prev];
@@ -293,6 +328,7 @@ export default function InvoiceOcrReviewPage() {
   function handleHeaderField(field, value) {
     setHeader((h) => {
       const next = { ...h, [field]: value };
+      // Keep grand total in sync when parts change; allow manual grand total edits.
       if (field === 'base_amount' || field === 'round_off') {
         return syncHeaderTotal(next);
       }
@@ -382,6 +418,34 @@ export default function InvoiceOcrReviewPage() {
         baseAmount != null && Number.isFinite(baseAmount)
           ? computeHeaderTotal(baseAmount, taxAmount, roundOff)
           : header.total_amount;
+      if (
+        baseAmount == null ||
+        !Number.isFinite(baseAmount) ||
+        Math.abs(lineItemsTotal - round2(baseAmount)) >= 0.005
+      ) {
+        await appAlert({
+          title: 'Line items do not match subtotal',
+          message:
+            'The sum of line item totals must equal the taxable / subtotal amount before you can confirm and save.',
+          tone: 'danger',
+        });
+        return;
+      }
+
+      const enteredGrand = Number(header.total_amount);
+      if (
+        reconciledTotal === '' ||
+        !Number.isFinite(enteredGrand) ||
+        Math.abs(enteredGrand - Number(reconciledTotal)) >= 0.005
+      ) {
+        await appAlert({
+          title: 'Totals do not match',
+          message:
+            'Taxable + tax + round off must equal the grand total before you can confirm and save.',
+          tone: 'danger',
+        });
+        return;
+      }
 
       const payload = {
         supplier_id: supplierId,
@@ -409,7 +473,16 @@ export default function InvoiceOcrReviewPage() {
       const { data } = await api.post(`/invoices/${id}/confirm-review`, payload);
       if (queueJob) dismissJob(queueJob.id);
 
-      // Confirmed AP invoices are due for GIRN Register & review next.
+      // Admin re-edit of an already saved invoice → back to details.
+      const alreadySaved =
+        editMode ||
+        (invoice?.review_status === 'confirmed' || invoice?.review_status === 'auto_accepted');
+      if (alreadySaved) {
+        navigate(`/invoices/${id}`, { replace: true });
+        return;
+      }
+
+      // First confirm: AP invoices are due for GIRN Register & review next.
       const params = new URLSearchParams(
         returnTo ? returnTo.split('?')[1] || '' : searchParams.toString()
       );
@@ -430,6 +503,17 @@ export default function InvoiceOcrReviewPage() {
   }
 
   async function handleCancel() {
+    const editingSaved =
+      editMode ||
+      invoice?.review_status === 'confirmed' ||
+      invoice?.review_status === 'auto_accepted';
+
+    // Don't discard a saved invoice when cancelling an admin edit.
+    if (editingSaved) {
+      navigate(`/invoices/${id}`);
+      return;
+    }
+
     try {
       await api.post(`/invoices/${id}/abandon-review`);
       if (queueJob) dismissJob(queueJob.id);
@@ -487,20 +571,33 @@ export default function InvoiceOcrReviewPage() {
     );
   }
 
+  const isSavedEdit =
+    editMode ||
+    invoice?.review_status === 'confirmed' ||
+    invoice?.review_status === 'auto_accepted';
+
   const confirmLabel = submitting
-    ? 'Confirming…'
-    : context === 'girn'
-      ? 'Confirm & continue GIRN'
-      : 'Confirm invoice';
+    ? isSavedEdit
+      ? 'Saving…'
+      : 'Confirming…'
+    : isSavedEdit
+      ? 'Save changes'
+      : context === 'girn'
+        ? 'Confirm & continue GIRN'
+        : 'Confirm invoice';
 
   return (
     <main className="mes-shell invoice-recheck-page">
       <PageHeader
         eyebrow="Accounts payable"
-        title="Recheck scanned invoice"
-        subtitle="Match the source file, fix supplier and lines, then confirm."
+        title={isSavedEdit ? 'Edit invoice' : 'Recheck scanned invoice'}
+        subtitle={
+          isSavedEdit
+            ? 'Update supplier, amounts, and lines, then save.'
+            : 'Match the source file, fix supplier and lines, then confirm.'
+        }
         actions={
-          <StatusBadge status="pending">OCR {ocrPct}%</StatusBadge>
+          isSavedEdit ? null : <StatusBadge status="pending">OCR {ocrPct}%</StatusBadge>
         }
       />
 
@@ -641,8 +738,20 @@ export default function InvoiceOcrReviewPage() {
           <div className="invoice-recheck-section">
             <h3 className="form-page-section-title">Amounts</h3>
             <p className="invoice-recheck-section-lead muted">
-              Grand total is taxable + tax + round off. Adjust taxable or round off if the PDF differs.
+              Confirm requires line items = taxable, and taxable + tax + round off = grand total.
             </p>
+            {!linesMatchSubtotal ? (
+              <AlertBanner tone="danger" title="Line items do not match subtotal">
+                Line items total ₹{formatMoney(lineItemsTotal)}, but taxable / subtotal is ₹
+                {formatMoney(header.base_amount)}. Fix the lines or subtotal before confirming.
+              </AlertBanner>
+            ) : null}
+            {!totalsBalanced ? (
+              <AlertBanner tone="danger" title="Totals do not match">
+                Expected ₹{formatMoney(expectedGrandTotal)} (taxable + tax + round off), but grand total is ₹
+                {formatMoney(header.total_amount)}. Fix the amounts before confirming.
+              </AlertBanner>
+            ) : null}
             <div className="form-page-grid invoice-recheck-fields">
               <label>
                 Taxable / base amount
@@ -662,6 +771,17 @@ export default function InvoiceOcrReviewPage() {
                   step="any"
                   value={header.round_off}
                   onChange={(e) => handleHeaderField('round_off', e.target.value)}
+                />
+              </label>
+
+              <label>
+                Grand total
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={header.total_amount}
+                  onChange={(e) => handleHeaderField('total_amount', e.target.value)}
                 />
               </label>
             </div>
@@ -702,7 +822,12 @@ export default function InvoiceOcrReviewPage() {
             <button
               type="button"
               className="primary-button"
-              disabled={submitting || !supplierId || !String(header.invoice_number || '').trim()}
+              disabled={
+                submitting ||
+                !supplierId ||
+                !String(header.invoice_number || '').trim() ||
+                !canSaveTotals
+              }
               onClick={handleConfirm}
             >
               <Check size={16} />

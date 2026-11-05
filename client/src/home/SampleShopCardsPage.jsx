@@ -12,15 +12,14 @@ const SAMPLE_LOT = {
   machineNumber: '',
   date: new Date().toISOString().slice(0, 10),
   operator: 'Operator',
-  operation: 'First operation',
   quantity: '25',
+  operationsText: ['Turning', 'Milling', 'Drilling', 'Inspection', 'Packing'].join('\n'),
 };
 
 const SAMPLE_LINE = {
   row: '2',
   date: new Date().toISOString().slice(0, 10),
   operator: 'Operator',
-  operation: 'Second operation',
   quantity: '20',
 };
 
@@ -44,6 +43,14 @@ function Field({ label, value, onChange, type = 'text' }) {
   );
 }
 
+function parseOperations(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, LOT_CARD_ROWS);
+}
+
 export default function SampleShopCardsPage() {
   const navigate = useNavigate();
   const [lot, setLot] = useState(SAMPLE_LOT);
@@ -56,6 +63,7 @@ export default function SampleShopCardsPage() {
     () => (tag.receivedDate ? formatDisplayDate(tag.receivedDate) : ''),
     [tag.receivedDate]
   );
+  const operations = useMemo(() => parseOperations(lot.operationsText), [lot.operationsText]);
 
   function setLotField(key, value) {
     setLot((current) => ({ ...current, [key]: value }));
@@ -76,16 +84,16 @@ export default function SampleShopCardsPage() {
         componentName={lot.componentName}
         girnNumber={lot.girnNumber}
         machineNumber={lot.machineNumber}
+        operations={operations}
         date={lotDate}
         operator={lot.operator}
-        operation={lot.operation}
         quantity={lot.quantity}
       />
       <LotCardSheet
+        operations={operations}
         onlyRowIndex={Math.max(0, Number(line.row) - 1)}
         date={lineDate}
         operator={line.operator}
-        operation={line.operation}
         quantity={line.quantity}
       />
       <GirnTagSheet
@@ -107,7 +115,7 @@ export default function SampleShopCardsPage() {
       <PageHeader
         eyebrow="Temporary"
         title="Sample shop cards"
-        subtitle="Edit the fields, then print a lot card and an identification tag on A6 sheets."
+        subtitle="Edit the fields, then print a lot card and an identification tag on A6 portrait (105 × 148 mm)."
         actions={
           <>
             <button type="button" className="neutral-button" onClick={() => navigate('/home')}>
@@ -122,7 +130,7 @@ export default function SampleShopCardsPage() {
       />
 
       <AlertBanner tone="amber" title="Temporary sample tool">
-        These cards are not saved. Live lot cards still print from My Today, and identification tags print when a GIRN is auto-approved or rejected.
+        First print includes all activity-flow operation names. Later lines only print date, operator, and qty.
       </AlertBanner>
 
       <div className="sample-cards-layout">
@@ -135,13 +143,20 @@ export default function SampleShopCardsPage() {
             <Field label="Machine No." value={lot.machineNumber} onChange={(value) => setLotField('machineNumber', value)} />
             <Field label="Date" type="date" value={lot.date} onChange={(value) => setLotField('date', value)} />
             <Field label="Operator" value={lot.operator} onChange={(value) => setLotField('operator', value)} />
-            <Field label="Operation" value={lot.operation} onChange={(value) => setLotField('operation', value)} />
             <Field label="Qty" value={lot.quantity} onChange={(value) => setLotField('quantity', value)} />
+            <label style={{ gridColumn: '1 / -1' }}>
+              Operations (one per line, from activity flow)
+              <textarea
+                rows={Math.min(LOT_CARD_ROWS, 6)}
+                value={lot.operationsText}
+                onChange={(event) => setLotField('operationsText', event.target.value)}
+              />
+            </label>
           </div>
 
           <h2 className="hp-panel-title sample-cards-second-title">Next operation line</h2>
           <p className="muted">
-            Prints only this line. Feed the full lot card back into the printer to check that it lands on the blank row.
+            Prints only date, operator, and qty. Feed the full lot card back so the values land on the blank metrics for that row.
           </p>
           <div className="mes-filters sample-cards-fields">
             <label>
@@ -152,6 +167,7 @@ export default function SampleShopCardsPage() {
                   return (
                     <option key={row} value={row}>
                       Line {row}
+                      {operations[index + 1] ? ` · ${operations[index + 1]}` : ''}
                     </option>
                   );
                 })}
@@ -159,7 +175,6 @@ export default function SampleShopCardsPage() {
             </label>
             <Field label="Date" type="date" value={line.date} onChange={(value) => setLineField('date', value)} />
             <Field label="Operator" value={line.operator} onChange={(value) => setLineField('operator', value)} />
-            <Field label="Operation" value={line.operation} onChange={(value) => setLineField('operation', value)} />
             <Field label="Qty" value={line.quantity} onChange={(value) => setLineField('quantity', value)} />
           </div>
 

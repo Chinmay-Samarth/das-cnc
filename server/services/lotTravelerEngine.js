@@ -1740,23 +1740,32 @@ async function reassignLot(lotId, employeeId) {
 
 const LOT_CARD_ROWS = 7;
 
-async function lotCardLine(lot, nodeId) {
+async function listLotCardStops(lot) {
   const afVersionId = await getAfVersionIdForLot(lot);
-  let stops = [];
-  if (afVersionId) {
-    const { nodes, edges } = await loadFlowGraph(afVersionId);
-    stops = walkPrimaryPath(nodes, edges).filter((node) => PATH_GATE_TYPES.has(node.activity_type));
-  }
+  if (!afVersionId) return [];
+  const { nodes, edges } = await loadFlowGraph(afVersionId);
+  return walkPrimaryPath(nodes, edges).filter((node) => PATH_GATE_TYPES.has(node.activity_type));
+}
+
+function cardOperationsFromStops(stops) {
+  return (stops || []).slice(0, LOT_CARD_ROWS).map((node) => String(node?.label || '').trim());
+}
+
+async function lotCardLine(lot, nodeId) {
+  const stops = await listLotCardStops(lot);
   const rowCount = stops.length;
+  const card_operations = cardOperationsFromStops(stops);
+
   if (!nodeId || !isValidUUID(String(nodeId))) {
-    return { row_count: rowCount, card_line: null };
+    return { row_count: rowCount, card_line: null, card_operations };
   }
   const rowIndex = stops.findIndex((node) => node.id === nodeId);
-  if (rowIndex < 0) return { row_count: rowCount, card_line: null };
+  if (rowIndex < 0) return { row_count: rowCount, card_line: null, card_operations };
   if (rowIndex >= LOT_CARD_ROWS) {
     return {
       row_count: rowCount,
       card_line: { row_index: rowIndex, overflow: true },
+      card_operations,
     };
   }
 
@@ -1769,7 +1778,7 @@ async function lotCardLine(lot, nodeId) {
     .limit(1);
   if (error) throw error;
   const completion = comps?.[0];
-  if (!completion) return { row_count: rowCount, card_line: null };
+  if (!completion) return { row_count: rowCount, card_line: null, card_operations };
 
   let operator = '';
   if (completion.employee_id && isValidUUID(completion.employee_id)) {
@@ -1784,6 +1793,7 @@ async function lotCardLine(lot, nodeId) {
 
   return {
     row_count: rowCount,
+    card_operations,
     card_line: {
       row_index: rowIndex,
       date: completion.completed_at,
@@ -1825,6 +1835,7 @@ module.exports = {
   reassignLot,
   listLotOpCompletions,
   lotCardLine,
+  listLotCardStops,
   recordLotOpCompletion,
   healFalseReadyForDispatch,
 };

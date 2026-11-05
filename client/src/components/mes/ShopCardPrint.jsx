@@ -4,9 +4,22 @@ const LOGO_SRC = '/dascnclogo2.png';
 export const LOT_CARD_ROWS = 7;
 
 export function printShopCards() {
+  // Clone cards onto body so the rest of the app cannot create blank print pages.
+  const dialogRoot = document.querySelector('.shop-card-dialog .shop-card-print-root');
+  const roots = dialogRoot
+    ? [dialogRoot]
+    : Array.from(document.querySelectorAll('.shop-card-print-root'));
+  const cards = roots.flatMap((root) => Array.from(root.querySelectorAll(':scope > .shop-card')));
+
+  const host = document.createElement('div');
+  host.className = 'shop-card-print-host';
+  cards.forEach((card) => host.appendChild(card.cloneNode(true)));
+  document.body.appendChild(host);
   document.body.classList.add('shop-card-printing');
+
   const cleanup = () => {
     document.body.classList.remove('shop-card-printing');
+    host.remove();
     window.removeEventListener('afterprint', cleanup);
   };
   window.addEventListener('afterprint', cleanup);
@@ -65,19 +78,28 @@ export function LotCardSheet({
   operator,
   operation,
   quantity,
+  operations = [],
   onlyRowIndex = null,
 }) {
   const lineOnly = onlyRowIndex != null && onlyRowIndex !== '';
   const inkIndex = lineOnly ? Number(onlyRowIndex) : 0;
+  const opLabels = Array.from({ length: LOT_CARD_ROWS }, (_, index) => {
+    const fromList = Array.isArray(operations) ? String(operations[index] || '').trim() : '';
+    if (fromList) return fromList;
+    // Fallback when AF list is missing: keep first-row operation name.
+    if (!lineOnly && index === 0) return String(operation || '').trim();
+    return '';
+  });
+
   const rows = Array.from({ length: LOT_CARD_ROWS }, (_, index) => {
-    const show = lineOnly ? index === inkIndex : index === 0;
+    const fillMetrics = lineOnly ? index === inkIndex : index === 0;
     return {
       key: `row-${index}`,
-      ink: lineOnly && show,
-      date: show ? date || '' : '',
-      operator: show ? operator || '' : '',
-      operation: show ? operation || '' : '',
-      quantity: show ? (quantity ?? '') : '',
+      inkMetrics: lineOnly && fillMetrics,
+      date: fillMetrics ? date || '' : '',
+      operator: fillMetrics ? operator || '' : '',
+      operation: opLabels[index],
+      quantity: fillMetrics ? (quantity ?? '') : '',
     };
   });
 
@@ -115,11 +137,18 @@ export function LotCardSheet({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.key} className={row.ink ? 'lot-card-line-ink' : 'lot-card-guide'}>
-              <td>{row.date || ''}</td>
-              <td>{row.operator || ''}</td>
-              <td>{row.operation || ''}</td>
-              <td>{row.quantity === '' || row.quantity == null ? '' : row.quantity}</td>
+            <tr key={row.key}>
+              <td className={row.inkMetrics ? 'lot-card-line-ink' : 'lot-card-guide'}>
+                {row.date || ''}
+              </td>
+              <td className={row.inkMetrics ? 'lot-card-line-ink' : 'lot-card-guide'}>
+                {row.operator || ''}
+              </td>
+              {/* Operation names are pre-printed from the AF path; never re-inked on later lines. */}
+              <td className="lot-card-guide">{row.operation || ''}</td>
+              <td className={row.inkMetrics ? 'lot-card-line-ink' : 'lot-card-guide'}>
+                {row.quantity === '' || row.quantity == null ? '' : row.quantity}
+              </td>
             </tr>
           ))}
         </tbody>

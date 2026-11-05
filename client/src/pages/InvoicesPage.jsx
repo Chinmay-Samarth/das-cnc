@@ -69,6 +69,28 @@ function statusLabel(status) {
   return String(status || 'DUE').replace(/_/g, ' ').toUpperCase();
 }
 
+/** Single badge for the list: prefer actionable statuses over plain due/paid. */
+function invoicePrimaryBadge(invoice) {
+  const displayStatus = invoiceDisplayStatus(invoice);
+  if (displayStatus === 'needs_review') {
+    return { status: displayStatus, tone: statusTone(displayStatus), label: statusLabel(displayStatus) };
+  }
+  if (displayStatus === 'error' || displayStatus === 'extracting' || displayStatus === 'saving') {
+    return { status: displayStatus, tone: statusTone(displayStatus), label: statusLabel(displayStatus) };
+  }
+  if (isGirnDue(invoice)) {
+    return { status: 'girn_due', tone: 'ready', label: 'GIRN DUE' };
+  }
+  if (isTallyUnsynced(invoice)) {
+    return {
+      status: 'tally_unsynced',
+      tone: 'on_hold',
+      label: `TALLY ${String(invoice.tally_sync_status || 'pending').toUpperCase()}`,
+    };
+  }
+  return { status: displayStatus, tone: statusTone(displayStatus), label: statusLabel(displayStatus) };
+}
+
 const fmt = (val) =>
   isNaN(Number(val)) || val == null
     ? '—'
@@ -457,7 +479,9 @@ export default function InvoicesPage() {
               <tbody>
                 {filteredInvoices.map((item) => {
                   const displayStatus = invoiceDisplayStatus(item);
-                  const canDelete = displayStatus === 'needs_review' || displayStatus === 'error';
+                  const badge = invoicePrimaryBadge(item);
+                  const canDeleteDraft =
+                    displayStatus === 'needs_review' || displayStatus === 'error';
                   return (
                   <tr
                     key={item.id}
@@ -483,24 +507,10 @@ export default function InvoicesPage() {
                     </td>
                     <td>{formatDisplayDate(item.due_date)}</td>
                     <td>
-                      <div className="invoice-status-stack">
-                        <StatusBadge status={statusTone(displayStatus)}>
-                          {statusLabel(displayStatus)}
-                        </StatusBadge>
-                        {isGirnDue(item) ? (
-                          <StatusBadge status="ready">GIRN DUE</StatusBadge>
-                        ) : null}
-                        {isTallyUnsynced(item) ? (
-                          <StatusBadge status="on_hold">
-                            TALLY {String(item.tally_sync_status || 'pending').toUpperCase()}
-                          </StatusBadge>
-                        ) : isConfirmedApInvoice(item) && item.tally_sync_status === 'synced' ? (
-                          <StatusBadge status="completed">TALLY SYNCED</StatusBadge>
-                        ) : null}
-                      </div>
+                      <StatusBadge status={badge.tone}>{badge.label}</StatusBadge>
                     </td>
                     <td onClick={(event) => event.stopPropagation()}>
-                      {canDelete ? (
+                      {canDeleteDraft ? (
                         <button
                           type="button"
                           className="mes-btn mes-btn-secondary"

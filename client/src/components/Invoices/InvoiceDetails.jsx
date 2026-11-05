@@ -6,11 +6,14 @@ import {
   Download,
   BadgeCheck,
   Banknote,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import api from "../../api/client";
-import { appAlert, appForm } from "../../components/dialog";
+import { appAlert, appConfirm, appForm } from "../../components/dialog";
 import InvoicePdfViewer from "./InvoicePdfViewer";
 import { formatDisplayDate, toISODateString } from '../../utils/dateFormat';
+import { useAuth } from '../../auth/authContext';
 
 const STATUS_STYLES = {
   paid:       { bg: '#f0fdf4', color: '#16a34a', label: 'PAID' },
@@ -151,6 +154,7 @@ function synthesizeTaxItems(invoice) {
 export default function InvoiceDetails() {
   const navigate = useNavigate();
   const { id } = useParams();
+  const { isAdmin } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -161,6 +165,7 @@ export default function InvoiceDetails() {
   const [paying, setPaying] = useState(false);
   const [tallyEnabled, setTallyEnabled] = useState(false);
   const [syncingTally, setSyncingTally] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -250,6 +255,28 @@ export default function InvoiceDetails() {
       await appAlert(err.response?.data?.error || 'Unable to sync to Tally');
     } finally {
       setSyncingTally(false);
+    }
+  };
+
+  const handleDeleteSaved = async () => {
+    const ok = await appConfirm({
+      title: 'Delete this invoice?',
+      message: `Are you sure you want to permanently delete invoice ${
+        invoice.invoice_number || 'this invoice'
+      }? This cannot be undone.`,
+      tone: 'danger',
+      confirmLabel: 'Yes, delete',
+      cancelLabel: 'Cancel',
+    });
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/invoices/${id}`);
+      navigate('/invoices');
+    } catch (err) {
+      await appAlert(err.response?.data?.error || 'Unable to delete this invoice');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -427,6 +454,34 @@ export default function InvoiceDetails() {
             >
               {syncingTally ? 'Syncing…' : 'Retry Purchase sync'}
             </button>
+          ) : null}
+          {isAdmin() &&
+          invoice.status !== 'needs_review' &&
+          invoice.review_status !== 'needs_review' &&
+          invoice.status !== 'cancelled' ? (
+            <>
+              <button
+                type="button"
+                style={styles.downloadBtn}
+                onClick={() => navigate(`/invoices/${id}/review?mode=edit`)}
+              >
+                <Pencil size={15} />
+                Edit
+              </button>
+              <button
+                type="button"
+                style={{
+                  ...styles.dangerBtn,
+                  opacity: deleting ? 0.7 : 1,
+                  cursor: deleting ? 'not-allowed' : 'pointer',
+                }}
+                disabled={deleting}
+                onClick={handleDeleteSaved}
+              >
+                <Trash2 size={15} />
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </>
           ) : null}
           <a href={invoice.file_url} download style={styles.downloadBtn}>
             <Download size={15} />
@@ -780,6 +835,20 @@ const styles = {
     borderRadius: 8,
     cursor: 'pointer',
     textDecoration: 'none',
+  },
+
+  dangerBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '9px 16px',
+    fontSize: 13,
+    fontWeight: 600,
+    color: '#fff',
+    background: '#dc2626',
+    border: '1px solid #b91c1c',
+    borderRadius: 8,
+    cursor: 'pointer',
   },
 
   approveBtn: {

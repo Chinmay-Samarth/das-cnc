@@ -33,6 +33,7 @@ const {
 } = require('../services/invoiceExportEngine');
 const { buildReviewPayload, confirmReview, abandonReviewDraft } = require('../services/invoiceReviewEngine');
 const { buildDraftGirnFromInvoice } = require('../services/girnDraftEngine');
+const { isAdminUser } = require('../utils/accessLevel');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
 
@@ -53,6 +54,25 @@ function verifyEmployeeAuth(req, res, next) {
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
+}
+
+function requireAdmin(req, res, next) {
+  if (!isAdminUser(req.user)) {
+    return res.status(403).json({ error: 'Only admins can edit or delete saved invoices' });
+  }
+  return next();
+}
+
+function isUnconfirmedInvoiceDraft(invoice) {
+  if (!invoice) return false;
+  const status = String(invoice.status || '');
+  const reviewStatus = String(invoice.review_status || '');
+  if (reviewStatus === 'confirmed' || reviewStatus === 'auto_accepted') return false;
+  if (['paid', 'overdue', 'partial', 'cancelled'].includes(status)) return false;
+  return (
+    reviewStatus === 'needs_review' ||
+    ['needs_review', 'extracting', 'saving', 'error', 'queued', 'uploading'].includes(status)
+  );
 }
 
 function sendServiceError(res, err) {
@@ -255,6 +275,11 @@ router.post('/:id/tally/purchase-sync', verifyEmployeeAuth, async (req, res) => 
 router.get('/:id/review', verifyEmployeeAuth, async (req, res) => {
   try {
     const payload = await buildReviewPayload(req.params.id);
+    const invoice = payload?.invoice;
+    // Draft OCR review is open to anyone; reopening a saved invoice is admin-only.
+    if (invoice && !isUnconfirmedInvoiceDraft(invoice) && !isAdminUser(req.user)) {
+      return res.status(403).json({ error: 'Only admins can edit saved invoices' });
+    }
     return res.json(payload);
   } catch (err) {
     console.error('Invoice review load error:', err);
@@ -264,6 +289,14 @@ router.get('/:id/review', verifyEmployeeAuth, async (req, res) => {
 
 router.post('/:id/confirm-review', verifyEmployeeAuth, async (req, res) => {
   try {
+    const existing = await getInvoice(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+    if (!isUnconfirmedInvoiceDraft(existing) && !isAdminUser(req.user)) {
+      return res.status(403).json({ error: 'Only admins can edit saved invoices' });
+    }
+
     const invoice = await confirmReview(req.params.id, req.body || {}, actorId(req));
     // Always build a GIRN draft — confirmed purchase invoices are due for
     // Register & review next (Tally purchase sync runs on GIRN register).
@@ -281,6 +314,40 @@ router.post('/:id/abandon-review', verifyEmployeeAuth, async (req, res) => {
     return res.json({ message: 'OCR draft discarded', ...result });
   } catch (err) {
     console.error('Invoice review abandon error:', err);
+    return sendServiceError(res, err);
+  }
+});
+
+/** Admin-only hard delete for saved (confirmed) purchase invoices. */
+router.delete('/:id', verifyEmployeeAuth, requireAdmin, async (req, res) => {
+  try {
+    const invoice = await getInvoice(req.params.id);
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+    if (isUnconfirmedInvoiceDraft(invoice)) {
+      return res.status(409).json({
+        error: 'Use discard draft for unscanned / needs-review invoices',
+      });
+    }
+
+    const { data: girns, error: girnErr } = await supabaseAdmin
+      .from('girns')
+      .select('id, girn_number')
+      .eq('invoice_id', req.params.id)
+      .limit(1);
+    if (girnErr) throw girnErr;
+    if (girns?.length) {
+      return res.status(409).json({
+        error: `Cannot delete invoice linked to GIRN ${girns[0].girn_number || girns[0].id}`,
+      });
+    }
+
+    const { error } = await supabaseAdmin.from('invoices').delete().eq('id', req.params.id);
+    if (error) throw error;
+    return res.json({ deleted: true, id: req.params.id });
+  } catch (err) {
+    console.error('Invoice delete error:', err);
     return sendServiceError(res, err);
   }
 });

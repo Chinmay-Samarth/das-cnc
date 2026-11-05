@@ -258,18 +258,39 @@ export default function SupplierDetailsPage() {
         payload.append('photo', certificate);
       }
 
-      await api.put(`/suppliers/${id}`, payload);
-      const { data } = await api.get('/suppliers');
-      const updated = (data.suppliers || []).find((item) => String(item.id) === String(id));
-      setSupplier(updated || null);
+      const { data } = await api.put(`/suppliers/${id}`, payload);
+      const updated = data?.supplier || null;
+      if (updated) {
+        setSupplier(updated);
+        setFormData({
+          name: updated.name || '',
+          ledger_name: updated.ledger_name || '',
+          tally_expense_ledger_type: updated.tally_expense_ledger_type || '',
+          official_address: updated.official_address || '',
+          billing_address: updated.billing_address || '',
+          GSTIN: updated.GSTIN || '',
+          PAN_no: updated.PAN_no || updated.pan_no || '',
+          contact_person: updated.contact_person || '',
+          contact_number: updated.contact_number || updated.contact_phone || '',
+          email: updated.email || '',
+          customer_recommended: updated.customer_recommended ? 'true' : 'false',
+          bank_name: updated.bank_name || '',
+          account_number: updated.account_number || '',
+          account_type: updated.account_type || '',
+          IFSC: updated.IFSC || updated.ifsc || '',
+          payment_details: updated.payment_details || '',
+        });
+        setIsPdf(Boolean(updated.iso_certificate_url?.toLowerCase().includes('.pdf')));
+      }
       setCertificate(null);
-      navigate(`/suppliers/${id}`);
+      setTab('details');
+      navigate(`/suppliers/${id}`, { replace: true });
+      setFormUpdate(true);
     } catch (err) {
       console.error('Failed to update supplier:', err);
       setError(err.response?.data?.error || 'Unable to update supplier. Please try again.');
     } finally {
       setSubmitting(false);
-      setFormUpdate(true)
     }
   };
 
@@ -294,7 +315,10 @@ export default function SupplierDetailsPage() {
             <button
             type="button"
             className={'neutral-button'}
-            onClick={() => setTab('edit')}
+            onClick={() => {
+              setTab('edit');
+              navigate(`/suppliers/${id}/edit`);
+            }}
           >
             < Pencil size={16} style={{marginRight: 4, display: "inline"}}/>Edit
           </button>
@@ -305,7 +329,10 @@ export default function SupplierDetailsPage() {
           <button
             type="button"
             className={`pill-tab ${tab === 'details' ? 'pill-tab-active' : ''}`}
-            onClick={() => {setTab('details')}}
+            onClick={() => {
+              setTab('details');
+              navigate(`/suppliers/${id}`);
+            }}
             aria-selected = {tab === 'details'}
             role = 'tab'
           >
@@ -314,7 +341,10 @@ export default function SupplierDetailsPage() {
           <button
             type="button"
             className={`pill-tab ${tab === 'invoices' ? 'pill-tab-active' : ''}`}
-            onClick={() => {setTab('invoices')}}
+            onClick={() => {
+              setTab('invoices');
+              navigate(`/suppliers/${id}/invoices`);
+            }}
             aria-selected = {tab === 'invoices'}
             role = 'tab'
           >
@@ -763,8 +793,11 @@ export default function SupplierDetailsPage() {
 
             <FormActions
               saving={submitting}
-              onCancel={() => navigate(`/suppliers/${id}`)}
-              saveLabel={submitting ? 'Saving…' : 'Save changes'}
+              onCancel={() => {
+                setTab('details');
+                navigate(`/suppliers/${id}`);
+              }}
+              saveLabel={submitting ? 'Saving…' : 'Save and continue'}
             />
           </form>
         )}

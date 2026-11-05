@@ -553,8 +553,14 @@ router.get(
   wrap(async (req, res) => {
     const lot = await getLotById(req.params.id);
     const completions = await listLotOpCompletions(req.params.id);
-    const { card_line, row_count } = await lotCardLine(lot, req.query.node_id);
-    return res.json({ lot, completions, card_line, row_count });
+    const { card_line, row_count, card_operations } = await lotCardLine(lot, req.query.node_id);
+    return res.json({
+      lot,
+      completions,
+      card_line,
+      row_count,
+      card_operations: card_operations || [],
+    });
   })
 );
 

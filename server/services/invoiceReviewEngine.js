@@ -443,6 +443,18 @@ async function confirmReview(invoiceId, body, actorId) {
     totalAmount: body.total_amount ?? invoice.total_amount,
   });
 
+  const priorStatus = String(invoice.status || '');
+  const priorReview = String(invoice.review_status || '');
+  const wasDraft =
+    priorReview === 'needs_review' ||
+    ['needs_review', 'extracting', 'saving', 'error', 'queued', 'uploading'].includes(priorStatus);
+  // Keep paid / overdue / etc. when an admin re-saves a confirmed invoice.
+  const nextStatus = wasDraft
+    ? 'pending'
+    : priorStatus === 'needs_review'
+      ? 'pending'
+      : priorStatus || 'pending';
+
   const updatePayload = {
     supplier_id: supplierId,
     line_items: normalizedLines,
@@ -455,7 +467,7 @@ async function confirmReview(invoiceId, body, actorId) {
     round_off: reconciled.round_off,
     tax_amount: reconciled.tax_amount,
     // Clear OCR review state — status must not remain needs_review
-    status: 'pending',
+    status: nextStatus,
     review_status: 'confirmed',
     reviewed_at: now,
     reviewed_by: actorId || null,

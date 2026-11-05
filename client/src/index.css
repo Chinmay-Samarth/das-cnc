@@ -12913,9 +12913,11 @@ button:hover:not(:disabled) {
 
 .shop-card {
   box-sizing: border-box;
-  width: 147mm;
-  height: 104mm;
-  padding: 3.5mm 4mm 3mm;
+  /* A6 portrait: 105mm × 148mm */
+  width: 105mm;
+  height: 148mm;
+  margin-top: 5px;
+  padding: 4mm 3.5mm 3.5mm;
   background: #fff;
   color: #0f172a;
   border: 1px solid #94a3b8;
@@ -12926,7 +12928,7 @@ button:hover:not(:disabled) {
 }
 
 .shop-card-preview .shop-card {
-  zoom: 0.58;
+  zoom: 0.72;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
 }
 
@@ -12936,10 +12938,26 @@ button:hover:not(:disabled) {
 
 .lot-card-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: start;
-  gap: 2mm;
-  margin-bottom: 2mm;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "logo lotno"
+    "ids ids";
+  align-items: center;
+  gap: 2mm 3mm;
+  margin-bottom: 3mm;
+}
+
+.lot-card-head .shop-card-logo {
+  grid-area: logo;
+}
+
+.lot-card-head .shop-card-lotno {
+  grid-area: lotno;
+  justify-self: center;
+}
+
+.lot-card-head .lot-card-ids {
+  grid-area: ids;
 }
 
 .girn-tag-head {
@@ -12951,39 +12969,36 @@ button:hover:not(:disabled) {
 }
 
 .shop-card-logo {
-  height: 9mm;
+  height: 12mm;
   width: auto;
   object-fit: contain;
 }
 
 .shop-card-lotno {
-  justify-self: center;
-  align-self: center;
   text-align: center;
-  max-width: 48mm;
-  padding: 1mm 2.5mm;
+  max-width: 58mm;
+  padding: 1.2mm 2.5mm;
   border: 1.5px solid #0f172a;
-  transform: translateX(-8mm);
+  transform: none;
 }
 
 .lot-card-ids {
-  justify-self: end;
   width: 100%;
-  max-width: 62mm;
+  max-width: none;
 }
 
 .lot-card-ids .shop-card-field {
-  margin: 0 0 0.8mm;
-  font-size: 7.5pt;
+  margin: 0 0 1mm;
+  font-size: 9.5pt;
 }
 
 .lot-card-ids .shop-card-field > span:first-child {
-  flex: 0 0 24mm;
-  font-size: 6.5pt;
+  flex: 0 0 28mm;
+  font-size: 8pt;
 }
 
 .lot-card-ids .shop-card-field strong {
-  font-size: 8pt;
+  font-size: 10pt;
   text-align: right;
 }
 
@@ -12999,7 +13014,7 @@ button:hover:not(:disabled) {
 
 .shop-card-lotno strong {
   display: block;
-  font-size: 16pt;
+  font-size: 17pt;
   letter-spacing: 0.03em;
   white-space: nowrap;
 }
@@ -13035,32 +13050,58 @@ button:hover:not(:disabled) {
   width: 100%;
   border-collapse: collapse;
   margin-top: 1.5mm;
-  flex: 1;
+  flex: 1 1 auto;
   table-layout: fixed;
+}
+
+.shop-card-table thead,
+.shop-card-table tbody,
+.shop-card-table tr {
+  height: auto;
 }
 
 .shop-card-table th,
 .shop-card-table td {
   border: 1px solid #0f172a;
-  padding: 0.6mm 1.2mm;
-  font-size: 8pt;
+  padding: 0 1.2mm;
+  font-size: 9.5pt;
   text-align: left;
-  height: 6.2mm;
+  vertical-align: middle;
+  line-height: 1.15;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
 }
 
-.shop-card-table th {
+.shop-card-table thead th {
+  height: 7mm;
+  max-height: 7mm;
   font-size: 7.5pt;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   background: #f8fafc;
 }
 
+.shop-card-table tbody td {
+  font-size: 9.5pt;
+}
+
+/* Keep every flow row the same height (active/ink included). */
+.shop-card-table tbody tr,
+.shop-card-table tbody td {
+  height: 12mm;
+  max-height: 12mm;
+}
+
 .shop-card-table th:nth-child(1),
-.shop-card-table td:nth-child(1) { width: 22mm; }
+.shop-card-table td:nth-child(1) { width: 22%; }
 .shop-card-table th:nth-child(2),
-.shop-card-table td:nth-child(2) { width: 32mm; }
+.shop-card-table td:nth-child(2) { width: 28%; }
+.shop-card-table th:nth-child(3),
+.shop-card-table td:nth-child(3) { width: 34%; }
 .shop-card-table th:nth-child(4),
-.shop-card-table td:nth-child(4) { width: 18mm; text-align: right; }
+.shop-card-table td:nth-child(4) { width: 16%; text-align: right; }
 
 .girn-tag-head h1 {
   position: absolute;
@@ -13189,58 +13230,72 @@ button:hover:not(:disabled) {
   color: #0f172a;
 }
 
+.shop-card-print-host {
+  display: none;
+}
+
 @media print {
   @page {
-    size: 147mm 104mm;
-    margin: 3mm;
+    size: A6 portrait;
+    margin: 0;
   }
 
-  body.shop-card-printing * {
-    visibility: hidden !important;
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
   }
 
-  body.shop-card-printing .shop-card-print-root,
-  body.shop-card-printing .shop-card-print-root * {
-    visibility: visible !important;
+  /* Only the temporary print host contributes pages. */
+  body.shop-card-printing > *:not(.shop-card-print-host) {
+    display: none !important;
   }
 
-  body.shop-card-printing .shop-card-print-root {
+  body.shop-card-printing .shop-card-print-host {
     display: block !important;
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
+    position: static !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 105mm;
+    background: #fff;
   }
 
-  body.shop-card-printing .shop-card {
+  body.shop-card-printing .shop-card-print-host .shop-card {
     zoom: 1;
-    width: 100%;
-    height: 98mm;
+    width: 105mm;
+    height: calc(148mm - 5px);
+    max-height: calc(148mm - 5px);
+    margin: 5px 0 0;
     border: none;
     box-shadow: none;
+    overflow: hidden;
+    box-sizing: border-box;
+    break-inside: avoid;
+    page-break-inside: avoid;
     break-after: page;
     page-break-after: always;
   }
 
-  body.shop-card-printing .shop-card:last-child {
+  body.shop-card-printing .shop-card-print-host .shop-card:last-child {
     break-after: auto;
     page-break-after: auto;
   }
 
-  body.shop-card-printing .shop-card-print-root .lot-card-line-only .lot-card-guide,
-  body.shop-card-printing .shop-card-print-root .lot-card-line-only .lot-card-guide * {
+  body.shop-card-printing .shop-card-print-host .lot-card-line-only .lot-card-guide,
+  body.shop-card-printing .shop-card-print-host .lot-card-line-only .lot-card-guide * {
     color: transparent !important;
     border-color: transparent !important;
     background: transparent !important;
     box-shadow: none !important;
   }
 
-  body.shop-card-printing .shop-card-print-root .lot-card-line-only .lot-card-guide img {
+  body.shop-card-printing .shop-card-print-host .lot-card-line-only .lot-card-guide img {
     visibility: hidden !important;
   }
 
-  body.shop-card-printing .shop-card-print-root .lot-card-line-only .lot-card-line-ink,
-  body.shop-card-printing .shop-card-print-root .lot-card-line-only .lot-card-line-ink * {
+  body.shop-card-printing .shop-card-print-host .lot-card-line-only .lot-card-line-ink,
+  body.shop-card-printing .shop-card-print-host .lot-card-line-only .lot-card-line-ink * {
     color: #000 !important;
     visibility: visible !important;
   }
