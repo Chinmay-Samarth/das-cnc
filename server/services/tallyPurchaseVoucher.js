@@ -187,7 +187,15 @@ function buildPurchaseVoucherXml({ invoice, supplier, expenseType }) {
 
   const narration = String(invoiceNumber || '').trim();
 
+  // Credit (To) first so the party line stays on top in Tally, then debit legs.
   let entriesXml = ledgerEntryXml({
+    ledgerName: partyLedger,
+    isDeemedPositive: false,
+    amount: totalAmount,
+    billAllocation: { name: invoiceNumber, billType: 'New Ref' },
+  });
+
+  entriesXml += ledgerEntryXml({
     ledgerName: expenseLedger,
     isDeemedPositive: true,
     amount: expenseDebit,
@@ -200,13 +208,6 @@ function buildPurchaseVoucherXml({ invoice, supplier, expenseType }) {
       amount: leg.amount,
     });
   }
-
-  entriesXml += ledgerEntryXml({
-    ledgerName: partyLedger,
-    isDeemedPositive: false,
-    amount: totalAmount,
-    billAllocation: { name: invoiceNumber, billType: 'New Ref' },
-  });
 
   return `<ENVELOPE>
   <HEADER>

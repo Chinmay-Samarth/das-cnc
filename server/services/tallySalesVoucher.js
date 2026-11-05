@@ -169,15 +169,8 @@ function buildSalesVoucherXml({ invoice, customer }) {
 
   const narration = String(invoiceNumber || '').trim();
 
-  // Sales: party debit (ISDEEMEDPOSITIVE Yes), sales + GST credits (No)
+  // Credit (To) first — sales + GST on top — then party debit.
   let entriesXml = ledgerEntryXml({
-    ledgerName: partyLedger,
-    isDeemedPositive: true,
-    amount: totalAmount,
-    billAllocation: { name: invoiceNumber, billType: 'New Ref' },
-  });
-
-  entriesXml += ledgerEntryXml({
     ledgerName: salesLedger,
     isDeemedPositive: false,
     amount: salesCredit,
@@ -190,6 +183,13 @@ function buildSalesVoucherXml({ invoice, customer }) {
       amount: leg.amount,
     });
   }
+
+  entriesXml += ledgerEntryXml({
+    ledgerName: partyLedger,
+    isDeemedPositive: true,
+    amount: totalAmount,
+    billAllocation: { name: invoiceNumber, billType: 'New Ref' },
+  });
 
   return `<ENVELOPE>
   <HEADER>

@@ -103,17 +103,18 @@ function buildReceiptVoucherXml({
   const ref = String(reference || vchNo).trim();
   const narr = String(narration ?? ref).trim();
 
+  // Credit (To) first — party on top — then bank debit.
   let entriesXml = ledgerEntryXml({
-    ledgerName: bank,
-    isDeemedPositive: true,
-    amount: payAmount,
-  });
-
-  entriesXml += ledgerEntryXml({
     ledgerName: partyLedger,
     isDeemedPositive: false,
     amount: payAmount,
     billAllocations: billAllocations || [],
+  });
+
+  entriesXml += ledgerEntryXml({
+    ledgerName: bank,
+    isDeemedPositive: true,
+    amount: payAmount,
   });
 
   return `<ENVELOPE>

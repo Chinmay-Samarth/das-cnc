@@ -116,17 +116,18 @@ function buildPaymentVoucherXml({
       ? [{ name: billRefName, amount: payAmount, billType: 'Agst Ref' }]
       : [];
 
+  // Credit (To) first — bank on top — then party debit with bill refs.
   let entriesXml = ledgerEntryXml({
+    ledgerName: bank,
+    isDeemedPositive: false,
+    amount: payAmount,
+  });
+
+  entriesXml += ledgerEntryXml({
     ledgerName: partyLedger,
     isDeemedPositive: true,
     amount: payAmount,
     billAllocations: allocations,
-  });
-
-  entriesXml += ledgerEntryXml({
-    ledgerName: bank,
-    isDeemedPositive: false,
-    amount: payAmount,
   });
 
   return `<ENVELOPE>
