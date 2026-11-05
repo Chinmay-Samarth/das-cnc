@@ -373,8 +373,10 @@ async function processInvoiceOCR(invoiceId, file, publicUrl) {
   let dueDate = toIsoDate(ocrResult?.invoice?.due_date);
   let creditPeriodDays = daysBetweenYmd(invoiceDate, dueDate);
 
-  // Prefer supplier credit period when known — auto-assign due date from invoice date.
-  if (supplierId && invoiceDate) {
+  // Prefer supplier credit period when known; otherwise default Net 30.
+  const DEFAULT_CREDIT_DAYS = 30;
+  let supplierHasCredit = false;
+  if (supplierId) {
     const { data: supplier } = await supabase
       .from('suppliers')
       .select('credit_period_days')
@@ -383,8 +385,14 @@ async function processInvoiceOCR(invoiceId, file, publicUrl) {
     const supplierDays = Number(supplier?.credit_period_days);
     if (Number.isFinite(supplierDays) && supplierDays >= 0) {
       creditPeriodDays = supplierDays;
-      dueDate = addDaysYmd(invoiceDate, supplierDays);
+      supplierHasCredit = true;
     }
+  }
+  if (!Number.isFinite(Number(creditPeriodDays)) || Number(creditPeriodDays) < 0) {
+    creditPeriodDays = DEFAULT_CREDIT_DAYS;
+  }
+  if (invoiceDate && (supplierHasCredit || !dueDate)) {
+    dueDate = addDaysYmd(invoiceDate, creditPeriodDays) || dueDate;
   }
 
   const existing = await getInvoice(invoiceId);

@@ -1,7 +1,4 @@
-const { isTallyEnabled, tallyCompany, postTallyXml } = require('./tallyClient');
-
-/** Temporary fixed voucher date (same policy as purchase/sales). */
-const DEFAULT_TALLY_VOUCHER_DATE = '20260901';
+const { isTallyEnabled, tallyCompany, toTallyDate, postTallyXml } = require('./tallyClient');
 
 function round2(value) {
   return Math.round(Number(value) * 100) / 100;
@@ -73,6 +70,7 @@ function buildPaymentVoucherXml({
   narration,
   billRefName,
   billAllocations,
+  voucherDate,
 }) {
   const company = tallyCompany();
   if (!company) {
@@ -102,7 +100,12 @@ function buildPaymentVoucherXml({
     });
   }
 
-  const date = DEFAULT_TALLY_VOUCHER_DATE;
+  const date = toTallyDate(voucherDate);
+  if (!date) {
+    throw Object.assign(new Error('Invoice date is required for Tally Payment voucher'), {
+      code: 'TALLY_DATE',
+    });
+  }
   const vchNo = String(voucherNumber || reference || '').trim() || `PAY-${Date.now()}`;
   const ref = String(reference || vchNo).trim();
   const narr = String(narration ?? ref).trim();
@@ -142,6 +145,8 @@ function buildPaymentVoucherXml({
     <DATA>
       <TALLYMESSAGE xmlns:UDF="TallyUDF">
         <VOUCHER VCHTYPE="Payment" ACTION="Create" OBJVIEW="Accounting Voucher View">
+          <PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>
+          <VCHENTRYMODE>As Voucher</VCHENTRYMODE>
           <DATE>${date}</DATE>
           <EFFECTIVEDATE>${date}</EFFECTIVEDATE>
           <REFERENCEDATE>${date}</REFERENCEDATE>
@@ -243,6 +248,7 @@ async function syncPaymentVoucherForInvoice(invoice, supplier, { bankLedger, amo
     voucherNumber: `PAY-${invoiceNumber || invoice?.id}`,
     narration: ref || '',
     billRefName: invoiceNumber || null,
+    voucherDate: invoice?.invoice_date || invoice?.issued_at,
   });
 }
 
@@ -299,6 +305,7 @@ async function syncPaymentVoucherForInvoices(
     voucherNumber: `PAY-BULK-${Date.now()}`,
     narration: ref || '',
     billAllocations: allocations,
+    voucherDate: list[0]?.invoice_date || list[0]?.issued_at,
   });
 }
 
@@ -317,6 +324,7 @@ async function syncAdvancePaymentVoucher(po, supplier, { bankLedger, amount, ref
     voucherNumber: `ADV-${poNumber || po?.id}`,
     narration: ref || '',
     billRefName: null,
+    voucherDate: po?.order_date || po?.advance_paid_at,
   });
 }
 
@@ -328,5 +336,5 @@ module.exports = {
   syncAdvancePaymentVoucher,
   resolvePartyLedgerName,
   amountDueAfterAdvance,
-  DEFAULT_TALLY_VOUCHER_DATE,
+  toTallyDate,
 };

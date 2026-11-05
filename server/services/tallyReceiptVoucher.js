@@ -1,7 +1,4 @@
-const { isTallyEnabled, tallyCompany, postTallyXml } = require('./tallyClient');
-
-/** Temporary fixed voucher date (same policy as purchase/sales). */
-const DEFAULT_TALLY_VOUCHER_DATE = '20260901';
+const { isTallyEnabled, tallyCompany, toTallyDate, postTallyXml } = require('./tallyClient');
 
 function round2(value) {
   return Math.round(Number(value) * 100) / 100;
@@ -66,6 +63,7 @@ function buildReceiptVoucherXml({
   voucherNumber,
   narration,
   billAllocations,
+  voucherDate,
 }) {
   const company = tallyCompany();
   if (!company) {
@@ -95,7 +93,12 @@ function buildReceiptVoucherXml({
     });
   }
 
-  const date = DEFAULT_TALLY_VOUCHER_DATE;
+  const date = toTallyDate(voucherDate);
+  if (!date) {
+    throw Object.assign(new Error('Invoice date is required for Tally Receipt voucher'), {
+      code: 'TALLY_DATE',
+    });
+  }
   const vchNo = String(voucherNumber || reference || '').trim() || `RCT-${Date.now()}`;
   const ref = String(reference || vchNo).trim();
   const narr = String(narration ?? ref).trim();
@@ -129,6 +132,8 @@ function buildReceiptVoucherXml({
     <DATA>
       <TALLYMESSAGE xmlns:UDF="TallyUDF">
         <VOUCHER VCHTYPE="Receipt" ACTION="Create" OBJVIEW="Accounting Voucher View">
+          <PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>
+          <VCHENTRYMODE>As Voucher</VCHENTRYMODE>
           <DATE>${date}</DATE>
           <EFFECTIVEDATE>${date}</EFFECTIVEDATE>
           <REFERENCEDATE>${date}</REFERENCEDATE>
@@ -223,6 +228,7 @@ async function syncReceiptVoucherForInvoice(invoice, customer, { bankLedger, amo
     billAllocations: invoiceNumber
       ? [{ name: invoiceNumber, amount: payAmount, billType: 'Agst Ref' }]
       : [],
+    voucherDate: invoice?.invoice_date || invoice?.issued_at,
   });
 }
 
@@ -264,6 +270,7 @@ async function syncReceiptVoucherForInvoices(invoices, customer, { bankLedger, a
     voucherNumber: `RCT-BULK-${Date.now()}`,
     narration: ref || '',
     billAllocations: allocations,
+    voucherDate: list[0]?.invoice_date || list[0]?.issued_at,
   });
 }
 
@@ -273,5 +280,5 @@ module.exports = {
   syncReceiptVoucherForInvoice,
   syncReceiptVoucherForInvoices,
   resolvePartyLedgerName,
-  DEFAULT_TALLY_VOUCHER_DATE,
+  toTallyDate,
 };

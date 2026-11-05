@@ -13,6 +13,36 @@ function tallyCompany() {
   return String(process.env.TALLY_COMPANY || '').trim();
 }
 
+/** Convert an invoice or voucher date to Tally YYYYMMDD. Returns null when absent. */
+function toTallyDate(value) {
+  if (value == null || value === '') return null;
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const y = value.getUTCFullYear();
+    const m = String(value.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(value.getUTCDate()).padStart(2, '0');
+    return `${y}${m}${day}`;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (/^\d{8}$/.test(raw)) return raw;
+
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}${iso[2]}${iso[3]}`;
+
+  const dmy = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (dmy) {
+    return `${dmy[3]}${dmy[2].padStart(2, '0')}${dmy[1].padStart(2, '0')}`;
+  }
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return toTallyDate(parsed);
+  }
+  return null;
+}
+
 /**
  * POST XML to Tally HTTP server. Parses created / error markers from the response body.
  */
@@ -86,6 +116,7 @@ module.exports = {
   isTallyEnabled,
   tallyUrl,
   tallyCompany,
+  toTallyDate,
   postTallyXml,
   exportTallyXml,
 };

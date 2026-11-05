@@ -4,10 +4,7 @@ const {
   rateToPercent,
   salesLedgerName,
 } = require('../config/tallyLedgers');
-const { isTallyEnabled, tallyCompany, postTallyXml } = require('./tallyClient');
-
-/** Temporary fixed voucher date for all Tally posts (same as purchase). */
-const DEFAULT_TALLY_VOUCHER_DATE = '20260901';
+const { isTallyEnabled, tallyCompany, toTallyDate, postTallyXml } = require('./tallyClient');
 
 function round2(value) {
   return Math.round(Number(value) * 100) / 100;
@@ -122,7 +119,13 @@ function buildSalesVoucherXml({ invoice, customer }) {
   }
 
   const salesLedger = salesLedgerName() || DEFAULT_SALES_LEDGER;
-  const date = DEFAULT_TALLY_VOUCHER_DATE;
+  // Printed sales invoice date is issued_at (Invoice Date on the PDF).
+  const date = toTallyDate(invoice?.issued_at || invoice?.invoice_date || invoice?.issue_date);
+  if (!date) {
+    throw Object.assign(new Error('Invoice date is required for Tally Sales voucher'), {
+      code: 'TALLY_DATE',
+    });
+  }
 
   const taxableAmount = round2(invoice?.taxable_amount);
   const totalAmount = round2(invoice?.total_amount);
@@ -204,6 +207,8 @@ function buildSalesVoucherXml({ invoice, customer }) {
     <DATA>
       <TALLYMESSAGE xmlns:UDF="TallyUDF">
         <VOUCHER VCHTYPE="Sales" ACTION="Create" OBJVIEW="Accounting Voucher View">
+          <PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>
+          <VCHENTRYMODE>As Voucher</VCHENTRYMODE>
           <DATE>${date}</DATE>
           <EFFECTIVEDATE>${date}</EFFECTIVEDATE>
           <REFERENCEDATE>${date}</REFERENCEDATE>
@@ -247,7 +252,7 @@ async function syncSalesVoucherForInvoice(invoice, customer) {
     const xml = buildSalesVoucherXml({ invoice, customer });
     const { tallyUrl } = require('./tallyClient');
     console.log(
-      `[tally] posting Sales voucher ${invoice?.invoice_number} date=${DEFAULT_TALLY_VOUCHER_DATE} (fixed) → ${tallyUrl()}`
+      `[tally] posting Sales voucher ${invoice?.invoice_number} date=${toTallyDate(invoice?.issued_at || invoice?.invoice_date || invoice?.issue_date)} → ${tallyUrl()}`
     );
     await postTallyXml(xml);
     return {
@@ -284,5 +289,5 @@ module.exports = {
   syncSalesVoucherForInvoice,
   resolvePartyLedgerName,
   assertReadyForSalesTallySync,
-  DEFAULT_TALLY_VOUCHER_DATE,
+  toTallyDate,
 };

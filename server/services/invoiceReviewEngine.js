@@ -215,19 +215,32 @@ function buildOcrWarnings(invoice, classifiedLines, doc, ocrConfidenceLevel) {
     doc?.date?.value;
 
   if (!invoiceNumber) {
-    warnings.push({ code: 'missing_invoice_number', message: 'Invoice number was not detected' });
+    warnings.push({
+      code: 'missing_invoice_number',
+      severity: 'error',
+      message: 'Invoice number is missing. Enter the number printed on the supplier invoice before saving.',
+    });
   }
   if (!invoiceDate) {
-    warnings.push({ code: 'missing_invoice_date', message: 'Invoice date was not detected' });
+    warnings.push({
+      code: 'missing_invoice_date',
+      severity: 'error',
+      message: 'Invoice date is missing. Enter the invoice date from the document.',
+    });
   }
   if (!invoice?.supplier_id) {
-    warnings.push({ code: 'supplier_unmatched', message: 'Supplier could not be matched automatically' });
+    warnings.push({
+      code: 'supplier_unmatched',
+      severity: 'error',
+      message: 'Supplier was not matched. Select the correct supplier from the ledger before saving.',
+    });
   }
 
   if (ocrConfidenceLevel != null && ocrConfidenceLevel <= AUTO_ACCEPT_THRESHOLD) {
     warnings.push({
       code: 'low_ocr_confidence',
-      message: `OCR confidence ${Math.round(ocrConfidenceLevel * 100)}% is below the auto-accept threshold`,
+      severity: 'warning',
+      message: `Scan confidence is ${Math.round(ocrConfidenceLevel * 100)}%. Recheck amounts, tax, and supplier against the source file.`,
       field: 'document',
     });
   }
@@ -236,13 +249,15 @@ function buildOcrWarnings(invoice, classifiedLines, doc, ocrConfidenceLevel) {
     if (line.item_category !== 'other' && !line.master_record_id) {
       warnings.push({
         code: 'line_unmatched',
-        message: `Line ${idx + 1} could not be linked to a master record`,
+        severity: 'warning',
+        message: `Line ${idx + 1} is not linked to a master item. Pick the matching stock / RM / item record if required.`,
         field: `line_${idx + 1}`,
       });
     } else if (line.match_confidence && line.match_confidence !== 'high') {
       warnings.push({
         code: 'line_low_match',
-        message: `Line ${idx + 1} has uncertain master match (${line.match_confidence})`,
+        severity: 'warning',
+        message: `Line ${idx + 1} master match looks uncertain (${line.match_confidence}). Confirm the linked item.`,
         field: `line_${idx + 1}`,
       });
     }
@@ -253,7 +268,8 @@ function buildOcrWarnings(invoice, classifiedLines, doc, ocrConfidenceLevel) {
   if (invoiceTotal > 0 && lineSum > 0 && Math.abs(lineSum - invoiceTotal) / invoiceTotal > 0.05) {
     warnings.push({
       code: 'total_mismatch',
-      message: 'Sum of line totals differs from invoice total by more than 5%',
+      severity: 'error',
+      message: 'Line amounts and the invoice grand total differ by more than 5%. Check quantity, rate, tax, and round-off.',
     });
   }
 
@@ -265,7 +281,8 @@ function buildOcrWarnings(invoice, classifiedLines, doc, ocrConfidenceLevel) {
       if (c != null && c < 0.7) {
         warnings.push({
           code: 'low_field_confidence',
-          message: `Low OCR confidence on ${key.replace(/_/g, ' ')}`,
+          severity: 'warning',
+          message: `Low scan confidence on ${key.replace(/_/g, ' ')}. Verify this field against the source file.`,
           field: key,
         });
       }
@@ -575,14 +592,27 @@ async function assertUniqueSupplierInvoiceNumber({
   const { data, error } = await query;
   if (error) throw error;
 
+  const draftStatuses = new Set([
+    'needs_review',
+    'extracting',
+    'saving',
+    'queued',
+    'uploading',
+    'error',
+  ]);
+
   const conflict = (data || []).find((row) => {
-    if (String(row.review_status || '').toLowerCase() === 'superseded') return false;
+    const review = String(row.review_status || '').toLowerCase();
+    const status = String(row.status || '').toLowerCase();
+    // Other OCR drafts waiting for review must not block this invoice.
+    if (review === 'superseded' || review === 'needs_review') return false;
+    if (draftStatuses.has(status)) return false;
     return String(row.invoice_number || '').trim().toLowerCase() === number.toLowerCase();
   });
 
   if (conflict) {
     const err = new Error(
-      `Invoice number "${number}" already exists for this supplier. Duplicate invoices are not allowed (Tally / accounting).`
+      `Invoice number "${number}" already exists for this supplier as a saved invoice. Duplicate invoices are not allowed (Tally / accounting).`
     );
     err.status = 409;
     throw err;

@@ -73,10 +73,53 @@ function parseCreditDays(value) {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
+const DEFAULT_CREDIT_DAYS = 30;
+
 function dueDateFromCredit(invoiceDate, creditDays) {
   const days = parseCreditDays(creditDays);
   if (days == null) return null;
   return addDaysYmd(invoiceDate, days);
+}
+
+/** Last calendar day of the invoice month (fallback when Net 30 cannot be applied). */
+function endOfMonthYmd(isoDate) {
+  const raw = String(isoDate || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const year = Number(raw.slice(0, 4));
+  const month = Number(raw.slice(5, 7));
+  const last = new Date(Date.UTC(year, month, 0));
+  return last.toISOString().slice(0, 10);
+}
+
+function defaultDueDate(invoiceDate, creditDays = DEFAULT_CREDIT_DAYS) {
+  return (
+    dueDateFromCredit(invoiceDate, creditDays) ||
+    endOfMonthYmd(invoiceDate) ||
+    ''
+  );
+}
+
+function warningSeverity(warning) {
+  const severity = String(warning?.severity || '').toLowerCase();
+  if (severity === 'error' || severity === 'danger') return 'error';
+  return 'warning';
+}
+
+function humanWarningTitle(warning) {
+  const code = String(warning?.code || '');
+  const map = {
+    missing_invoice_number: 'Invoice number',
+    missing_invoice_date: 'Invoice date',
+    supplier_unmatched: 'Supplier',
+    low_ocr_confidence: 'Scan confidence',
+    line_unmatched: 'Line item link',
+    line_low_match: 'Line item match',
+    total_mismatch: 'Totals',
+    low_field_confidence: 'Field confidence',
+    duplicate_invoice_number: 'Duplicate invoice',
+    ocr_service_warning: 'Scan note',
+  };
+  return map[code] || 'Review item';
 }
 
 export default function InvoiceOcrReviewPage() {
@@ -153,10 +196,11 @@ export default function InvoiceOcrReviewPage() {
           suggested?.name ||
           ''
       );
-      const creditDays = parseCreditDays(inv.suppliers?.credit_period_days);
-      setSupplierCreditDays(creditDays);
+      const storedCreditDays = parseCreditDays(inv.suppliers?.credit_period_days);
+      setSupplierCreditDays(storedCreditDays);
       const invoiceDate = inv.invoice_date || '';
-      const autoDue = dueDateFromCredit(invoiceDate, creditDays);
+      const effectiveCredit = storedCreditDays ?? DEFAULT_CREDIT_DAYS;
+      const autoDue = defaultDueDate(invoiceDate, effectiveCredit);
       const baseAmount = inv.base_amount ?? '';
       const roundOff = inv.round_off ?? '';
       const taxAmount = sumTaxAmount(nextTaxes);
@@ -280,32 +324,102 @@ export default function InvoiceOcrReviewPage() {
     return Math.abs(grand - Number(expectedGrandTotal)) < 0.005;
   }, [expectedGrandTotal, header.total_amount]);
 
+  const effectiveCreditDays = supplierCreditDays ?? DEFAULT_CREDIT_DAYS;
+
+  const accountingChecks = useMemo(() => {
+    const checks = [
+      {
+        id: 'supplier',
+        ok: Boolean(supplierId),
+        label: 'Supplier selected',
+        detail: supplierId
+          ? supplierLabel || 'Supplier linked'
+          : 'Choose the supplier from the ledger.',
+      },
+      {
+        id: 'invoice_number',
+        ok: Boolean(String(header.invoice_number || '').trim()),
+        label: 'Invoice number entered',
+        detail: String(header.invoice_number || '').trim()
+          ? `No. ${header.invoice_number}`
+          : 'Enter the number printed on the invoice.',
+      },
+      {
+        id: 'invoice_date',
+        ok: Boolean(String(header.invoice_date || '').trim()),
+        label: 'Invoice date entered',
+        detail: header.invoice_date || 'Enter the invoice date from the document.',
+      },
+      {
+        id: 'due_date',
+        ok: Boolean(String(header.due_date || '').trim()),
+        label: 'Due date assigned',
+        detail: header.due_date
+          ? `Due ${header.due_date} · Net ${effectiveCreditDays} day${effectiveCreditDays === 1 ? '' : 's'}${
+              supplierCreditDays == null ? ' (default)' : ''
+            }`
+          : 'Due date will default to invoice date + 30 days.',
+      },
+      {
+        id: 'lines_subtotal',
+        ok: linesMatchSubtotal,
+        label: 'Line items = taxable amount',
+        detail: linesMatchSubtotal
+          ? `₹${formatMoney(lineItemsTotal)}`
+          : `Lines ₹${formatMoney(lineItemsTotal)} vs taxable ₹${formatMoney(header.base_amount)}`,
+      },
+      {
+        id: 'totals',
+        ok: totalsBalanced,
+        label: 'Taxable + tax + round off = grand total',
+        detail: totalsBalanced
+          ? `₹${formatMoney(header.total_amount)}`
+          : `Expected ₹${formatMoney(expectedGrandTotal)} vs grand ₹${formatMoney(header.total_amount)}`,
+      },
+    ];
+    return checks;
+  }, [
+    supplierId,
+    supplierLabel,
+    header.invoice_number,
+    header.invoice_date,
+    header.due_date,
+    header.base_amount,
+    header.total_amount,
+    effectiveCreditDays,
+    supplierCreditDays,
+    linesMatchSubtotal,
+    lineItemsTotal,
+    totalsBalanced,
+    expectedGrandTotal,
+  ]);
+
+  const failedChecks = useMemo(
+    () => accountingChecks.filter((check) => !check.ok),
+    [accountingChecks]
+  );
+
   function getSaveBlockers() {
-    const blockers = [];
-    if (!String(header.invoice_number || '').trim()) {
-      blockers.push('Invoice number is required.');
-    }
-    if (!String(header.due_date || '').trim()) {
-      blockers.push('Due date not given.');
-    }
-    if (!supplierId) {
-      blockers.push('Supplier is required.');
-    }
-    if (!linesMatchSubtotal) {
-      blockers.push(
-        `Line items total (₹${formatMoney(lineItemsTotal)}) must equal taxable / subtotal (₹${formatMoney(
-          header.base_amount
-        )}).`
-      );
-    }
-    if (!totalsBalanced) {
-      blockers.push(
-        `Taxable + tax + round off (₹${formatMoney(expectedGrandTotal)}) must equal grand total (₹${formatMoney(
-          header.total_amount
-        )}).`
-      );
-    }
-    return blockers;
+    return failedChecks.map((check) => `${check.label}: ${check.detail}`);
+  }
+
+  /** Keep taxable, tax bases, and grand total derived from line items when lines change. */
+  function applyCalculatedFromLines(nextLines, nextTaxes = taxes) {
+    const lineTotal = round2(
+      nextLines.reduce((sum, line) => {
+        const text = String(
+          line.scanned_description || line.description || line.item_description || ''
+        ).trim();
+        const qty = line.quantity === '' || line.quantity == null ? null : Number(line.quantity);
+        const rate = line.unit_price === '' || line.unit_price == null ? null : Number(line.unit_price);
+        if (!(text || line.master_record_id || qty != null || rate != null)) return sum;
+        const total = Number(line.total);
+        return sum + (Number.isFinite(total) ? total : 0);
+      }, 0)
+    );
+    const taxesWithBase = nextTaxes.map((tax) => recalcTax({ ...tax, base: lineTotal }));
+    setTaxes(taxesWithBase);
+    setHeader((h) => syncHeaderTotal({ ...h, base_amount: lineTotal }, taxesWithBase));
   }
 
   function handleLineChange(idx, field, value) {
@@ -318,6 +432,9 @@ export default function InvoiceOcrReviewPage() {
         patch.scanned_description = value;
       }
       next[idx] = recalcLine({ ...next[idx], ...patch });
+      if (field === 'quantity' || field === 'unit_price') {
+        applyCalculatedFromLines(next);
+      }
       return next;
     });
   }
@@ -352,24 +469,32 @@ export default function InvoiceOcrReviewPage() {
   }
 
   function handleRemoveLine(idx) {
-    setLines((prev) => prev.filter((_, i) => i !== idx));
+    setLines((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      applyCalculatedFromLines(next);
+      return next;
+    });
   }
 
   function handleAddLine() {
-    setLines((prev) => [
-      ...prev,
-      recalcLine({
-        manual: true,
-        scanned_description: '',
-        item_description: '',
-        item_category: 'raw_material',
-        master_record_id: null,
-        master_record_label: '',
-        quantity: '',
-        unit_price: '',
-        total: 0,
-      }),
-    ]);
+    setLines((prev) => {
+      const next = [
+        ...prev,
+        recalcLine({
+          manual: true,
+          scanned_description: '',
+          item_description: '',
+          item_category: 'raw_material',
+          master_record_id: null,
+          master_record_label: '',
+          quantity: '',
+          unit_price: '',
+          total: 0,
+        }),
+      ];
+      applyCalculatedFromLines(next);
+      return next;
+    });
   }
 
   function syncHeaderTotal(nextHeader, nextTaxes = taxes) {
@@ -392,9 +517,9 @@ export default function InvoiceOcrReviewPage() {
 
     setHeader((h) => {
       const next = { ...h, [field]: value };
-      // Supplier credit period drives due date from invoice date.
-      if (field === 'invoice_date' && supplierCreditDays != null) {
-        const autoDue = dueDateFromCredit(value, supplierCreditDays);
+      // Credit period (supplier or default Net 30) drives due date from invoice date.
+      if (field === 'invoice_date') {
+        const autoDue = defaultDueDate(value, effectiveCreditDays);
         if (autoDue) next.due_date = autoDue;
       }
       // Keep grand total in sync when parts change; allow manual grand total edits.
@@ -410,9 +535,9 @@ export default function InvoiceOcrReviewPage() {
     setSupplierLabel(label);
     const days = parseCreditDays(credit_period_days);
     setSupplierCreditDays(days);
-    if (days == null) return;
+    const credit = days ?? DEFAULT_CREDIT_DAYS;
     setHeader((h) => {
-      const autoDue = dueDateFromCredit(h.invoice_date, days);
+      const autoDue = defaultDueDate(h.invoice_date, credit);
       if (!autoDue) return h;
       return { ...h, due_date: autoDue };
     });
@@ -678,18 +803,59 @@ export default function InvoiceOcrReviewPage() {
 
       {error ? <AlertBanner tone="danger" title="Could not load">{error}</AlertBanner> : null}
 
-      {warnings.length ? (
-        <AlertBanner
-          tone="amber"
-          title={`${warnings.length} OCR warning${warnings.length === 1 ? '' : 's'}`}
-        >
-          <ul className="invoice-recheck-warnings">
-            {warnings.map((w, idx) => (
-              <li key={`${w.code}-${idx}`}>{w.message}</li>
-            ))}
-          </ul>
-        </AlertBanner>
-      ) : null}
+      <section className="mes-card invoice-accounting-guide" aria-label="Accounting review checklist">
+        <header className="invoice-accounting-guide-head">
+          <div>
+            <h2 className="invoice-recheck-panel-title">Accounting review</h2>
+            <p className="invoice-recheck-panel-hint">
+              Check these items against the source file before confirming. Calculated fields
+              (line amounts, tax from rate × base, taxable from lines, grand total, due date)
+              update automatically; the checks below still must pass.
+            </p>
+          </div>
+          <StatusBadge status={failedChecks.length ? 'overdue' : 'completed'}>
+            {failedChecks.length ? `${failedChecks.length} to fix` : 'Ready to save'}
+          </StatusBadge>
+        </header>
+
+        <ol className="invoice-accounting-checklist">
+          {accountingChecks.map((check) => (
+            <li
+              key={check.id}
+              className={`invoice-accounting-check${check.ok ? ' is-ok' : ' is-bad'}`}
+            >
+              <strong>{check.ok ? 'OK' : 'Fix'}</strong>
+              <div>
+                <span>{check.label}</span>
+                <small>{check.detail}</small>
+              </div>
+            </li>
+          ))}
+        </ol>
+
+        {warnings.length ? (
+          <div className="invoice-accounting-warnings">
+            <h3>Scan notes for Accounts</h3>
+            <ul className="invoice-recheck-warnings">
+              {warnings.map((w, idx) => (
+                <li
+                  key={`${w.code}-${idx}`}
+                  className={
+                    warningSeverity(w) === 'error'
+                      ? 'invoice-warning-error'
+                      : 'invoice-warning-amber'
+                  }
+                >
+                  <strong>{humanWarningTitle(w)}</strong>
+                  <span>{w.message}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <p className="muted invoice-accounting-clean">No OCR scan notes for this invoice.</p>
+        )}
+      </section>
 
       <div className="invoice-recheck-layout">
         <section className="mes-card invoice-recheck-pdf">
@@ -803,16 +969,13 @@ export default function InvoiceOcrReviewPage() {
                   value={header.due_date || ''}
                   onChange={(e) => handleHeaderField('due_date', e.target.value)}
                 />
-                {supplierCreditDays != null ? (
-                  <span className="muted" style={{ display: 'block', marginTop: 6, fontSize: '0.75rem' }}>
-                    Auto from supplier credit period · {supplierCreditDays} day
-                    {supplierCreditDays === 1 ? '' : 's'}
-                  </span>
-                ) : (
-                  <span className="muted" style={{ display: 'block', marginTop: 6, fontSize: '0.75rem' }}>
-                    No supplier credit period yet — set due date; days will be saved for this supplier
-                  </span>
-                )}
+                <span className="muted" style={{ display: 'block', marginTop: 6, fontSize: '0.75rem' }}>
+                  {supplierCreditDays != null
+                    ? `Auto from supplier credit period · ${supplierCreditDays} day${
+                        supplierCreditDays === 1 ? '' : 's'
+                      }`
+                    : `Default Net ${DEFAULT_CREDIT_DAYS} days (or month-end fallback). Change due date if needed — days are saved for this supplier on confirm.`}
+                </span>
               </label>
             </div>
           </div>
@@ -820,18 +983,28 @@ export default function InvoiceOcrReviewPage() {
           <div className="invoice-recheck-section">
             <h3 className="form-page-section-title">Amounts</h3>
             <p className="invoice-recheck-section-lead muted">
-              Confirm requires line items = taxable, and taxable + tax + round off = grand total.
+              Taxable follows line totals when you edit qty/rate. Tax recalculates from rate × base.
+              Grand total follows taxable + tax + round off. All three checks must still pass.
             </p>
+            <div className="invoice-recheck-calc-actions">
+              <button
+                type="button"
+                className="mes-btn mes-btn-secondary"
+                onClick={() => applyCalculatedFromLines(lines)}
+              >
+                Recalculate from line items
+              </button>
+            </div>
             {!linesMatchSubtotal ? (
               <AlertBanner tone="danger" title="Line items do not match subtotal">
                 Line items total ₹{formatMoney(lineItemsTotal)}, but taxable / subtotal is ₹
-                {formatMoney(header.base_amount)}. Fix the lines or subtotal before confirming.
+                {formatMoney(header.base_amount)}. Use “Recalculate from line items” or fix the values.
               </AlertBanner>
             ) : null}
             {!totalsBalanced ? (
               <AlertBanner tone="danger" title="Totals do not match">
                 Expected ₹{formatMoney(expectedGrandTotal)} (taxable + tax + round off), but grand total is ₹
-                {formatMoney(header.total_amount)}. Fix the amounts before confirming.
+                {formatMoney(header.total_amount)}. Fix round off or amounts before confirming.
               </AlertBanner>
             ) : null}
             <div className="form-page-grid invoice-recheck-fields">

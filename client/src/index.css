@@ -11028,6 +11028,120 @@ button:hover:not(:disabled) {
   gap: var(--mes-space-3);
 }
 
+.invoice-accounting-guide {
+  margin-bottom: var(--mes-space-4, 16px);
+  padding: 16px 18px;
+}
+
+.invoice-accounting-guide-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.invoice-accounting-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.invoice-accounting-check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.invoice-accounting-check strong {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  min-width: 2rem;
+}
+
+.invoice-accounting-check span {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.invoice-accounting-check small {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.invoice-accounting-check.is-ok {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.invoice-accounting-check.is-ok strong {
+  color: #15803d;
+}
+
+.invoice-accounting-check.is-bad {
+  border-color: #fecaca;
+  background: #fff1f2;
+}
+
+.invoice-accounting-check.is-bad strong {
+  color: #b91c1c;
+}
+
+.invoice-accounting-warnings {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.invoice-accounting-warnings h3 {
+  margin: 0 0 8px;
+  font-size: 0.8125rem;
+  font-weight: 650;
+  color: #334155;
+}
+
+.invoice-accounting-clean {
+  margin: 12px 0 0;
+  font-size: 0.8125rem;
+}
+
+.invoice-recheck-warnings li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.invoice-recheck-warnings li strong {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.invoice-warning-error strong {
+  color: #b91c1c;
+}
+
+.invoice-warning-amber strong {
+  color: #b45309;
+}
+
+.invoice-recheck-calc-actions {
+  margin: 0 0 12px;
+}
+
 .invoice-recheck-warnings {
   margin: 0;
   padding-left: 1.1rem;

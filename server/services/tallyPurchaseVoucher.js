@@ -4,10 +4,7 @@ const {
   isValidExpenseType,
   rateToPercent,
 } = require('../config/tallyLedgers');
-const { isTallyEnabled, tallyCompany, postTallyXml } = require('./tallyClient');
-
-/** Temporary fixed voucher date for all Tally posts (DD-MM-YYYY → 01-09-2026). */
-const DEFAULT_TALLY_VOUCHER_DATE = '20260901';
+const { isTallyEnabled, tallyCompany, toTallyDate, postTallyXml } = require('./tallyClient');
 
 function round2(value) {
   return Math.round(Number(value) * 100) / 100;
@@ -20,39 +17,6 @@ function escapeXml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
-}
-
-function toTallyDate(value) {
-  if (value == null || value === '') return null;
-
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    const y = value.getUTCFullYear();
-    const m = String(value.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(value.getUTCDate()).padStart(2, '0');
-    return `${y}${m}${day}`;
-  }
-
-  const raw = String(value).trim();
-
-  // Already YYYYMMDD
-  if (/^\d{8}$/.test(raw)) return raw;
-
-  // YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss...
-  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return `${iso[1]}${iso[2]}${iso[3]}`;
-
-  // DD-MM-YYYY or DD/MM/YYYY
-  const dmy = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
-  if (dmy) {
-    return `${dmy[3]}${dmy[2].padStart(2, '0')}${dmy[1].padStart(2, '0')}`;
-  }
-
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return null;
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}${m}${day}`;
 }
 
 function taxLineAmount(tax, baseAmount) {
@@ -169,7 +133,12 @@ function buildPurchaseVoucherXml({ invoice, supplier, expenseType }) {
     );
   }
 
-  const date = DEFAULT_TALLY_VOUCHER_DATE;
+  const date = toTallyDate(invoice?.invoice_date);
+  if (!date) {
+    throw Object.assign(new Error('Invoice date is required for Tally Purchase voucher'), {
+      code: 'TALLY_DATE',
+    });
+  }
   const expenseLedger = expenseLedgerName(expenseType, invoice?.tax_items);
   if (!expenseLedger) {
     throw Object.assign(new Error('Unable to resolve expense ledger for Tally debit'), {
@@ -255,6 +224,8 @@ function buildPurchaseVoucherXml({ invoice, supplier, expenseType }) {
     <DATA>
       <TALLYMESSAGE xmlns:UDF="TallyUDF">
         <VOUCHER VCHTYPE="Purchase" ACTION="Create" OBJVIEW="Accounting Voucher View">
+          <PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>
+          <VCHENTRYMODE>As Voucher</VCHENTRYMODE>
           <DATE>${date}</DATE>
           <EFFECTIVEDATE>${date}</EFFECTIVEDATE>
           <REFERENCEDATE>${date}</REFERENCEDATE>
@@ -299,7 +270,7 @@ async function syncPurchaseVoucherForInvoice(invoice, supplier) {
     const xml = buildPurchaseVoucherXml({ invoice, supplier, expenseType });
     const { tallyUrl } = require('./tallyClient');
     console.log(
-      `[tally] posting Purchase voucher ${invoice?.invoice_number} date=${DEFAULT_TALLY_VOUCHER_DATE} (fixed) invoice_date=${invoice?.invoice_date} → ${tallyUrl()}`
+      `[tally] posting Purchase voucher ${invoice?.invoice_number} date=${toTallyDate(invoice?.invoice_date)} invoice_date=${invoice?.invoice_date} → ${tallyUrl()}`
     );
     await postTallyXml(xml);
     return {
@@ -341,5 +312,4 @@ module.exports = {
   resolvePartyLedgerName,
   assertReadyForTallySync,
   toTallyDate,
-  DEFAULT_TALLY_VOUCHER_DATE,
 };
