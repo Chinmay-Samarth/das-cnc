@@ -252,7 +252,30 @@ export default function InvoiceOcrReviewPage() {
     return Math.abs(grand - Number(expectedGrandTotal)) < 0.005;
   }, [expectedGrandTotal, header.total_amount]);
 
-  const canSaveTotals = linesMatchSubtotal && totalsBalanced;
+  function getSaveBlockers() {
+    const blockers = [];
+    if (!String(header.invoice_number || '').trim()) {
+      blockers.push('Invoice number is required.');
+    }
+    if (!supplierId) {
+      blockers.push('Supplier is required.');
+    }
+    if (!linesMatchSubtotal) {
+      blockers.push(
+        `Line items total (₹${formatMoney(lineItemsTotal)}) must equal taxable / subtotal (₹${formatMoney(
+          header.base_amount
+        )}).`
+      );
+    }
+    if (!totalsBalanced) {
+      blockers.push(
+        `Taxable + tax + round off (₹${formatMoney(expectedGrandTotal)}) must equal grand total (₹${formatMoney(
+          header.total_amount
+        )}).`
+      );
+    }
+    return blockers;
+  }
 
   function handleLineChange(idx, field, value) {
     setLines((prev) => {
@@ -379,26 +402,20 @@ export default function InvoiceOcrReviewPage() {
   }
 
   async function handleConfirm() {
+    const blockers = getSaveBlockers();
+    if (blockers.length) {
+      await appAlert({
+        title: 'Cannot save invoice',
+        message: blockers.map((reason, index) => `${index + 1}. ${reason}`).join('\n'),
+        tone: 'danger',
+        confirmLabel: 'OK',
+      });
+      return;
+    }
+
     setSubmitting(true);
     setError('');
     try {
-      if (!String(header.invoice_number || '').trim()) {
-        await appAlert({
-          title: 'Could not save',
-          message: 'Invoice number is required.',
-          tone: 'danger',
-        });
-        return;
-      }
-      if (!supplierId) {
-        await appAlert({
-          title: 'Could not save',
-          message: 'Supplier is required.',
-          tone: 'danger',
-        });
-        return;
-      }
-
       const normalizedTaxes = taxes
         .map((t) => ({
           kind: String(t.kind || '').toUpperCase(),
@@ -418,34 +435,6 @@ export default function InvoiceOcrReviewPage() {
         baseAmount != null && Number.isFinite(baseAmount)
           ? computeHeaderTotal(baseAmount, taxAmount, roundOff)
           : header.total_amount;
-      if (
-        baseAmount == null ||
-        !Number.isFinite(baseAmount) ||
-        Math.abs(lineItemsTotal - round2(baseAmount)) >= 0.005
-      ) {
-        await appAlert({
-          title: 'Line items do not match subtotal',
-          message:
-            'The sum of line item totals must equal the taxable / subtotal amount before you can confirm and save.',
-          tone: 'danger',
-        });
-        return;
-      }
-
-      const enteredGrand = Number(header.total_amount);
-      if (
-        reconciledTotal === '' ||
-        !Number.isFinite(enteredGrand) ||
-        Math.abs(enteredGrand - Number(reconciledTotal)) >= 0.005
-      ) {
-        await appAlert({
-          title: 'Totals do not match',
-          message:
-            'Taxable + tax + round off must equal the grand total before you can confirm and save.',
-          tone: 'danger',
-        });
-        return;
-      }
 
       const payload = {
         supplier_id: supplierId,
@@ -822,12 +811,7 @@ export default function InvoiceOcrReviewPage() {
             <button
               type="button"
               className="primary-button"
-              disabled={
-                submitting ||
-                !supplierId ||
-                !String(header.invoice_number || '').trim() ||
-                !canSaveTotals
-              }
+              disabled={submitting}
               onClick={handleConfirm}
             >
               <Check size={16} />

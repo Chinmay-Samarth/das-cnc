@@ -18,43 +18,35 @@ export default function ImageLibraryPage() {
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState('');
   const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [searched, setSearched] = useState(false);
   const [preview, setPreview] = useState(null);
 
   useEffect(() => {
-    const trimmed = query.trim();
-    if (trimmed.length < 2) {
-      setResults([]);
-      setLoading(false);
-      setSearched(false);
-      setError('');
-      return undefined;
-    }
-
     let cancelled = false;
+    const trimmed = query.trim();
     const timer = setTimeout(async () => {
       setLoading(true);
       setError('');
       try {
         const { data } = await api.get('/image-library', {
-          params: { q: trimmed, kind: kind || undefined },
+          params: {
+            q: trimmed.length >= 2 ? trimmed : undefined,
+            kind: kind || undefined,
+          },
         });
         if (!cancelled) {
           setResults(data.results || []);
-          setSearched(true);
         }
       } catch (err) {
         if (!cancelled) {
           setResults([]);
-          setSearched(true);
-          setError(err.response?.data?.error || 'Unable to search images.');
+          setError(err.response?.data?.error || 'Unable to load images.');
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
-    }, 300);
+    }, trimmed.length >= 2 ? 300 : 0);
 
     return () => {
       cancelled = true;
@@ -67,7 +59,7 @@ export default function ImageLibraryPage() {
       <PageHeader
         eyebrow="Library"
         title="Images"
-        subtitle="Search purchase invoices, purchase orders, sales invoices, employee documents, and master record files."
+        subtitle="Browse stored files, or search purchase invoices, purchase orders, sales invoices, employees, and master records."
       />
 
       <section className="mes-card image-library-panel">
@@ -77,8 +69,7 @@ export default function ImageLibraryPage() {
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Invoice number, supplier, customer, employee name or code, master name"
-            autoFocus
+            placeholder="Filter by invoice number, supplier, customer, employee, or master name"
           />
         </label>
 
@@ -97,17 +88,17 @@ export default function ImageLibraryPage() {
 
         {error ? <p className="image-library-error">{error}</p> : null}
 
-        {loading ? <p className="muted">Searching…</p> : null}
+        {loading ? <p className="muted">Loading images…</p> : null}
 
-        {!loading && !searched ? (
+        {!loading && results.length === 0 ? (
           <EmptyState
-            title="Search stored files"
-            description="Type at least two characters. Purchase and sales invoices match invoice number, supplier, or customer. Employees match name or employee code."
+            title="No files found"
+            description={
+              query.trim().length >= 2
+                ? 'Try another name, number, or type.'
+                : 'No stored files are available yet.'
+            }
           />
-        ) : null}
-
-        {!loading && searched && results.length === 0 ? (
-          <EmptyState title="No files found" description="Try another name, number, or type." />
         ) : null}
 
         {results.length ? (
