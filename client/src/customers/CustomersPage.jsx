@@ -2,7 +2,124 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { ListPage, EmptyState } from '../components/mes';
+import TableColumnPicker from '../components/shared/TableColumnPicker';
+import useTableColumns from '../components/shared/useTableColumns';
 import { sortBy } from '../utils/listHelpers';
+
+const CUSTOMER_COLUMNS = [
+  {
+    id: 'name',
+    label: 'Customer',
+    section: 'Basic',
+    default: true,
+    getValue: (row) => row.name || '',
+    render: (row) => (
+      <>
+        <strong>{row.name || '—'}</strong>
+        <div className="table-subtext">
+          {row.billing_address || row.official_address || 'No address saved'}
+        </div>
+      </>
+    ),
+  },
+  {
+    id: 'ledger_name',
+    label: 'Ledger name',
+    section: 'Basic',
+    getValue: (row) => row.ledger_name || '',
+  },
+  {
+    id: 'gstin',
+    label: 'GSTIN',
+    section: 'Basic',
+    default: true,
+    getValue: (row) => row.gstin || '',
+  },
+  {
+    id: 'pan_no',
+    label: 'PAN',
+    section: 'Basic',
+    default: true,
+    getValue: (row) => row.pan_no || '',
+  },
+  {
+    id: 'official_address',
+    label: 'Official address',
+    section: 'Address',
+    getValue: (row) => row.official_address || '',
+  },
+  {
+    id: 'billing_address',
+    label: 'Billing address',
+    section: 'Address',
+    getValue: (row) => row.billing_address || '',
+  },
+  {
+    id: 'contact_person',
+    label: 'Contact',
+    section: 'Contact',
+    default: true,
+    getValue: (row) => row.contact_person || '',
+    render: (row) => (
+      <>
+        {row.contact_person || '—'}
+        <div className="table-subtext">{row.contact_phone || '—'}</div>
+      </>
+    ),
+  },
+  {
+    id: 'contact_phone',
+    label: 'Phone',
+    section: 'Contact',
+    getValue: (row) => row.contact_phone || '',
+  },
+  {
+    id: 'bank_name',
+    label: 'Bank',
+    section: 'Bank',
+    default: true,
+    getValue: (row) => row.bank_name || '',
+    render: (row) => (
+      <>
+        {row.bank_name || '—'}
+        <div className="table-subtext">{row.ifsc || '—'}</div>
+      </>
+    ),
+  },
+  {
+    id: 'account_no',
+    label: 'Account number',
+    section: 'Bank',
+    getValue: (row) => row.account_no || '',
+  },
+  {
+    id: 'account_type',
+    label: 'Account type',
+    section: 'Bank',
+    getValue: (row) => row.account_type || '',
+  },
+  {
+    id: 'ifsc',
+    label: 'IFSC',
+    section: 'Bank',
+    getValue: (row) => row.ifsc || '',
+  },
+  {
+    id: 'payment_terms',
+    label: 'Payment terms',
+    section: 'Terms',
+    getValue: (row) => row.payment_terms || '',
+  },
+  {
+    id: 'components_per_packet',
+    label: 'Components / packet',
+    section: 'Terms',
+    getValue: (row) =>
+      row.components_per_packet == null || row.components_per_packet === ''
+        ? ''
+        : String(row.components_per_packet),
+  },
+];
 
 export default function CustomersPage() {
   const navigate = useNavigate();
@@ -12,6 +129,10 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { visibleColumns, columnGroups, toggleColumn, resetColumns } = useTableColumns(
+    'das-cnc-customer-columns',
+    CUSTOMER_COLUMNS
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -43,21 +164,16 @@ export default function CustomersPage() {
     const query = search.trim().toLowerCase();
     const matches = customers.filter((customer) => {
       if (!query) return true;
-      return [
-        customer.name,
-        customer.gstin,
-        customer.pan_no,
-        customer.contact_person,
-        customer.contact_phone,
-        customer.bank_name,
-        customer.ifsc,
-      ]
+      return CUSTOMER_COLUMNS.map((column) => column.getValue(customer))
         .join(' ')
         .toLowerCase()
         .includes(query);
     });
 
-    return sortBy(matches, sortKey, sortAsc);
+    const sortColumn = CUSTOMER_COLUMNS.find((column) => column.id === sortKey);
+    return sortBy(matches, sortKey, sortAsc, (row) =>
+      sortColumn ? sortColumn.getValue(row) : row[sortKey]
+    );
   }, [search, sortKey, sortAsc, customers]);
 
   const handleSort = (key) => {
@@ -85,6 +201,12 @@ export default function CustomersPage() {
             className="search-input"
             aria-label="Search customers"
           />
+          <TableColumnPicker
+            columnGroups={columnGroups}
+            visibleColumns={visibleColumns}
+            onToggle={toggleColumn}
+            onReset={resetColumns}
+          />
           <button type="button" className="primary-button" onClick={() => navigate('/customers/add')}>
             Add Customer
           </button>
@@ -99,21 +221,14 @@ export default function CustomersPage() {
           <table className="app-table">
             <thead>
               <tr>
-                <th onClick={() => handleSort('name')}>
-                  Customer<span className="sort-indicator">{sortKey === 'name' ? (sortAsc ? ' ▲' : ' ▼') : ''}</span>
-                </th>
-                <th onClick={() => handleSort('gstin')}>
-                  GSTIN<span className="sort-indicator">{sortKey === 'gstin' ? (sortAsc ? ' ▲' : ' ▼') : ''}</span>
-                </th>
-                <th className="hide-mobile" onClick={() => handleSort('contact_person')}>
-                  Contact<span className="sort-indicator">{sortKey === 'contact_person' ? (sortAsc ? ' ▲' : ' ▼') : ''}</span>
-                </th>
-                <th className="hide-mobile" onClick={() => handleSort('pan_no')}>
-                  PAN<span className="sort-indicator">{sortKey === 'pan_no' ? (sortAsc ? ' ▲' : ' ▼') : ''}</span>
-                </th>
-                <th onClick={() => handleSort('bank_name')}>
-                  Bank<span className="sort-indicator">{sortKey === 'bank_name' ? (sortAsc ? ' ▲' : ' ▼') : ''}</span>
-                </th>
+                {visibleColumns.map((column) => (
+                  <th key={column.id} onClick={() => handleSort(column.id)}>
+                    {column.label}
+                    <span className="sort-indicator">
+                      {sortKey === column.id ? (sortAsc ? ' ▲' : ' ▼') : ''}
+                    </span>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -130,20 +245,13 @@ export default function CustomersPage() {
                   }}
                   style={{ cursor: 'pointer' }}
                 >
-                  <td>
-                    <strong>{customer.name}</strong>
-                    <div className="table-subtext">{customer.billing_address || customer.official_address || 'No address saved'}</div>
-                  </td>
-                  <td>{customer.gstin || '--'}</td>
-                  <td className="hide-mobile">
-                    {customer.contact_person || '--'}
-                    <div className="table-subtext">{customer.contact_phone || '--'}</div>
-                  </td>
-                  <td className="hide-mobile">{customer.pan_no || '--'}</td>
-                  <td>
-                    {customer.bank_name || '--'}
-                    <div className="table-subtext">{customer.ifsc || '--'}</div>
-                  </td>
+                  {visibleColumns.map((column) => (
+                    <td key={column.id}>
+                      {column.render
+                        ? column.render(customer)
+                        : column.getValue(customer) || '—'}
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>

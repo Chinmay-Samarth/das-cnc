@@ -7,6 +7,7 @@ import {
   BadgeCheck,
   Banknote,
   Pencil,
+  RefreshCw,
   Trash2,
 } from "lucide-react";
 import api from "../../api/client";
@@ -217,6 +218,14 @@ export default function InvoiceDetails() {
   const status = STATUS_STYLES[statusKey] ?? STATUS_STYLES.due;
   const supplier = invoice.suppliers ?? {};
   const canPay = statusKey === 'due' || statusKey === 'overdue';
+  const isReviewDraft =
+    invoice.status === 'needs_review' ||
+    invoice.review_status === 'needs_review' ||
+    invoice.status === 'cancelled' ||
+    invoice.review_status === 'superseded';
+  const canSyncPurchaseTally = !isReviewDraft && invoice.tally_sync_status !== 'synced';
+  const canSyncPaymentTally =
+    invoice.status === 'paid' && invoice.tally_payment_sync_status !== 'synced';
   const totalGst = taxLines.reduce((sum, tax) => sum + taxLineAmount(tax, invoice.base_amount), 0);
   const taxAmountDisplay = Number(invoice.tax_amount ?? totalGst) || 0;
   const roundOffDisplay = Number(invoice.round_off) || 0;
@@ -433,26 +442,40 @@ export default function InvoiceDetails() {
               {paying ? 'Recording…' : 'Record payment'}
             </button>
           ) : null}
-          {invoice.status === 'paid' &&
-          tallyEnabled &&
-          invoice.tally_payment_sync_status !== 'synced' ? (
+          {canSyncPurchaseTally ? (
             <button
               type="button"
-              style={styles.downloadBtn}
-              disabled={syncingTally}
-              onClick={() => handleRetryTallySync('payment')}
-            >
-              {syncingTally ? 'Syncing…' : 'Retry Payment sync'}
-            </button>
-          ) : null}
-          {tallyEnabled && invoice.tally_sync_status !== 'synced' ? (
-            <button
-              type="button"
-              style={styles.downloadBtn}
-              disabled={syncingTally}
+              style={styles.approveBtn}
+              disabled={syncingTally || !tallyEnabled}
+              title={
+                tallyEnabled
+                  ? 'Post purchase voucher to Tally'
+                  : 'Tally sync is disabled on the server (TALLY_ENABLED)'
+              }
               onClick={() => handleRetryTallySync('purchase')}
             >
-              {syncingTally ? 'Syncing…' : 'Retry Purchase sync'}
+              <RefreshCw size={15} />
+              {syncingTally
+                ? 'Syncing…'
+                : invoice.tally_sync_status
+                  ? 'Retry Tally sync'
+                  : 'Sync to Tally'}
+            </button>
+          ) : null}
+          {canSyncPaymentTally ? (
+            <button
+              type="button"
+              style={styles.downloadBtn}
+              disabled={syncingTally || !tallyEnabled}
+              title={
+                tallyEnabled
+                  ? 'Post payment voucher to Tally'
+                  : 'Tally sync is disabled on the server (TALLY_ENABLED)'
+              }
+              onClick={() => handleRetryTallySync('payment')}
+            >
+              <RefreshCw size={15} />
+              {syncingTally ? 'Syncing…' : 'Sync payment to Tally'}
             </button>
           ) : null}
           {isAdmin() &&
@@ -589,6 +612,32 @@ export default function InvoiceDetails() {
                   {invoice.tally_voucher_number ? ` · ${invoice.tally_voucher_number}` : ''}
                 </span>
               </div>
+              {canSyncPurchaseTally ? (
+                <div style={{ ...styles.summaryLine, justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.downloadBtn,
+                      opacity: syncingTally || !tallyEnabled ? 0.7 : 1,
+                      cursor: syncingTally || !tallyEnabled ? 'not-allowed' : 'pointer',
+                    }}
+                    disabled={syncingTally || !tallyEnabled}
+                    title={
+                      tallyEnabled
+                        ? 'Post purchase voucher to Tally'
+                        : 'Tally sync is disabled on the server (TALLY_ENABLED)'
+                    }
+                    onClick={() => handleRetryTallySync('purchase')}
+                  >
+                    <RefreshCw size={15} />
+                    {syncingTally
+                      ? 'Syncing…'
+                      : invoice.tally_sync_status
+                        ? 'Retry Tally sync'
+                        : 'Sync to Tally'}
+                  </button>
+                </div>
+              ) : null}
               {invoice.tally_sync_error ? (
                 <div style={styles.summaryLine}>
                   <span style={styles.summaryLabel}>Purchase error</span>
@@ -612,6 +661,28 @@ export default function InvoiceDetails() {
                     : ''}
                 </span>
               </div>
+              {canSyncPaymentTally ? (
+                <div style={{ ...styles.summaryLine, justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.downloadBtn,
+                      opacity: syncingTally || !tallyEnabled ? 0.7 : 1,
+                      cursor: syncingTally || !tallyEnabled ? 'not-allowed' : 'pointer',
+                    }}
+                    disabled={syncingTally || !tallyEnabled}
+                    title={
+                      tallyEnabled
+                        ? 'Post payment voucher to Tally'
+                        : 'Tally sync is disabled on the server (TALLY_ENABLED)'
+                    }
+                    onClick={() => handleRetryTallySync('payment')}
+                  >
+                    <RefreshCw size={15} />
+                    {syncingTally ? 'Syncing…' : 'Sync payment to Tally'}
+                  </button>
+                </div>
+              ) : null}
               {invoice.tally_payment_sync_error ? (
                 <div style={styles.summaryLine}>
                   <span style={styles.summaryLabel}>Payment error</span>
@@ -820,6 +891,9 @@ const styles = {
     alignItems: 'center',
     gap: 10,
     flexShrink: 0,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    maxWidth: '100%',
   },
 
   downloadBtn: {
