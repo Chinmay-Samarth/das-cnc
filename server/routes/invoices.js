@@ -9,6 +9,7 @@ const {
   updateInvoiceTallyFields,
   retryVendorInvoicePurchaseSync,
   retryVendorInvoicePaymentSync,
+  syncAllUnsyncedPurchaseVouchers,
   resolvePoAdvanceForInvoice,
 } = require('../services/invoicePaymentEngine');
 const { isTallyEnabled, tallyCompany, tallyUrl } = require('../services/tallyClient');
@@ -261,6 +262,27 @@ router.patch('/:id/tally', verifyEmployeeAuth, async (req, res) => {
     return res.json({ invoice, tally_enabled: isTallyEnabled() });
   } catch (err) {
     console.error('Invoice tally update error:', err);
+    return sendServiceError(res, err);
+  }
+});
+
+router.post('/tally/sync-all', verifyEmployeeAuth, async (req, res) => {
+  try {
+    if (!isTallyEnabled()) {
+      return res.status(400).json({
+        error: 'Tally sync is disabled. Set TALLY_ENABLED=true and restart the API.',
+        tally_enabled: false,
+      });
+    }
+    const summary = await syncAllUnsyncedPurchaseVouchers();
+    return res.json({
+      ...summary,
+      tally_enabled: true,
+      tally_company_configured: Boolean(tallyCompany()),
+      tally_url: tallyUrl(),
+    });
+  } catch (err) {
+    console.error('Invoice tally sync-all error:', err);
     return sendServiceError(res, err);
   }
 });

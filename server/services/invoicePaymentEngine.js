@@ -337,6 +337,91 @@ async function retryVendorInvoiceTallySync(id, { kind } = {}) {
 }
 
 /**
+ * Sync Purchase vouchers for every confirmed AP invoice that is not yet Tally-synced.
+ * Continues through per-invoice failures and returns a summary.
+ */
+async function syncAllUnsyncedPurchaseVouchers() {
+  const { data, error } = await supabase
+    .from('invoices')
+    .select(
+      `
+      id,
+      invoice_number,
+      status,
+      review_status,
+      tally_sync_status,
+      supplier_id
+    `
+    )
+    .neq('status', 'cancelled')
+    .order('invoice_date', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true });
+
+  if (error) throw httpError(error.message, 500);
+
+  const candidates = (data || []).filter((inv) => {
+    const status = String(inv.status || '').toLowerCase();
+    const review = String(inv.review_status || '').toLowerCase();
+    if (review === 'needs_review' || review === 'superseded') return false;
+    if (
+      ['needs_review', 'extracting', 'saving', 'queued', 'uploading', 'error'].includes(status)
+    ) {
+      return false;
+    }
+    return inv.tally_sync_status !== 'synced';
+  });
+
+  const results = [];
+  let synced = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const row of candidates) {
+    try {
+      const invoice = await retryVendorInvoicePurchaseSync(row.id);
+      const status = String(invoice?.tally_sync_status || '');
+      if (status === 'synced') synced += 1;
+      else if (status === 'skipped') skipped += 1;
+      else failed += 1;
+      results.push({
+        id: row.id,
+        invoice_number: invoice?.invoice_number || row.invoice_number,
+        status: status || 'failed',
+        error: invoice?.tally_sync_error || null,
+      });
+    } catch (err) {
+      failed += 1;
+      results.push({
+        id: row.id,
+        invoice_number: row.invoice_number,
+        status: 'failed',
+        error: err.message || 'Tally sync failed',
+      });
+      try {
+        await supabase
+          .from('invoices')
+          .update({
+            tally_sync_status: 'failed',
+            tally_sync_error: err.message || 'Tally sync failed',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', row.id);
+      } catch {
+        /* ignore persistence failure after sync error */
+      }
+    }
+  }
+
+  return {
+    total: candidates.length,
+    synced,
+    failed,
+    skipped,
+    results,
+  };
+}
+
+/**
  * List unpaid purchase invoices (optionally for one supplier).
  */
 async function listPayableInvoices({ supplierId } = {}) {
@@ -527,5 +612,6 @@ module.exports = {
   retryVendorInvoiceTallySync,
   retryVendorInvoicePurchaseSync,
   retryVendorInvoicePaymentSync,
+  syncAllUnsyncedPurchaseVouchers,
   resolvePoAdvanceForInvoice,
 };

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Download, Receipt, Trash2, X } from 'lucide-react';
+import { Download, Receipt, RefreshCw, Trash2, X } from 'lucide-react';
 import AddInvoiceButton from '../components/Invoices/AddInvoiceButton';
 import api from '../api/client';
 import { formatDisplayDate, toISODateString } from '../utils/dateFormat';
@@ -160,6 +160,7 @@ export default function InvoicesPage() {
   const [exportTo, setExportTo] = useState(monthRange.to);
   const [exporting, setExporting] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [syncingAll, setSyncingAll] = useState(false);
 
   const exportDateError = useMemo(() => {
     if (!exportOpen) return '';
@@ -217,6 +218,11 @@ export default function InvoicesPage() {
       return row[sortKey] ?? '';
     });
   }, [invoices, search, statusFilter, sortKey, sortAsc]);
+
+  const unsyncedCount = useMemo(
+    () => invoices.filter((invoice) => isTallyUnsynced(invoice)).length,
+    [invoices]
+  );
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -279,6 +285,51 @@ export default function InvoicesPage() {
     setExportOpen(true);
   }
 
+  async function handleSyncAllTally() {
+    if (!unsyncedCount || syncingAll) return;
+    const ok = await appConfirm({
+      title: 'Sync all to Tally?',
+      message: `Post Purchase vouchers for ${unsyncedCount} unsynced invoice${
+        unsyncedCount === 1 ? '' : 's'
+      }. Already synced invoices are skipped. Continue?`,
+      confirmLabel: 'Sync all',
+      cancelLabel: 'Cancel',
+    });
+    if (!ok) return;
+
+    setSyncingAll(true);
+    try {
+      const { data } = await api.post('/invoices/tally/sync-all');
+      const synced = Number(data?.synced) || 0;
+      const failed = Number(data?.failed) || 0;
+      const skipped = Number(data?.skipped) || 0;
+      const total = Number(data?.total) || unsyncedCount;
+      const failedRows = Array.isArray(data?.results)
+        ? data.results.filter((row) => row.status === 'failed').slice(0, 5)
+        : [];
+      const failDetail = failedRows.length
+        ? `\n\nExamples:\n${failedRows
+            .map((row) => `• ${row.invoice_number || row.id}: ${row.error || 'failed'}`)
+            .join('\n')}`
+        : '';
+
+      await appAlert({
+        title: failed ? 'Tally sync finished with errors' : 'Tally sync finished',
+        message: `Tried ${total}. Synced ${synced}, skipped ${skipped}, failed ${failed}.${failDetail}`,
+        tone: failed ? 'danger' : 'success',
+      });
+      await loadInvoices();
+    } catch (err) {
+      await appAlert({
+        title: 'Tally sync failed',
+        message: err.response?.data?.error || err.message || 'Unable to sync invoices to Tally',
+        tone: 'danger',
+      });
+    } finally {
+      setSyncingAll(false);
+    }
+  }
+
   async function handleExport() {
     if (exportDateError) {
       await appAlert({
@@ -338,6 +389,24 @@ export default function InvoicesPage() {
         subtitle={`${filteredInvoices.length} invoice${filteredInvoices.length === 1 ? '' : 's'}`}
         actions={
           <>
+            <button
+              type="button"
+              className="mes-btn mes-btn-secondary"
+              onClick={handleSyncAllTally}
+              disabled={syncingAll || unsyncedCount === 0}
+              title={
+                unsyncedCount === 0
+                  ? 'All confirmed invoices are already synced'
+                  : `Sync ${unsyncedCount} unsynced invoice${unsyncedCount === 1 ? '' : 's'} to Tally`
+              }
+            >
+              <RefreshCw size={15} />
+              {syncingAll
+                ? 'Syncing…'
+                : unsyncedCount > 0
+                  ? `Sync all (${unsyncedCount})`
+                  : 'Sync all'}
+            </button>
             <button
               type="button"
               className={`mes-btn ${exportOpen ? 'primary-button' : 'mes-btn-secondary'}`}
