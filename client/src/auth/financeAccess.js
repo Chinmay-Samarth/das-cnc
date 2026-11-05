@@ -3,7 +3,7 @@
  * Keep nav filtering in sync with route guards.
  */
 
-export const FINANCE_ALLOWED_PREFIXES = [
+export const ACCOUNTING_ALLOWED_PREFIXES = [
   '/customers',
   '/suppliers',
   '/invoices',
@@ -13,9 +13,9 @@ export const FINANCE_ALLOWED_PREFIXES = [
   '/account',
 ];
 
-export const FINANCE_ALLOWED_EXACT = [];
+export const ACCOUNTING_ALLOWED_EXACT = [];
 
-export const FINANCE_NAV_PATHS = new Set([
+export const ACCOUNTING_NAV_PATHS = new Set([
   '/customers',
   '/suppliers',
   '/invoices',
@@ -23,6 +23,13 @@ export const FINANCE_NAV_PATHS = new Set([
   '/sales-invoices',
   '/sales-payments',
 ]);
+
+/** @deprecated use ACCOUNTING_* */
+export const FINANCE_ALLOWED_PREFIXES = ACCOUNTING_ALLOWED_PREFIXES;
+/** @deprecated use ACCOUNTING_* */
+export const FINANCE_ALLOWED_EXACT = ACCOUNTING_ALLOWED_EXACT;
+/** @deprecated use ACCOUNTING_* */
+export const FINANCE_NAV_PATHS = ACCOUNTING_NAV_PATHS;
 
 export const QC_ALLOWED_PREFIXES = [
   '/girn',
@@ -35,13 +42,17 @@ export const QC_ALLOWED_EXACT = [];
 
 export const QC_NAV_PATHS = new Set(['/girn', '/stock', '/production/outsource']);
 
+const ACCOUNTING_ACCESS = {
+  prefixes: ACCOUNTING_ALLOWED_PREFIXES,
+  exact: ACCOUNTING_ALLOWED_EXACT,
+  navPaths: ACCOUNTING_NAV_PATHS,
+  home: '/invoices',
+};
+
 const ROLE_ACCESS = {
-  FINANCE: {
-    prefixes: FINANCE_ALLOWED_PREFIXES,
-    exact: FINANCE_ALLOWED_EXACT,
-    navPaths: FINANCE_NAV_PATHS,
-    home: '/invoices',
-  },
+  ACCOUNTING: ACCOUNTING_ACCESS,
+  // Legacy access level from older sessions / job titles
+  FINANCE: ACCOUNTING_ACCESS,
   QC: {
     prefixes: QC_ALLOWED_PREFIXES,
     exact: QC_ALLOWED_EXACT,
@@ -70,7 +81,7 @@ export function getRoleHomePath(accessLevel) {
   return ROLE_ACCESS[String(accessLevel || '').toUpperCase()]?.home || null;
 }
 
-/** @deprecated prefer isRoleAllowedPath('FINANCE', pathname) */
+/** @deprecated prefer isRoleAllowedPath('ACCOUNTING', pathname) */
 export function isFinanceAllowedPath(pathname) {
-  return isRoleAllowedPath('FINANCE', pathname);
+  return isRoleAllowedPath('ACCOUNTING', pathname);
 }

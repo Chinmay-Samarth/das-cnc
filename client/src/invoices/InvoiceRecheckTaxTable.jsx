@@ -1,4 +1,5 @@
 import { Plus, Trash2 } from 'lucide-react';
+import useHandPanScroll from './useHandPanScroll';
 
 const TAX_KINDS = ['CGST', 'SGST', 'IGST', 'UTGST'];
 
@@ -39,9 +40,14 @@ export function normalizeTaxRows(taxItems = [], baseAmount) {
 
 export default function InvoiceRecheckTaxTable({ taxes, onChange, onRemove, onAdd }) {
   const totalTax = taxes.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+  const { panProps, dragging } = useHandPanScroll();
 
   return (
-    <div className="invoice-recheck-lines invoice-recheck-taxes">
+    <div
+      className={`invoice-recheck-lines invoice-recheck-taxes invoice-recheck-hand-pan${dragging ? ' is-panning' : ''}`}
+      title="Drag with hand tool to pan the table"
+      {...panProps}
+    >
       <table className="app-table">
         <thead>
           <tr>

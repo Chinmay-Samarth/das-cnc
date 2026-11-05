@@ -11164,6 +11164,40 @@ button:hover:not(:disabled) {
   background: var(--bg-surface, #fff);
 }
 
+/* Hand-tool pan instead of visible horizontal scrollbars */
+.invoice-recheck-hand-pan {
+  cursor: grab;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior-x: contain;
+  touch-action: pan-y;
+}
+
+.invoice-recheck-hand-pan::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.invoice-recheck-hand-pan.is-panning {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.invoice-recheck-hand-pan.is-panning input,
+.invoice-recheck-hand-pan.is-panning select,
+.invoice-recheck-hand-pan.is-panning button {
+  pointer-events: none;
+}
+
+.invoice-recheck-hand-pan input,
+.invoice-recheck-hand-pan select,
+.invoice-recheck-hand-pan button,
+.invoice-recheck-hand-pan .form-search-select,
+.invoice-recheck-hand-pan [role="combobox"] {
+  cursor: auto;
+}
+
 .invoice-recheck-lines .app-table {
   width: 100%;
   min-width: 720px;
@@ -11379,17 +11413,139 @@ button:hover:not(:disabled) {
   font-variant-numeric: tabular-nums;
 }
 
-/* Background invoice upload queue */
-.invoice-upload-queue-float {
+/* Background invoice upload queue — right-edge collapsible dock */
+.invoice-upload-queue-dock {
   position: fixed;
-  right: 20px;
-  bottom: 20px;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 1200;
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: stretch;
+  max-height: min(70vh, 560px);
+  pointer-events: none;
+}
+
+.invoice-upload-queue-tab {
+  pointer-events: auto;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 112px;
+  padding: 14px 8px;
+  border: 1px solid #d7dee8;
+  border-right: none;
+  border-radius: 12px 0 0 12px;
+  background: #fff;
+  box-shadow: -4px 4px 18px rgba(15, 23, 42, 0.12);
+  color: #334155;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.invoice-upload-queue-tab.is-busy {
+  border-color: #93c5fd;
+  background: #f8fbff;
+  color: #1d4ed8;
+}
+
+.invoice-upload-queue-tab.is-ready {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.invoice-upload-queue-tab.is-error {
+  border-color: #fca5a5;
+  background: #fff7f7;
+  color: #b91c1c;
+}
+
+.invoice-upload-queue-tab-icon {
+  display: inline-flex;
+  writing-mode: horizontal-tb;
+}
+
+.invoice-upload-queue-tab-count {
+  writing-mode: horizontal-tb;
+  min-width: 1.4rem;
+  height: 1.4rem;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.invoice-upload-queue-tab.is-ready .invoice-upload-queue-tab-count {
+  background: rgba(22, 163, 74, 0.15);
+}
+
+.invoice-upload-queue-tab.is-error .invoice-upload-queue-tab-count {
+  background: rgba(185, 28, 28, 0.12);
+}
+
+.invoice-upload-queue-panel {
+  pointer-events: auto;
+  width: min(360px, calc(100vw - 48px));
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: min(360px, calc(100vw - 32px));
-  pointer-events: none;
+  padding: 12px;
+  margin-right: 0;
+  background: #f8fafc;
+  border: 1px solid #d7dee8;
+  border-right: none;
+  border-radius: 14px 0 0 14px;
+  box-shadow: -8px 8px 28px rgba(15, 23, 42, 0.14);
+  overflow: hidden;
+}
+
+.invoice-upload-queue-dock.is-collapsed .invoice-upload-queue-panel {
+  display: none;
+}
+
+.invoice-upload-queue-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 2px 4px;
+}
+
+.invoice-upload-queue-summary strong,
+.invoice-upload-queue-summary .muted {
+  display: block;
+}
+
+.invoice-upload-queue-summary strong {
+  font-size: 0.875rem;
+  line-height: 1.3;
+}
+
+.invoice-upload-queue-summary .muted {
+  font-size: 0.75rem;
+  margin-top: 2px;
+}
+
+.invoice-upload-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  max-height: min(58vh, 460px);
+  padding-right: 2px;
 }
 
 .invoice-upload-status {
@@ -11397,7 +11553,7 @@ button:hover:not(:disabled) {
   border: 1px solid #d7dee8;
   border-radius: 12px;
   padding: 12px 14px;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -11418,8 +11574,8 @@ button:hover:not(:disabled) {
 }
 
 .invoice-upload-status.is-ready {
-  border-color: #93c5fd;
-  background: #f8fbff;
+  border-color: #86efac;
+  background: #f0fdf4;
 }
 
 .invoice-upload-status.is-error {
@@ -11500,9 +11656,14 @@ button:hover:not(:disabled) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .invoice-upload-queue-float {
-    right: 12px;
-    bottom: 12px;
+  .invoice-upload-queue-dock {
+    top: auto;
+    bottom: 72px;
+    transform: none;
+  }
+
+  .invoice-upload-queue-panel {
+    width: min(320px, calc(100vw - 40px));
   }
 }
 

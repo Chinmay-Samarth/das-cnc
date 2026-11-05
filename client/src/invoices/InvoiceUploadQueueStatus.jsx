@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { FileText, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileText, X } from 'lucide-react';
 import { ProgressBar } from '../components/mes';
 import {
   INVOICE_UPLOAD_STAGES,
@@ -18,12 +18,16 @@ function isOnJobEditPath(pathname, search, job) {
   return true;
 }
 
-function JobStatusCard({ job, variant = 'floating', onOpen, onDismiss }) {
+function JobStatusCard({ job, variant = 'floating', queueIndex, queueTotal, onOpen, onDismiss }) {
   const stage = INVOICE_UPLOAD_STAGES[job.status] || INVOICE_UPLOAD_STAGES.extracting;
   const busy = isInvoiceUploadBusy(job.status);
   const failed = job.status === 'error';
   const ready = job.status === 'needs_review' || job.status === 'done';
   const clickable = Boolean(onOpen && (job.editPath || ready || failed));
+  const positionLabel =
+    job.status === 'queued' && queueTotal > 1 && queueIndex != null
+      ? `Queued · #${queueIndex} of ${queueTotal}`
+      : job.label || stage.label;
 
   return (
     <div
@@ -45,7 +49,7 @@ function JobStatusCard({ job, variant = 'floating', onOpen, onDismiss }) {
           <FileText size={16} />
           <div>
             <strong>{job.fileName}</strong>
-            <span className="muted">{job.label || stage.label}</span>
+            <span className="muted">{positionLabel}</span>
           </div>
         </div>
         {onDismiss ? (
@@ -102,16 +106,22 @@ export function InvoiceUploadInlineStatus({ invoiceId }) {
   );
 }
 
-/** Bottom-right floating queue when user is away from the edit window. */
+/** Right-edge collapsible OCR queue dock. */
 export default function InvoiceUploadQueueStatus() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { jobs, dismissJob } = useInvoiceUploadQueue();
+  const { jobs, dismissJob, queueSummary } = useInvoiceUploadQueue();
+  const [expanded, setExpanded] = useState(false);
 
   const visibleJobs = useMemo(
     () =>
       jobs.filter((job) => !isOnJobEditPath(location.pathname, location.search, job)),
     [jobs, location.pathname, location.search]
+  );
+
+  const queuedOnly = useMemo(
+    () => visibleJobs.filter((job) => job.status === 'queued'),
+    [visibleJobs]
   );
 
   if (!visibleJobs.length) return null;
@@ -135,21 +145,79 @@ export default function InvoiceUploadQueueStatus() {
     }
   }
 
+  const summaryParts = [];
+  if (queueSummary.busy) summaryParts.push(`${queueSummary.busy} processing`);
+  if (queueSummary.queued) summaryParts.push(`${queueSummary.queued} waiting`);
+  if (queueSummary.ready) summaryParts.push(`${queueSummary.ready} ready`);
+  if (queueSummary.failed) summaryParts.push(`${queueSummary.failed} failed`);
+
+  const hasReady = visibleJobs.some(
+    (job) => job.status === 'needs_review' || job.status === 'done'
+  );
+  const hasError = visibleJobs.some((job) => job.status === 'error');
+  const tabTone = hasError ? 'is-error' : hasReady ? 'is-ready' : 'is-busy';
+
   return (
-    <div className="invoice-upload-queue-float" aria-live="polite">
-      {visibleJobs.map((job) => (
-        <JobStatusCard
-          key={job.id}
-          job={job}
-          variant="floating"
-          onOpen={openJob}
-          onDismiss={
-            job.status === 'done' || job.status === 'error' || job.status === 'needs_review'
-              ? dismissJob
-              : undefined
-          }
-        />
-      ))}
+    <div
+      className={`invoice-upload-queue-dock${expanded ? ' is-expanded' : ' is-collapsed'}`}
+      aria-live="polite"
+    >
+      <button
+        type="button"
+        className={`invoice-upload-queue-tab ${tabTone}`}
+        aria-expanded={expanded}
+        aria-label={expanded ? 'Collapse OCR queue' : 'Expand OCR queue'}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span className="invoice-upload-queue-tab-icon">
+          {expanded ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+        </span>
+        <span className="invoice-upload-queue-tab-label">OCR</span>
+        <span className="invoice-upload-queue-tab-count">{visibleJobs.length}</span>
+      </button>
+
+      <div className="invoice-upload-queue-panel">
+        <div className="invoice-upload-queue-summary">
+          <div>
+            <strong>OCR queue · {visibleJobs.length}</strong>
+            <span className="muted">
+              {summaryParts.join(' · ') || 'Working…'} · one at a time
+            </span>
+          </div>
+          <button
+            type="button"
+            className="invoice-upload-status-dismiss"
+            aria-label="Collapse queue"
+            onClick={() => setExpanded(false)}
+          >
+            <ChevronRight size={14} />
+          </button>
+        </div>
+
+        <div className="invoice-upload-queue-list">
+          {visibleJobs.map((job) => {
+            const queueIndex =
+              job.status === 'queued'
+                ? queuedOnly.findIndex((item) => item.id === job.id) + 1
+                : null;
+            return (
+              <JobStatusCard
+                key={job.id}
+                job={job}
+                variant="floating"
+                queueIndex={queueIndex || undefined}
+                queueTotal={queuedOnly.length || undefined}
+                onOpen={openJob}
+                onDismiss={
+                  job.status === 'done' || job.status === 'error' || job.status === 'needs_review'
+                    ? dismissJob
+                    : undefined
+                }
+              />
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

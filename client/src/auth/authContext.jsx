@@ -8,12 +8,20 @@ import {
 
 const AuthContext = createContext(null)
 
-/** Operator < Supervisor < Manager < Admin (Finance/QC are peer roles, not in this ladder). */
+/** Operator < Supervisor < Manager < Admin (Accounting/QC are peer roles, not in this ladder). */
 const LEVELS = ['OPERATOR', 'SUPERVISOR', 'MANAGER', 'ADMIN']
 
 function normalizeAccessLevel(raw) {
   const value = String(raw || '').toUpperCase().trim()
-  if (value === 'FINANCE' || value.includes('FINANCE')) return 'FINANCE'
+  if (
+    value === 'ACCOUNTING' ||
+    value.includes('ACCOUNTING') ||
+    value.includes('ACCOUNTS') ||
+    value === 'FINANCE' ||
+    value.includes('FINANCE')
+  ) {
+    return 'ACCOUNTING'
+  }
   if (value === 'QC' || value.includes('QUALITY')) return 'QC'
   if (LEVELS.includes(value)) return value
   if (
@@ -131,7 +139,11 @@ export function AuthProvider({ children }) {
   }
 
   function isFinance() {
-    return user?.accessLevel === 'FINANCE'
+    return user?.accessLevel === 'ACCOUNTING' || user?.accessLevel === 'FINANCE'
+  }
+
+  function isAccounting() {
+    return isFinance()
   }
 
   function isQc() {
@@ -163,6 +175,7 @@ export function AuthProvider({ children }) {
       isFloorOnly,
       isAdmin,
       isFinance,
+      isAccounting,
       isQc,
       canAccessPath,
       defaultHomePath,

@@ -7,12 +7,13 @@ import { useInvoiceUploadQueue } from '../../invoices/InvoiceUploadQueueContext'
 export default function AddInvoiceButton({ onUploaded }) {
   const navigate = useNavigate();
   const inputRef = useRef(null);
-  const { jobs, enqueueUpload, dismissJob } = useInvoiceUploadQueue();
+  const { jobs, enqueueUpload, enqueueUploads, dismissJob } = useInvoiceUploadQueue();
   const [pendingJobId, setPendingJobId] = useState(null);
+  const [bulkMode, setBulkMode] = useState(false);
   const notifiedDoneRef = useRef(new Set());
 
   useEffect(() => {
-    if (!pendingJobId) return;
+    if (!pendingJobId || bulkMode) return;
     const job = jobs.find((j) => j.id === pendingJobId);
     if (!job) {
       setPendingJobId(null);
@@ -34,37 +35,63 @@ export default function AddInvoiceButton({ onUploaded }) {
       });
       dismissJob(job.id);
     }
-  }, [jobs, pendingJobId, navigate, dismissJob]);
+  }, [jobs, pendingJobId, bulkMode, navigate, dismissJob]);
 
-  // Refresh invoice list when a background job auto-accepts
+  // Refresh invoice list when a background job finishes (auto-accept or ready)
   useEffect(() => {
     if (!onUploaded) return;
     jobs.forEach((job) => {
-      if (job.source !== 'invoices' || job.status !== 'done' || !job.result?.invoice) return;
+      if (job.source !== 'invoices') return;
+      if (job.status !== 'done' && job.status !== 'needs_review') return;
+      if (!job.result?.invoice && !job.invoiceId) return;
       if (notifiedDoneRef.current.has(job.id)) return;
       notifiedDoneRef.current.add(job.id);
-      onUploaded(job.result.invoice);
+      onUploaded(job.result?.invoice || { id: job.invoiceId });
     });
   }, [jobs, onUploaded]);
 
   const handleChange = (e) => {
-    const file = e.target.files?.[0];
+    const selected = Array.from(e.target.files || []);
     e.target.value = '';
-    if (!file) return;
+    if (!selected.length) return;
 
-    const job = enqueueUpload({ file, source: 'invoices', returnPath: '/invoices' });
-    if (job?.id) setPendingJobId(job.id);
+    if (selected.length === 1) {
+      setBulkMode(false);
+      const job = enqueueUpload({
+        file: selected[0],
+        source: 'invoices',
+        returnPath: '/invoices',
+      });
+      if (job?.id) setPendingJobId(job.id);
+      return;
+    }
+
+    setBulkMode(true);
+    setPendingJobId(null);
+    const created = enqueueUploads({
+      files: selected,
+      source: 'invoices',
+      returnPath: '/invoices',
+    });
+
+    appAlert({
+      title: 'Invoices queued',
+      message: `${created.length} file${created.length === 1 ? '' : 's'} added to the OCR queue. They will upload and extract one at a time. Use the queue panel to open each for review when ready.`,
+      tone: 'info',
+      confirmLabel: 'OK',
+    });
   };
 
   return (
     <div style={{ display: 'inline-block' }}>
       <button type="button" className="mes-btn mes-btn-primary" onClick={() => inputRef.current?.click()}>
         <Plus size={15} />
-        Add invoice
+        Add invoices
       </button>
       <input
         ref={inputRef}
         type="file"
+        multiple
         accept=".jpg,.jpeg,.jfif,.png,.gif,.webp,.bmp,.tif,.tiff,.pdf,image/*,application/pdf"
         style={{ display: 'none' }}
         onChange={handleChange}

@@ -349,10 +349,20 @@ export default function InvoiceOcrReviewPage() {
   }
 
   function handleHeaderField(field, value) {
+    // Changing taxable base should update every tax line base + amount (rate × base).
+    if (field === 'base_amount') {
+      setTaxes((prev) => {
+        const nextTaxes = prev.map((t) => recalcTax({ ...t, base: value }));
+        setHeader((h) => syncHeaderTotal({ ...h, base_amount: value }, nextTaxes));
+        return nextTaxes;
+      });
+      return;
+    }
+
     setHeader((h) => {
       const next = { ...h, [field]: value };
       // Keep grand total in sync when parts change; allow manual grand total edits.
-      if (field === 'base_amount' || field === 'round_off') {
+      if (field === 'round_off') {
         return syncHeaderTotal(next);
       }
       return next;
@@ -403,6 +413,30 @@ export default function InvoiceOcrReviewPage() {
 
   async function handleConfirm() {
     const blockers = getSaveBlockers();
+    const invoiceNumber = String(header.invoice_number || '').trim();
+
+    if (supplierId && invoiceNumber) {
+      try {
+        const { data } = await api.get('/invoices/check-duplicate', {
+          params: {
+            supplier_id: supplierId,
+            invoice_number: invoiceNumber,
+            exclude_id: id,
+          },
+        });
+        if (data?.duplicate) {
+          blockers.push(
+            data.error ||
+              `Invoice number "${invoiceNumber}" already exists for this supplier.`
+          );
+        }
+      } catch (err) {
+        blockers.push(
+          err.response?.data?.error || 'Unable to verify invoice number uniqueness.'
+        );
+      }
+    }
+
     if (blockers.length) {
       await appAlert({
         title: 'Cannot save invoice',
@@ -481,10 +515,13 @@ export default function InvoiceOcrReviewPage() {
         state: { invoice: data.invoice, draft_girn: data.draft_girn },
       });
     } catch (err) {
+      const status = err.response?.status;
+      const message = err.response?.data?.error || 'Unable to confirm review.';
       await appAlert({
-        title: 'Could not save',
-        message: err.response?.data?.error || 'Unable to confirm review.',
+        title: status === 409 ? 'Cannot save invoice' : 'Could not save',
+        message,
         tone: 'danger',
+        confirmLabel: 'OK',
       });
     } finally {
       setSubmitting(false);

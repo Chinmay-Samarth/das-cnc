@@ -192,9 +192,12 @@ export function InvoiceUploadQueueProvider({ children }) {
     processingRef.current = true;
 
     try {
+      // One OCR job at a time to keep server / OCR load low.
       let next = jobsRef.current.find((j) => j.status === 'queued');
       while (next) {
         await runJob(next);
+        // Brief gap before starting the next extraction.
+        await new Promise((resolve) => setTimeout(resolve, 400));
         next = jobsRef.current.find((j) => j.status === 'queued');
       }
     } finally {
@@ -208,40 +211,63 @@ export function InvoiceUploadQueueProvider({ children }) {
     }
   }, [jobs, processQueue]);
 
+  const buildJob = useCallback(({ file, source = 'invoices', returnPath = '', batchId = null }) => {
+    if (!file) return null;
+
+    const jobId = createJobId();
+    let previewUrl = null;
+    try {
+      previewUrl = URL.createObjectURL(file);
+    } catch {
+      previewUrl = null;
+    }
+
+    return {
+      id: jobId,
+      batchId,
+      invoiceId: null,
+      fileName: file.name || 'Invoice',
+      file,
+      previewUrl,
+      source,
+      returnPath: returnPath || (source === 'girn' ? '/girn/create' : '/invoices'),
+      editPath: null,
+      status: 'queued',
+      pct: INVOICE_UPLOAD_STAGES.queued.pct,
+      label: INVOICE_UPLOAD_STAGES.queued.label,
+      error: '',
+      result: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+  }, []);
+
   const enqueueUpload = useCallback(
-    ({ file, source = 'invoices', returnPath = '' }) => {
-      if (!file) return null;
-
-      const jobId = createJobId();
-      let previewUrl = null;
-      try {
-        previewUrl = URL.createObjectURL(file);
-      } catch {
-        previewUrl = null;
-      }
-
-      const job = {
-        id: jobId,
-        invoiceId: null,
-        fileName: file.name || 'Invoice',
-        file,
-        previewUrl,
-        source,
-        returnPath: returnPath || (source === 'girn' ? '/girn/create' : '/invoices'),
-        editPath: null,
-        status: 'queued',
-        pct: INVOICE_UPLOAD_STAGES.queued.pct,
-        label: INVOICE_UPLOAD_STAGES.queued.label,
-        error: '',
-        result: null,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-
+    ({ file, source = 'invoices', returnPath = '', batchId = null }) => {
+      const job = buildJob({ file, source, returnPath, batchId });
+      if (!job) return null;
       setJobs((prev) => [...prev, job]);
       return job;
     },
-    []
+    [buildJob]
+  );
+
+  const enqueueUploads = useCallback(
+    ({ files, source = 'invoices', returnPath = '' }) => {
+      const list = Array.from(files || []).filter(Boolean);
+      if (!list.length) return [];
+
+      const batchId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const jobsToAdd = list
+        .map((file) => buildJob({ file, source, returnPath, batchId }))
+        .filter(Boolean);
+
+      if (jobsToAdd.length) {
+        setJobs((prev) => [...prev, ...jobsToAdd]);
+      }
+      return jobsToAdd;
+    },
+    [buildJob]
   );
 
   const getJobByInvoiceId = useCallback(
@@ -259,15 +285,35 @@ export function InvoiceUploadQueueProvider({ children }) {
     [jobs]
   );
 
+  const queueSummary = useMemo(() => {
+    const queued = activeJobs.filter((j) => j.status === 'queued').length;
+    const busy = activeJobs.filter((j) => isInvoiceUploadBusy(j.status)).length;
+    const ready = activeJobs.filter(
+      (j) => j.status === 'needs_review' || j.status === 'done'
+    ).length;
+    const failed = activeJobs.filter((j) => j.status === 'error').length;
+    return { queued, busy, ready, failed, total: activeJobs.length };
+  }, [activeJobs]);
+
   const value = useMemo(
     () => ({
       jobs: activeJobs,
       enqueueUpload,
+      enqueueUploads,
       dismissJob,
       getJobByInvoiceId,
       patchJob,
+      queueSummary,
     }),
-    [activeJobs, enqueueUpload, dismissJob, getJobByInvoiceId, patchJob]
+    [
+      activeJobs,
+      enqueueUpload,
+      enqueueUploads,
+      dismissJob,
+      getJobByInvoiceId,
+      patchJob,
+      queueSummary,
+    ]
   );
 
   return (

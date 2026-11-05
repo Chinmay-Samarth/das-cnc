@@ -113,7 +113,7 @@ function RequireAdmin() {
   return <Outlet />;
 }
 
-/** Full ERP shell — ADMIN, SUPERVISOR, FINANCE, QC. MANAGER/OPERATOR → My Today only. */
+/** Full ERP shell — ADMIN, SUPERVISOR, ACCOUNTING, QC. MANAGER/OPERATOR → My Today only. */
 function RequireFullApp() {
   const { loading, isFloorOnly } = useAuth();
 
@@ -128,7 +128,7 @@ function RequireFullApp() {
   return <Outlet />;
 }
 
-/** Finance / QC may only open their allowlisted pages. */
+/** Accounting / QC may only open their allowlisted pages. */
 function RequireRestrictedPages() {
   const { loading, user, canAccessPath, defaultHomePath } = useAuth();
   const location = useLocation();

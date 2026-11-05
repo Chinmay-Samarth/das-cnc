@@ -433,7 +433,7 @@ export default function NotificationsPage() {
           className={`mes-view-toggle-btn${categoryFilter === 'finance' ? ' is-active' : ''}`}
           onClick={() => setCategoryFilter('finance')}
         >
-          Finance
+          Accounting
         </button>
       </div>
 

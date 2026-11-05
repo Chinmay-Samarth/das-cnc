@@ -1,6 +1,7 @@
 import MasterItemSelect from '../girn/MasterItemSelect';
 import { CATEGORY_OPTIONS, getCategoryConfig, hasMasterLink } from '../girn/girnCategoryConfig';
 import { Plus, Trash2 } from 'lucide-react';
+import useHandPanScroll from './useHandPanScroll';
 
 function fmt(value) {
   const n = Number(value);
@@ -15,8 +16,14 @@ export default function InvoiceRecheckLineTable({
   onRemove,
   onAdd,
 }) {
+  const { panProps, dragging } = useHandPanScroll();
+
   return (
-    <div className="invoice-recheck-lines">
+    <div
+      className={`invoice-recheck-lines invoice-recheck-hand-pan${dragging ? ' is-panning' : ''}`}
+      title="Drag with hand tool to pan the table"
+      {...panProps}
+    >
       <table className="app-table">
         <thead>
           <tr>

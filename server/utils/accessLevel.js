@@ -4,7 +4,8 @@ function normalizeRole(role) {
 
 /**
  * Map job_description → access level used across auth and workforce rules.
- * Roles: 'ADMIN' | 'MANAGER' | 'SUPERVISOR' | 'OPERATOR' | 'FINANCE' | 'QC'
+ * Roles: 'ADMIN' | 'MANAGER' | 'SUPERVISOR' | 'OPERATOR' | 'ACCOUNTING' | 'QC'
+ * Legacy job titles containing FINANCE still resolve to ACCOUNTING.
  */
 function computeAccessLevel(role) {
   const normalized = normalizeRole(role);
@@ -16,7 +17,13 @@ function computeAccessLevel(role) {
   ) {
     return 'ADMIN';
   }
-  if (normalized.includes('FINANCE')) return 'FINANCE';
+  if (
+    normalized.includes('ACCOUNTING') ||
+    normalized.includes('ACCOUNTS') ||
+    normalized.includes('FINANCE')
+  ) {
+    return 'ACCOUNTING';
+  }
   if (normalized === 'QC' || normalized.includes('QUALITY')) return 'QC';
   if (normalized.includes('MANAGER')) return 'MANAGER';
   if (normalized.includes('SUPERVISOR')) return 'SUPERVISOR';
@@ -37,8 +44,13 @@ function isAdminJob(role) {
   return computeAccessLevel(role) === 'ADMIN';
 }
 
+/** Accounting role (legacy name: finance). */
 function isFinanceUser(user) {
-  return accessLevelFromUser(user) === 'FINANCE';
+  return accessLevelFromUser(user) === 'ACCOUNTING';
+}
+
+function isAccountingUser(user) {
+  return isFinanceUser(user);
 }
 
 function isQcUser(user) {
@@ -59,6 +71,7 @@ module.exports = {
   isAdminUser,
   isAdminJob,
   isFinanceUser,
+  isAccountingUser,
   isQcUser,
   isWorkforceEmployee,
 };

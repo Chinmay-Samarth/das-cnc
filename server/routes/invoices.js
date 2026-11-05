@@ -31,7 +31,12 @@ const {
   exportVendorInvoicesExcel,
   loadGirnByInvoiceIds,
 } = require('../services/invoiceExportEngine');
-const { buildReviewPayload, confirmReview, abandonReviewDraft } = require('../services/invoiceReviewEngine');
+const {
+  buildReviewPayload,
+  confirmReview,
+  abandonReviewDraft,
+  assertUniqueSupplierInvoiceNumber,
+} = require('../services/invoiceReviewEngine');
 const { buildDraftGirnFromInvoice } = require('../services/girnDraftEngine');
 const { isAdminUser } = require('../utils/accessLevel');
 
@@ -106,6 +111,29 @@ router.get('/list', verifyEmployeeAuth, async (req, res) => {
     res.json(invoices);
   } catch (err) {
     console.error('Invoice list error:', err);
+    return sendServiceError(res, err);
+  }
+});
+
+/** Pre-save check: same invoice number for the same supplier (active rows). */
+router.get('/check-duplicate', verifyEmployeeAuth, async (req, res) => {
+  try {
+    await assertUniqueSupplierInvoiceNumber({
+      supplierId: req.query.supplier_id,
+      invoiceNumber: req.query.invoice_number,
+      excludeInvoiceId: req.query.exclude_id,
+    });
+    return res.json({ duplicate: false });
+  } catch (err) {
+    if (err.status === 409) {
+      return res.json({
+        duplicate: true,
+        error:
+          err.message ||
+          'Invoice number already exists for this supplier. Duplicate invoices are not allowed.',
+      });
+    }
+    console.error('Invoice duplicate check error:', err);
     return sendServiceError(res, err);
   }
 });
