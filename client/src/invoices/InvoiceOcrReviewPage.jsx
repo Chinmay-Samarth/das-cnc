@@ -257,6 +257,9 @@ export default function InvoiceOcrReviewPage() {
     if (!String(header.invoice_number || '').trim()) {
       blockers.push('Invoice number is required.');
     }
+    if (!String(header.due_date || '').trim()) {
+      blockers.push('Due date not given.');
+    }
     if (!supplierId) {
       blockers.push('Supplier is required.');
     }
@@ -473,8 +476,8 @@ export default function InvoiceOcrReviewPage() {
       const payload = {
         supplier_id: supplierId,
         invoice_number: String(header.invoice_number).trim(),
-        invoice_date: header.invoice_date,
-        due_date: header.due_date,
+        invoice_date: header.invoice_date || null,
+        due_date: header.due_date || null,
         total_amount: reconciledTotal,
         base_amount: header.base_amount,
         round_off: roundOff,

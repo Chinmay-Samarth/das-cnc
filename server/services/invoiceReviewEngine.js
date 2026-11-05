@@ -455,13 +455,19 @@ async function confirmReview(invoiceId, body, actorId) {
       ? 'pending'
       : priorStatus || 'pending';
 
+  const emptyDate = (value) => {
+    if (value == null) return null;
+    const text = String(value).trim();
+    return text ? text : null;
+  };
+
   const updatePayload = {
     supplier_id: supplierId,
     line_items: normalizedLines,
     tax_items: taxItems,
     invoice_number: invoiceNumber,
-    invoice_date: body.invoice_date ?? invoice.invoice_date,
-    due_date: body.due_date ?? invoice.due_date,
+    invoice_date: emptyDate(body.invoice_date ?? invoice.invoice_date),
+    due_date: emptyDate(body.due_date ?? invoice.due_date),
     total_amount: reconciled.total_amount,
     base_amount: reconciled.base_amount,
     round_off: reconciled.round_off,
