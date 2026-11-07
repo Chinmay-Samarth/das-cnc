@@ -165,9 +165,9 @@ function enrichLineForReview(lineItem, classification = {}) {
     scanned_description: scanned,
     description: scanned,
     item_category: category,
-    master_record_id: classification.master_record_id || lineItem.master_record_id || null,
-    master_record_label: classification.master_record_label || lineItem.master_record_label || '',
-    master_slug: classification.master_slug || cfg.masterSlug || lineItem.master_slug || null,
+    master_record_id: null,
+    master_record_label: '',
+    master_slug: cfg.masterSlug || null,
     item_code: classification.item_code || lineItem.item_code || inferItemCode(scanned),
     quantity: lineItem.quantity ?? null,
     unit: lineItem.unit || '',
@@ -244,24 +244,6 @@ function buildOcrWarnings(invoice, classifiedLines, doc, ocrConfidenceLevel) {
       field: 'document',
     });
   }
-
-  classifiedLines.forEach((line, idx) => {
-    if (line.item_category !== 'other' && !line.master_record_id) {
-      warnings.push({
-        code: 'line_unmatched',
-        severity: 'warning',
-        message: `Line ${idx + 1} is not linked to a master item. Pick the matching stock / RM / item record if required.`,
-        field: `line_${idx + 1}`,
-      });
-    } else if (line.match_confidence && line.match_confidence !== 'high') {
-      warnings.push({
-        code: 'line_low_match',
-        severity: 'warning',
-        message: `Line ${idx + 1} master match looks uncertain (${line.match_confidence}). Confirm the linked item.`,
-        field: `line_${idx + 1}`,
-      });
-    }
-  });
 
   const lineSum = classifiedLines.reduce((s, l) => s + toNumber(l.total), 0);
   const invoiceTotal = toNumber(invoice?.total_amount);
@@ -422,15 +404,6 @@ async function confirmReview(invoiceId, body, actorId) {
     throw err;
   }
 
-  for (const line of lines) {
-    const cat = line.item_category || 'other';
-    if (cat !== 'other' && !line.master_record_id) {
-      const err = new Error('Each stocked line must be linked to a master record');
-      err.status = 400;
-      throw err;
-    }
-  }
-
   const normalizedLines = lines.map((line) => {
     const scanned = line.scanned_description || line.description || '';
     const category = line.item_category || 'other';
@@ -439,14 +412,14 @@ async function confirmReview(invoiceId, body, actorId) {
       scanned_description: scanned,
       description: scanned,
       item_category: category,
-      master_record_id: line.master_record_id || null,
-      master_record_label: line.master_record_label || '',
-      master_slug: line.master_slug || cfg.masterSlug,
+      master_record_id: null,
+      master_record_label: '',
+      master_slug: cfg.masterSlug,
       quantity: line.quantity ?? null,
       unit: line.unit || '',
       unit_price: line.unit_price ?? null,
       total: line.total ?? null,
-      match_confidence: line.master_record_id ? 'high' : 'none',
+      match_confidence: 'none',
     };
   });
 

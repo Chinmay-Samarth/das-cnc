@@ -1,5 +1,4 @@
-import MasterItemSelect from '../girn/MasterItemSelect';
-import { CATEGORY_OPTIONS, getCategoryConfig, hasMasterLink } from '../girn/girnCategoryConfig';
+import { CATEGORY_OPTIONS } from '../girn/girnCategoryConfig';
 import { Plus, Trash2 } from 'lucide-react';
 import useHandPanScroll from './useHandPanScroll';
 
@@ -8,13 +7,18 @@ function fmt(value) {
   return Number.isFinite(n) ? n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
 }
 
+function fieldClass(base, flag, severity) {
+  if (!flag) return base;
+  return `${base} ${severity === 'error' ? 'invoice-field-invalid' : 'invoice-field-suspect'}`;
+}
+
 export default function InvoiceRecheckLineTable({
   lines,
   onChange,
-  onMasterSelect,
   onCategoryChange,
   onRemove,
   onAdd,
+  rowIssues = {},
 }) {
   const { panProps, dragging } = useHandPanScroll();
 
@@ -29,7 +33,6 @@ export default function InvoiceRecheckLineTable({
           <tr>
             <th>Invoice line</th>
             <th>Category</th>
-            <th>Master record</th>
             <th>Qty</th>
             <th>Rate</th>
             <th>Amount</th>
@@ -39,18 +42,27 @@ export default function InvoiceRecheckLineTable({
         <tbody>
           {lines.length === 0 ? (
             <tr>
-              <td colSpan={7} className="invoice-recheck-empty">
+              <td colSpan={6} className="invoice-recheck-empty">
                 No line items. Add a line if the invoice has items OCR did not pick up.
               </td>
             </tr>
           ) : null}
           {lines.map((line, idx) => {
             const category = line.item_category || 'raw_material';
-            const cfg = getCategoryConfig(category);
-            const showMaster = hasMasterLink(category);
+            const issue = rowIssues[idx] || {};
+            const sev = issue.severity || 'warning';
 
             return (
-              <tr key={idx}>
+              <tr
+                key={idx}
+                className={
+                  issue.severity === 'error'
+                    ? 'invoice-row-invalid'
+                    : issue.severity === 'warning'
+                      ? 'invoice-row-suspect'
+                      : undefined
+                }
+              >
                 <td>
                   {line.manual || !(line.scanned_description || line.description) ? (
                     <input
@@ -64,9 +76,6 @@ export default function InvoiceRecheckLineTable({
                   ) : (
                     <>
                       <div className="invoice-recheck-line-name">{line.scanned_description || line.description || '—'}</div>
-                      {line.match_confidence && line.match_confidence !== 'high' ? (
-                        <span className="invoice-recheck-match muted">{line.match_confidence} match</span>
-                      ) : null}
                     </>
                   )}
                 </td>
@@ -84,33 +93,19 @@ export default function InvoiceRecheckLineTable({
                   </select>
                 </td>
                 <td>
-                  {showMaster ? (
-                    <MasterItemSelect
-                      masterSlug={cfg.masterSlug}
-                      category={category}
-                      value={line.master_record_id}
-                      label={line.master_record_label}
-                      onChange={(mapped) => onMasterSelect(idx, mapped)}
-                    />
-                  ) : (
-                    <input
-                      type="text"
-                      className="invoice-recheck-input"
-                      value={line.item_description || line.scanned_description || ''}
-                      onChange={(e) => onChange(idx, 'item_description', e.target.value)}
-                      placeholder="Description"
-                    />
-                  )}
-                </td>
-                <td>
                   <input
                     type="number"
                     min="0"
                     step="any"
-                    className="invoice-recheck-input invoice-recheck-input-num"
+                    className={fieldClass(
+                      'invoice-recheck-input invoice-recheck-input-num',
+                      issue.quantity,
+                      sev
+                    )}
                     value={line.quantity ?? ''}
                     onChange={(e) => onChange(idx, 'quantity', e.target.value)}
                     aria-label={`Quantity for line ${idx + 1}`}
+                    aria-invalid={Boolean(issue.quantity)}
                   />
                 </td>
                 <td>
@@ -118,13 +113,28 @@ export default function InvoiceRecheckLineTable({
                     type="number"
                     min="0"
                     step="any"
-                    className="invoice-recheck-input invoice-recheck-input-num"
+                    className={fieldClass(
+                      'invoice-recheck-input invoice-recheck-input-num',
+                      issue.unit_price,
+                      sev
+                    )}
                     value={line.unit_price ?? ''}
                     onChange={(e) => onChange(idx, 'unit_price', e.target.value)}
                     aria-label={`Rate for line ${idx + 1}`}
+                    aria-invalid={Boolean(issue.unit_price)}
                   />
                 </td>
-                <td className="invoice-recheck-amount">₹{fmt(line.total)}</td>
+                <td
+                  className={`invoice-recheck-amount${
+                    issue.total
+                      ? issue.severity === 'error'
+                        ? ' invoice-field-invalid'
+                        : ' invoice-field-suspect'
+                      : ''
+                  }`}
+                >
+                  ₹{fmt(line.total)}
+                </td>
                 <td className="invoice-recheck-actions-cell">
                   <button
                     type="button"

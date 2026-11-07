@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Check, IndianRupee, Percent, Receipt } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, IndianRupee, Percent, Receipt } from 'lucide-react';
 import api from '../api/client';
 import InvoicePdfViewer from '../components/Invoices/InvoicePdfViewer';
 import {
@@ -13,6 +13,7 @@ import { appAlert } from '../components/dialog';
 import { getCategoryConfig } from '../girn/girnCategoryConfig';
 import InvoiceRecheckLineTable from './InvoiceRecheckLineTable';
 import InvoiceRecheckTaxTable, { normalizeTaxRows, recalcTax } from './InvoiceRecheckTaxTable';
+import { buildInvoiceReviewIssues } from './invoiceReviewIssues';
 import SupplierSelect from './SupplierSelect';
 import { InvoiceUploadInlineStatus } from './InvoiceUploadQueueStatus';
 import {
@@ -99,27 +100,10 @@ function defaultDueDate(invoiceDate, creditDays = DEFAULT_CREDIT_DAYS) {
   );
 }
 
-function warningSeverity(warning) {
-  const severity = String(warning?.severity || '').toLowerCase();
-  if (severity === 'error' || severity === 'danger') return 'error';
-  return 'warning';
-}
-
-function humanWarningTitle(warning) {
-  const code = String(warning?.code || '');
-  const map = {
-    missing_invoice_number: 'Invoice number',
-    missing_invoice_date: 'Invoice date',
-    supplier_unmatched: 'Supplier',
-    low_ocr_confidence: 'Scan confidence',
-    line_unmatched: 'Line item link',
-    line_low_match: 'Line item match',
-    total_mismatch: 'Totals',
-    low_field_confidence: 'Field confidence',
-    duplicate_invoice_number: 'Duplicate invoice',
-    ocr_service_warning: 'Scan note',
-  };
-  return map[code] || 'Review item';
+function fieldToneClass(hasError, hasWarning) {
+  if (hasError) return 'invoice-field-invalid';
+  if (hasWarning) return 'invoice-field-suspect';
+  return '';
 }
 
 export default function InvoiceOcrReviewPage() {
@@ -136,6 +120,9 @@ export default function InvoiceOcrReviewPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [issuesOpen, setIssuesOpen] = useState(false);
+  const issuesAutoOpenedRef = useRef(false);
+  const issuesPanelRef = useRef(null);
   const [invoice, setInvoice] = useState(null);
   const [review, setReview] = useState(null);
   const [lines, setLines] = useState([]);
@@ -326,81 +313,141 @@ export default function InvoiceOcrReviewPage() {
 
   const effectiveCreditDays = supplierCreditDays ?? DEFAULT_CREDIT_DAYS;
 
-  const accountingChecks = useMemo(() => {
-    const checks = [
-      {
-        id: 'supplier',
-        ok: Boolean(supplierId),
-        label: 'Supplier selected',
-        detail: supplierId
-          ? supplierLabel || 'Supplier linked'
-          : 'Choose the supplier from the ledger.',
-      },
-      {
-        id: 'invoice_number',
-        ok: Boolean(String(header.invoice_number || '').trim()),
-        label: 'Invoice number entered',
-        detail: String(header.invoice_number || '').trim()
-          ? `No. ${header.invoice_number}`
-          : 'Enter the number printed on the invoice.',
-      },
-      {
-        id: 'invoice_date',
-        ok: Boolean(String(header.invoice_date || '').trim()),
-        label: 'Invoice date entered',
-        detail: header.invoice_date || 'Enter the invoice date from the document.',
-      },
-      {
-        id: 'due_date',
-        ok: Boolean(String(header.due_date || '').trim()),
-        label: 'Due date assigned',
-        detail: header.due_date
-          ? `Due ${header.due_date} · Net ${effectiveCreditDays} day${effectiveCreditDays === 1 ? '' : 's'}${
-              supplierCreditDays == null ? ' (default)' : ''
-            }`
-          : 'Due date will default to invoice date + 30 days.',
-      },
-      {
-        id: 'lines_subtotal',
-        ok: linesMatchSubtotal,
-        label: 'Line items = taxable amount',
-        detail: linesMatchSubtotal
-          ? `₹${formatMoney(lineItemsTotal)}`
-          : `Lines ₹${formatMoney(lineItemsTotal)} vs taxable ₹${formatMoney(header.base_amount)}`,
-      },
-      {
-        id: 'totals',
-        ok: totalsBalanced,
-        label: 'Taxable + tax + round off = grand total',
-        detail: totalsBalanced
-          ? `₹${formatMoney(header.total_amount)}`
-          : `Expected ₹${formatMoney(expectedGrandTotal)} vs grand ₹${formatMoney(header.total_amount)}`,
-      },
-    ];
-    return checks;
-  }, [
-    supplierId,
-    supplierLabel,
-    header.invoice_number,
-    header.invoice_date,
-    header.due_date,
-    header.base_amount,
-    header.total_amount,
-    effectiveCreditDays,
-    supplierCreditDays,
-    linesMatchSubtotal,
-    lineItemsTotal,
-    totalsBalanced,
-    expectedGrandTotal,
-  ]);
-
-  const failedChecks = useMemo(
-    () => accountingChecks.filter((check) => !check.ok),
-    [accountingChecks]
+  const reviewIssues = useMemo(
+    () =>
+      buildInvoiceReviewIssues({
+        supplierId,
+        header,
+        lines,
+        taxes,
+        lineItemsTotal,
+        taxTotal,
+        expectedGrandTotal,
+        linesMatchSubtotal,
+        totalsBalanced,
+        ocrWarnings: warnings,
+      }),
+    [
+      supplierId,
+      header,
+      lines,
+      taxes,
+      lineItemsTotal,
+      taxTotal,
+      expectedGrandTotal,
+      linesMatchSubtotal,
+      totalsBalanced,
+      warnings,
+    ]
   );
 
+  const errorCount = reviewIssues.errors.length;
+
+  useEffect(() => {
+    if (errorCount > 0 && !issuesAutoOpenedRef.current) {
+      issuesAutoOpenedRef.current = true;
+      setIssuesOpen(true);
+    }
+    if (errorCount === 0) {
+      issuesAutoOpenedRef.current = false;
+      setIssuesOpen(false);
+    }
+  }, [errorCount]);
+
+  useEffect(() => {
+    if (!issuesOpen) return undefined;
+    const onPointerDown = (event) => {
+      const root = issuesPanelRef.current;
+      if (root && !root.contains(event.target)) setIssuesOpen(false);
+    };
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setIssuesOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [issuesOpen]);
+
   function getSaveBlockers() {
-    return failedChecks.map((check) => `${check.label}: ${check.detail}`);
+    return reviewIssues.errors.map((issue) => `${issue.title}: ${issue.message}`);
+  }
+
+  function focusReviewTarget(target) {
+    const node = document.querySelector(`[data-review-target="${target}"]`);
+    if (!node) return;
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const focusable = node.querySelector('input, select, textarea, button, [tabindex]');
+    if (focusable && typeof focusable.focus === 'function') {
+      try {
+        focusable.focus({ preventScroll: true });
+      } catch {
+        focusable.focus();
+      }
+    }
+  }
+
+  function handleIssueClick(issue) {
+    if (issue.action === 'recalc_lines') {
+      applyCalculatedFromLines(lines);
+    }
+    if (issue.action === 'add_missing_tax') {
+      addMissingTaxTwin(issue);
+    }
+    focusReviewTarget(issue.target || 'header');
+  }
+
+  function renderIssueRow(issue) {
+    return (
+      <li key={issue.id}>
+        <button
+          type="button"
+          className="invoice-issue-row is-error"
+          onClick={() => handleIssueClick(issue)}
+          title={issue.message}
+        >
+          <span className="invoice-issue-dot" aria-hidden />
+          <span className="invoice-issue-row-main">
+            <span className="invoice-issue-title">{issue.title}</span>
+            <span className="invoice-issue-message">{issue.message}</span>
+          </span>
+          {issue.action === 'add_missing_tax' ? (
+            <span className="invoice-issue-action">Add {issue.missingKind}</span>
+          ) : null}
+          {issue.action === 'recalc_lines' ? (
+            <span className="invoice-issue-action">Recalc</span>
+          ) : null}
+        </button>
+      </li>
+    );
+  }
+
+  function addMissingTaxTwin(issue) {
+    const missing = String(issue.missingKind || 'SGST').toUpperCase();
+    const source = taxes[issue.sourceIdx] || taxes[0];
+    if (!source) {
+      setTaxes((prev) => [
+        ...prev,
+        recalcTax({ kind: missing, rate: 9, base: header.base_amount, amount: '' }),
+      ]);
+      return;
+    }
+    setTaxes((prev) => {
+      if (prev.some((t) => String(t.kind || '').toUpperCase() === missing)) return prev;
+      const next = [
+        ...prev,
+        recalcTax({
+          kind: missing,
+          rate: source.rate,
+          base: source.base ?? header.base_amount,
+          amount: source.amount,
+        }),
+      ];
+      setHeader((h) => syncHeaderTotal(h, next));
+      return next;
+    });
   }
 
   /** Keep taxable, tax bases, and grand total derived from line items when lines change. */
@@ -664,18 +711,20 @@ export default function InvoiceOcrReviewPage() {
           .map((line) => ({
             ...line,
             scanned_description: line.scanned_description || line.description || line.item_description || '',
+            master_record_id: null,
+            master_record_label: '',
           })),
       };
 
       const { data } = await api.post(`/invoices/${id}/confirm-review`, payload);
       if (queueJob) dismissJob(queueJob.id);
 
-      // Admin re-edit of an already saved invoice → back to details.
+      // Admin re-edit of an already saved invoice → purchase invoices list.
       const alreadySaved =
         editMode ||
         (invoice?.review_status === 'confirmed' || invoice?.review_status === 'auto_accepted');
       if (alreadySaved) {
-        navigate(`/invoices/${id}`, { replace: true });
+        navigate('/invoices', { replace: true });
         return;
       }
 
@@ -710,7 +759,7 @@ export default function InvoiceOcrReviewPage() {
 
     // Don't discard a saved invoice when cancelling an admin edit.
     if (editingSaved) {
-      navigate(`/invoices/${id}`);
+      navigate('/invoices');
       return;
     }
 
@@ -738,7 +787,6 @@ export default function InvoiceOcrReviewPage() {
         <PageHeader
           eyebrow="Accounts payable"
           title="Processing scanned invoice"
-          subtitle="OCR is running in the background. You can leave this page and come back from the status bar."
         />
 
         <InvoiceUploadInlineStatus invoiceId={id} />
@@ -761,9 +809,6 @@ export default function InvoiceOcrReviewPage() {
           <section className="mes-card invoice-recheck-form">
             <header className="invoice-recheck-panel-head">
               <h2 className="invoice-recheck-panel-title">Extraction in progress</h2>
-              <p className="invoice-recheck-panel-hint">
-                Supplier, totals, and line items will appear here when OCR finishes.
-              </p>
             </header>
           </section>
         </div>
@@ -791,11 +836,6 @@ export default function InvoiceOcrReviewPage() {
       <PageHeader
         eyebrow="Accounts payable"
         title={isSavedEdit ? 'Edit invoice' : 'Recheck scanned invoice'}
-        subtitle={
-          isSavedEdit
-            ? 'Update supplier, amounts, and lines, then save.'
-            : 'Match the source file, fix supplier and lines, then confirm.'
-        }
         actions={
           isSavedEdit ? null : <StatusBadge status="pending">OCR {ocrPct}%</StatusBadge>
         }
@@ -803,65 +843,10 @@ export default function InvoiceOcrReviewPage() {
 
       {error ? <AlertBanner tone="danger" title="Could not load">{error}</AlertBanner> : null}
 
-      <section className="mes-card invoice-accounting-guide" aria-label="Accounting review checklist">
-        <header className="invoice-accounting-guide-head">
-          <div>
-            <h2 className="invoice-recheck-panel-title">Accounting review</h2>
-            <p className="invoice-recheck-panel-hint">
-              Check these items against the source file before confirming. Calculated fields
-              (line amounts, tax from rate × base, taxable from lines, grand total, due date)
-              update automatically; the checks below still must pass.
-            </p>
-          </div>
-          <StatusBadge status={failedChecks.length ? 'overdue' : 'completed'}>
-            {failedChecks.length ? `${failedChecks.length} to fix` : 'Ready to save'}
-          </StatusBadge>
-        </header>
-
-        <ol className="invoice-accounting-checklist">
-          {accountingChecks.map((check) => (
-            <li
-              key={check.id}
-              className={`invoice-accounting-check${check.ok ? ' is-ok' : ' is-bad'}`}
-            >
-              <strong>{check.ok ? 'OK' : 'Fix'}</strong>
-              <div>
-                <span>{check.label}</span>
-                <small>{check.detail}</small>
-              </div>
-            </li>
-          ))}
-        </ol>
-
-        {warnings.length ? (
-          <div className="invoice-accounting-warnings">
-            <h3>Scan notes for Accounts</h3>
-            <ul className="invoice-recheck-warnings">
-              {warnings.map((w, idx) => (
-                <li
-                  key={`${w.code}-${idx}`}
-                  className={
-                    warningSeverity(w) === 'error'
-                      ? 'invoice-warning-error'
-                      : 'invoice-warning-amber'
-                  }
-                >
-                  <strong>{humanWarningTitle(w)}</strong>
-                  <span>{w.message}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : (
-          <p className="muted invoice-accounting-clean">No OCR scan notes for this invoice.</p>
-        )}
-      </section>
-
       <div className="invoice-recheck-layout">
         <section className="mes-card invoice-recheck-pdf">
           <header className="invoice-recheck-panel-head">
             <h2 className="invoice-recheck-panel-title">Source file</h2>
-            <p className="invoice-recheck-panel-hint">Use this as the source of truth while reviewing.</p>
           </header>
           <InvoicePdfViewer
             file={invoice?.file_url}
@@ -874,44 +859,117 @@ export default function InvoiceOcrReviewPage() {
         </section>
 
         <section className="mes-card invoice-recheck-form">
-          <div className="mes-metric-grid invoice-recheck-totals">
+          {errorCount > 0 ? (
+            <div
+              ref={issuesPanelRef}
+              className={`invoice-issues-panel has-errors${issuesOpen ? ' is-open' : ''}`}
+              aria-label="Issues to fix"
+            >
+              <button
+                type="button"
+                className="invoice-issues-summary"
+                onClick={() => setIssuesOpen((open) => !open)}
+                aria-expanded={issuesOpen}
+              >
+                <span className="invoice-issues-summary-text">
+                  <strong>Issues</strong>
+                  <span className="invoice-issues-summary-counts">
+                    <span className="is-error">
+                      {errorCount} error{errorCount === 1 ? '' : 's'}
+                    </span>
+                  </span>
+                </span>
+                <span className="invoice-issues-summary-meta">
+                  <StatusBadge status="overdue">Fix before save</StatusBadge>
+                  {issuesOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                </span>
+              </button>
+
+              {issuesOpen ? (
+                <div className="invoice-issues-dropdown">
+                  <ul className="invoice-issues-list">
+                    {reviewIssues.errors.map(renderIssueRow)}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div
+            className={`mes-metric-grid invoice-recheck-totals${
+              reviewIssues.hasErrorTarget('amounts') ? ' invoice-section-invalid' : ''
+            }`}
+            data-review-target="amounts"
+          >
             <MetricCard
               label="Taxable"
               value={`₹${formatMoney(header.base_amount)}`}
               icon={IndianRupee}
-              tone="neutral"
+              tone={!linesMatchSubtotal ? 'danger' : 'neutral'}
+              hint={!linesMatchSubtotal ? `Lines ₹${formatMoney(lineItemsTotal)}` : undefined}
             />
             <MetricCard
               label="Tax"
               value={`₹${formatMoney(taxTotal)}`}
-              hint={taxes.length ? `${taxes.length} line${taxes.length === 1 ? '' : 's'}` : 'No tax lines'}
+              hint={
+                reviewIssues.hasErrorTarget('tax')
+                  ? 'Tax lines need attention'
+                  : taxes.length
+                    ? `${taxes.length} line${taxes.length === 1 ? '' : 's'}`
+                    : 'No tax lines'
+              }
               icon={Percent}
-              tone="info"
+              tone={reviewIssues.hasErrorTarget('tax') ? 'danger' : 'info'}
             />
             <MetricCard
               label="Round off"
               value={`₹${formatMoney(header.round_off)}`}
-              tone="amber"
+              tone={!totalsBalanced ? 'danger' : 'amber'}
             />
             <MetricCard
               label="Grand total"
               value={`₹${formatMoney(header.total_amount)}`}
-              hint={`${lineCount} line item${lineCount === 1 ? '' : 's'}`}
+              hint={
+                !totalsBalanced
+                  ? `Expected ₹${formatMoney(expectedGrandTotal)}`
+                  : `${lineCount} line item${lineCount === 1 ? '' : 's'}`
+              }
               icon={Receipt}
-              tone="success"
+              tone={!totalsBalanced ? 'danger' : 'success'}
             />
           </div>
 
-          <div className="invoice-recheck-section">
+          <div
+            className={`invoice-recheck-section${
+              reviewIssues.hasErrorTarget('supplier') ||
+              reviewIssues.hasErrorTarget('invoice_number') ||
+              reviewIssues.hasErrorTarget('invoice_date') ||
+              reviewIssues.hasErrorTarget('due_date')
+                ? ' invoice-section-invalid'
+                : ''
+            }`}
+            data-review-target="header"
+          >
             <h3 className="form-page-section-title">Invoice</h3>
             <div className="form-page-grid invoice-recheck-fields">
-              <label className="form-span-2">
-                Supplier <span className="required-mark">*</span>
+              <label
+                className={fieldToneClass(
+                  reviewIssues.errors.some((i) => i.id === 'supplier'),
+                  false
+                )}
+                data-review-target="supplier"
+              >
+                <span className="field-label">
+                  Supplier<span className="required-mark">*</span>
+                </span>
                 <SupplierSelect
                   value={supplierId}
                   label={supplierLabel}
                   onChange={handleSupplierChange}
                 />
+                {reviewIssues.errors.some((i) => i.id === 'supplier') ? (
+                  <span className="invoice-field-hint is-error">Select a supplier from the ledger.</span>
+                ) : null}
                 {supplierLedger?.status === 'created' ? (
                   <p className="muted" style={{ margin: '8px 0 0' }}>
                     This supplier was not in the ledger. It was created automatically from the
@@ -941,108 +999,143 @@ export default function InvoiceOcrReviewPage() {
                 ) : null}
               </label>
 
-              <label>
-                Invoice number <span className="required-mark">*</span>
+              <label
+                className={fieldToneClass(
+                  reviewIssues.errors.some((i) => i.id === 'invoice_number'),
+                  false
+                )}
+                data-review-target="invoice_number"
+              >
+                <span className="field-label">
+                  Invoice number<span className="required-mark">*</span>
+                </span>
                 <input
                   value={header.invoice_number}
                   onChange={(e) => handleHeaderField('invoice_number', e.target.value)}
                   placeholder="As printed on the invoice"
                   required
+                  aria-invalid={reviewIssues.errors.some((i) => i.id === 'invoice_number')}
                 />
+                {reviewIssues.errors.some((i) => i.id === 'invoice_number') ? (
+                  <span className="invoice-field-hint is-error">Required.</span>
+                ) : null}
               </label>
 
-              <label>
-                Invoice date
+              <label
+                className={fieldToneClass(
+                  reviewIssues.errors.some((i) => i.id === 'invoice_date'),
+                  false
+                )}
+                data-review-target="invoice_date"
+              >
+                <span className="field-label">Invoice date</span>
                 <input
                   type="date"
                   className="date-bar"
                   value={header.invoice_date || ''}
                   onChange={(e) => handleHeaderField('invoice_date', e.target.value)}
+                  aria-invalid={reviewIssues.errors.some((i) => i.id === 'invoice_date')}
                 />
+                {reviewIssues.errors.some((i) => i.id === 'invoice_date') ? (
+                  <span className="invoice-field-hint is-error">Required.</span>
+                ) : null}
               </label>
 
-              <label>
-                Due date
+              <label
+                className={fieldToneClass(
+                  reviewIssues.errors.some((i) => i.id === 'due_date'),
+                  false
+                )}
+                data-review-target="due_date"
+              >
+                <span className="field-label">Due date</span>
                 <input
                   type="date"
                   className="date-bar"
                   value={header.due_date || ''}
                   onChange={(e) => handleHeaderField('due_date', e.target.value)}
+                  aria-invalid={reviewIssues.errors.some((i) => i.id === 'due_date')}
                 />
-                <span className="muted" style={{ display: 'block', marginTop: 6, fontSize: '0.75rem' }}>
-                  {supplierCreditDays != null
-                    ? `Auto from supplier credit period · ${supplierCreditDays} day${
-                        supplierCreditDays === 1 ? '' : 's'
-                      }`
-                    : `Default Net ${DEFAULT_CREDIT_DAYS} days (or month-end fallback). Change due date if needed — days are saved for this supplier on confirm.`}
-                </span>
+                {reviewIssues.errors.some((i) => i.id === 'due_date') ? (
+                  <span className="invoice-field-hint is-error">Due date not given.</span>
+                ) : null}
               </label>
             </div>
           </div>
 
-          <div className="invoice-recheck-section">
+          <div
+            className={`invoice-recheck-section${
+              reviewIssues.hasErrorTarget('amounts') ? ' invoice-section-invalid' : ''
+            }`}
+            data-review-target="amounts"
+          >
             <h3 className="form-page-section-title">Amounts</h3>
-            <p className="invoice-recheck-section-lead muted">
-              Taxable follows line totals when you edit qty/rate. Tax recalculates from rate × base.
-              Grand total follows taxable + tax + round off. All three checks must still pass.
-            </p>
-            <div className="invoice-recheck-calc-actions">
-              <button
-                type="button"
-                className="mes-btn mes-btn-secondary"
-                onClick={() => applyCalculatedFromLines(lines)}
-              >
-                Recalculate from line items
-              </button>
-            </div>
             {!linesMatchSubtotal ? (
-              <AlertBanner tone="danger" title="Line items do not match subtotal">
-                Line items total ₹{formatMoney(lineItemsTotal)}, but taxable / subtotal is ₹
-                {formatMoney(header.base_amount)}. Use “Recalculate from line items” or fix the values.
-              </AlertBanner>
+              <div className="invoice-recheck-calc-actions">
+                <button
+                  type="button"
+                  className="mes-btn mes-btn-secondary"
+                  onClick={() => applyCalculatedFromLines(lines)}
+                >
+                  Recalculate from line items
+                </button>
+                <span className="invoice-field-hint is-error">
+                  Lines ₹{formatMoney(lineItemsTotal)} ≠ taxable ₹{formatMoney(header.base_amount)}
+                </span>
+              </div>
             ) : null}
             {!totalsBalanced ? (
-              <AlertBanner tone="danger" title="Totals do not match">
-                Expected ₹{formatMoney(expectedGrandTotal)} (taxable + tax + round off), but grand total is ₹
-                {formatMoney(header.total_amount)}. Fix round off or amounts before confirming.
-              </AlertBanner>
+              <p className="invoice-field-hint is-error" style={{ marginBottom: 10 }}>
+                Expected ₹{formatMoney(expectedGrandTotal)} (taxable + tax + round off) vs grand ₹
+                {formatMoney(header.total_amount)}.
+              </p>
             ) : null}
             <div className="form-page-grid invoice-recheck-fields">
-              <label>
-                Taxable / base amount
+              <label
+                className={fieldToneClass(!linesMatchSubtotal, false)}
+              >
+                <span className="field-label">Taxable / base amount</span>
                 <input
                   type="number"
                   min="0"
                   step="any"
                   value={header.base_amount}
                   onChange={(e) => handleHeaderField('base_amount', e.target.value)}
+                  aria-invalid={!linesMatchSubtotal}
                 />
               </label>
 
-              <label>
-                Round off
+              <label className={fieldToneClass(!totalsBalanced, false)}>
+                <span className="field-label">Round off</span>
                 <input
                   type="number"
                   step="any"
                   value={header.round_off}
                   onChange={(e) => handleHeaderField('round_off', e.target.value)}
+                  aria-invalid={!totalsBalanced}
                 />
               </label>
 
-              <label>
-                Grand total
+              <label className={fieldToneClass(!totalsBalanced, false)}>
+                <span className="field-label">Grand total</span>
                 <input
                   type="number"
                   min="0"
                   step="any"
                   value={header.total_amount}
                   onChange={(e) => handleHeaderField('total_amount', e.target.value)}
+                  aria-invalid={!totalsBalanced}
                 />
               </label>
             </div>
           </div>
 
-          <div className="invoice-recheck-section">
+          <div
+            className={`invoice-recheck-section${
+              reviewIssues.hasErrorTarget('lines') ? ' invoice-section-invalid' : ''
+            }`}
+            data-review-target="lines"
+          >
             <div className="invoice-recheck-section-head">
               <h3 className="form-page-section-title">Line items</h3>
               <span className="muted invoice-recheck-count">{lineCount}</span>
@@ -1054,10 +1147,20 @@ export default function InvoiceOcrReviewPage() {
               onCategoryChange={handleCategoryChange}
               onRemove={handleRemoveLine}
               onAdd={handleAddLine}
+              rowIssues={Object.fromEntries(
+                Object.entries(reviewIssues.lineRowIssues).filter(
+                  ([, issue]) => issue?.severity === 'error'
+                )
+              )}
             />
           </div>
 
-          <div className="invoice-recheck-section">
+          <div
+            className={`invoice-recheck-section${
+              reviewIssues.hasErrorTarget('tax') ? ' invoice-section-invalid' : ''
+            }`}
+            data-review-target="tax"
+          >
             <div className="invoice-recheck-section-head">
               <h3 className="form-page-section-title">Tax</h3>
               <span className="muted invoice-recheck-count">{taxes.length}</span>
@@ -1067,6 +1170,11 @@ export default function InvoiceOcrReviewPage() {
               onChange={handleTaxChange}
               onRemove={handleRemoveTax}
               onAdd={handleAddTax}
+              rowIssues={Object.fromEntries(
+                Object.entries(reviewIssues.taxRowIssues).filter(
+                  ([, issue]) => issue?.severity === 'error'
+                )
+              )}
             />
           </div>
 
@@ -1074,15 +1182,22 @@ export default function InvoiceOcrReviewPage() {
             <button type="button" className="cancel-button" disabled={submitting} onClick={handleCancel}>
               Cancel
             </button>
-            <button
-              type="button"
-              className="primary-button"
-              disabled={submitting}
-              onClick={handleConfirm}
-            >
-              <Check size={16} />
-              {confirmLabel}
-            </button>
+            <div className="invoice-confirm-wrap">
+              <button
+                type="button"
+                className="primary-button"
+                disabled={submitting}
+                onClick={handleConfirm}
+              >
+                <Check size={16} />
+                {confirmLabel}
+              </button>
+              {errorCount > 0 ? (
+                <span className="invoice-confirm-hint">
+                  Fix {errorCount} error{errorCount === 1 ? '' : 's'} before save
+                </span>
+              ) : null}
+            </div>
           </div>
         </section>
       </div>

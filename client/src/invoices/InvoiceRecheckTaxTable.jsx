@@ -38,7 +38,18 @@ export function normalizeTaxRows(taxItems = [], baseAmount) {
   );
 }
 
-export default function InvoiceRecheckTaxTable({ taxes, onChange, onRemove, onAdd }) {
+function fieldClass(base, flag, severity) {
+  if (!flag) return base;
+  return `${base} ${severity === 'error' ? 'invoice-field-invalid' : 'invoice-field-suspect'}`;
+}
+
+export default function InvoiceRecheckTaxTable({
+  taxes,
+  onChange,
+  onRemove,
+  onAdd,
+  rowIssues = {},
+}) {
   const totalTax = taxes.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
   const { panProps, dragging } = useHandPanScroll();
 
@@ -66,69 +77,98 @@ export default function InvoiceRecheckTaxTable({ taxes, onChange, onRemove, onAd
               </td>
             </tr>
           ) : null}
-          {taxes.map((tax, idx) => (
-            <tr key={idx}>
-              <td>
-                <select
-                  className="invoice-recheck-select"
-                  value={tax.kind || 'CGST'}
-                  onChange={(e) => onChange(idx, 'kind', e.target.value)}
-                  aria-label={`Tax kind for row ${idx + 1}`}
-                >
-                  {TAX_KINDS.map((k) => (
-                    <option key={k} value={k}>
-                      {k}
-                    </option>
-                  ))}
-                </select>
-              </td>
-              <td>
-                <input
-                  type="number"
-                  min="0"
-                  max="28"
-                  step="any"
-                  className="invoice-recheck-input invoice-recheck-input-num"
-                  value={tax.rate ?? ''}
-                  onChange={(e) => onChange(idx, 'rate', e.target.value)}
-                  aria-label={`Tax rate for row ${idx + 1}`}
-                />
-              </td>
-              <td>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  className="invoice-recheck-input invoice-recheck-input-num"
-                  value={tax.base ?? ''}
-                  onChange={(e) => onChange(idx, 'base', e.target.value)}
-                  aria-label={`Taxable base for row ${idx + 1}`}
-                />
-              </td>
-              <td>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  className="invoice-recheck-input invoice-recheck-input-num"
-                  value={tax.amount ?? ''}
-                  onChange={(e) => onChange(idx, 'amount', e.target.value)}
-                  aria-label={`Tax amount for row ${idx + 1}`}
-                />
-              </td>
-              <td className="invoice-recheck-actions-cell">
-                <button
-                  type="button"
-                  className="invoice-recheck-delete-btn"
-                  onClick={() => onRemove?.(idx)}
-                  aria-label={`Delete tax line ${idx + 1}`}
-                  title="Delete tax line"
-                >
-                  <Trash2 size={15} />
-                </button>
-              </td>
-            </tr>
-          ))}
+          {taxes.map((tax, idx) => {
+            const issue = rowIssues[idx] || {};
+            const sev = issue.severity || 'warning';
+            return (
+              <tr
+                key={idx}
+                className={
+                  issue.severity === 'error'
+                    ? 'invoice-row-invalid'
+                    : issue.severity === 'warning'
+                      ? 'invoice-row-suspect'
+                      : undefined
+                }
+              >
+                <td>
+                  <select
+                    className={fieldClass('invoice-recheck-select', issue.kind, sev)}
+                    value={tax.kind || 'CGST'}
+                    onChange={(e) => onChange(idx, 'kind', e.target.value)}
+                    aria-label={`Tax kind for row ${idx + 1}`}
+                    aria-invalid={Boolean(issue.kind)}
+                  >
+                    {TAX_KINDS.map((k) => (
+                      <option key={k} value={k}>
+                        {k}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    min="0"
+                    max="28"
+                    step="any"
+                    className={fieldClass(
+                      'invoice-recheck-input invoice-recheck-input-num',
+                      issue.rate,
+                      sev
+                    )}
+                    value={tax.rate ?? ''}
+                    onChange={(e) => onChange(idx, 'rate', e.target.value)}
+                    aria-label={`Tax rate for row ${idx + 1}`}
+                    aria-invalid={Boolean(issue.rate)}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    className={fieldClass(
+                      'invoice-recheck-input invoice-recheck-input-num',
+                      issue.base,
+                      sev
+                    )}
+                    value={tax.base ?? ''}
+                    onChange={(e) => onChange(idx, 'base', e.target.value)}
+                    aria-label={`Taxable base for row ${idx + 1}`}
+                    aria-invalid={Boolean(issue.base)}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    className={fieldClass(
+                      'invoice-recheck-input invoice-recheck-input-num',
+                      issue.amount,
+                      sev
+                    )}
+                    value={tax.amount ?? ''}
+                    onChange={(e) => onChange(idx, 'amount', e.target.value)}
+                    aria-label={`Tax amount for row ${idx + 1}`}
+                    aria-invalid={Boolean(issue.amount)}
+                  />
+                </td>
+                <td className="invoice-recheck-actions-cell">
+                  <button
+                    type="button"
+                    className="invoice-recheck-delete-btn"
+                    onClick={() => onRemove?.(idx)}
+                    aria-label={`Delete tax line ${idx + 1}`}
+                    title="Delete tax line"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 

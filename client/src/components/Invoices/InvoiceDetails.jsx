@@ -486,7 +486,9 @@ export default function InvoiceDetails() {
               <button
                 type="button"
                 style={styles.downloadBtn}
-                onClick={() => navigate(`/invoices/${id}/review?mode=edit`)}
+                onClick={() =>
+                  navigate(`/invoices/${id}/review?mode=edit`, { replace: true })
+                }
               >
                 <Pencil size={15} />
                 Edit

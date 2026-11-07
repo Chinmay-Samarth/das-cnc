@@ -3558,6 +3558,15 @@ button:hover:not(:disabled) {
 .required-mark {
   color: #b91c1c;
   display: inline;
+  margin-left: 0.2em;
+  font-weight: 700;
+  vertical-align: baseline;
+  line-height: inherit;
+}
+
+.field-label {
+  display: inline;
+  line-height: 1.3;
 }
 
 .text-button {
@@ -11138,10 +11147,6 @@ button:hover:not(:disabled) {
   color: #b45309;
 }
 
-.invoice-recheck-calc-actions {
-  margin: 0 0 12px;
-}
-
 .invoice-recheck-warnings {
   margin: 0;
   padding-left: 1.1rem;
@@ -11189,6 +11194,346 @@ button:hover:not(:disabled) {
   flex-direction: column;
   gap: 0;
   padding: 18px 20px 20px;
+}
+
+/* Compact Issues bar — list overlays so PDF/form stay scrollable */
+.invoice-issues-panel {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  margin: -6px -4px 12px;
+}
+
+.invoice-issues-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.invoice-issues-panel.has-errors .invoice-issues-summary {
+  border-color: #fecaca;
+  background: rgba(255, 241, 242, 0.97);
+}
+
+.invoice-issues-panel.has-warnings:not(.has-errors) .invoice-issues-summary {
+  border-color: #fde68a;
+  background: rgba(255, 251, 235, 0.97);
+}
+
+.invoice-issues-panel.is-clear .invoice-issues-summary {
+  border-color: #bbf7d0;
+  background: rgba(240, 253, 244, 0.97);
+}
+
+.invoice-issues-summary-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.invoice-issues-summary-text strong {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.invoice-issues-summary-counts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: #64748b;
+}
+
+.invoice-issues-summary-counts .is-error {
+  color: #b91c1c;
+  font-weight: 650;
+}
+
+.invoice-issues-summary-counts .is-warn {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.invoice-issues-summary-ready {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #15803d;
+}
+
+.invoice-issues-summary-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  color: #64748b;
+}
+
+.invoice-issues-dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+  max-height: min(42vh, 320px);
+  overflow-y: auto;
+}
+
+.invoice-issues-group + .invoice-issues-group {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.invoice-issues-group-label {
+  margin: 0 0 6px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #b91c1c;
+}
+
+.invoice-issues-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: #92400e;
+  text-align: left;
+}
+
+.invoice-issues-group-toggle span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.invoice-issues-group-toggle em {
+  font-style: normal;
+  min-width: 1.25rem;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.invoice-issues-group-toggle .muted {
+  margin-left: auto;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+.invoice-issues-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.invoice-issue-row {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #f8fafc;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.invoice-issue-row:hover {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+}
+
+.invoice-issue-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.invoice-issue-row.is-error {
+  background: #fff1f2;
+}
+
+.invoice-issue-row.is-error .invoice-issue-dot {
+  background: #ef4444;
+}
+
+.invoice-issue-row.is-error:hover {
+  border-color: #fca5a5;
+}
+
+.invoice-issue-row.is-warning {
+  background: #fffbeb;
+}
+
+.invoice-issue-row.is-warning .invoice-issue-dot {
+  background: #f59e0b;
+}
+
+.invoice-issue-row.is-warning:hover {
+  border-color: #fcd34d;
+}
+
+.invoice-issue-row-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.invoice-issue-title {
+  font-size: 0.8125rem;
+  font-weight: 650;
+  color: #0f172a;
+  line-height: 1.3;
+}
+
+.invoice-issue-message {
+  font-size: 0.7rem;
+  color: #64748b;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.invoice-issue-action {
+  align-self: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #1d4ed8;
+  white-space: nowrap;
+}
+
+.invoice-field-invalid,
+label.invoice-field-invalid,
+.invoice-field-invalid input,
+.invoice-field-invalid select,
+.invoice-field-invalid textarea,
+.invoice-field-invalid .form-search-select,
+input.invoice-field-invalid,
+select.invoice-field-invalid {
+  border-color: #f87171 !important;
+  background-color: #fff1f2 !important;
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.25);
+}
+
+.invoice-field-suspect,
+label.invoice-field-suspect,
+.invoice-field-suspect input,
+.invoice-field-suspect select,
+.invoice-field-suspect textarea,
+.invoice-field-suspect .form-search-select,
+input.invoice-field-suspect,
+select.invoice-field-suspect {
+  border-color: #fbbf24 !important;
+  background-color: #fffbeb !important;
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.3);
+}
+
+.invoice-section-invalid {
+  outline: 2px solid #fca5a5;
+  outline-offset: 4px;
+  border-radius: 10px;
+}
+
+.invoice-section-suspect {
+  outline: 2px solid #fcd34d;
+  outline-offset: 4px;
+  border-radius: 10px;
+}
+
+.invoice-row-invalid td {
+  background: #fff1f2;
+}
+
+.invoice-row-suspect td {
+  background: #fffbeb;
+}
+
+.invoice-field-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.invoice-field-hint.is-error {
+  color: #b91c1c;
+}
+
+.invoice-field-hint.is-warn {
+  color: #b45309;
+}
+
+.invoice-recheck-calc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin: 0 0 12px;
+}
+
+.invoice-confirm-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.invoice-confirm-hint {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #b91c1c;
+}
+
+.invoice-confirm-hint.is-warn {
+  color: #b45309;
 }
 
 .invoice-recheck-totals {
@@ -11256,6 +11601,12 @@ button:hover:not(:disabled) {
   font-size: 0.8125rem;
   font-weight: 650;
   color: var(--text-secondary, #64748b);
+}
+
+.invoice-recheck-fields .field-label {
+  display: block;
+  color: inherit;
+  font-weight: inherit;
 }
 
 .invoice-recheck-fields input,
