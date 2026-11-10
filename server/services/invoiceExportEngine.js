@@ -22,6 +22,7 @@ const LIST_SELECT = `
   tax_amount,
   base_amount,
   round_off,
+  line_items,
   customer_GSTIN,
   IRN,
   status,
@@ -45,7 +46,6 @@ const LIST_SELECT = `
 
 const EXPORT_SELECT = `
   ${LIST_SELECT},
-  line_items,
   tax_items
 `;
 

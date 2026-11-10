@@ -15,6 +15,7 @@ function fieldClass(base, flag, severity) {
 export default function InvoiceRecheckLineTable({
   lines,
   onChange,
+  onTaxableChange,
   onCategoryChange,
   onRemove,
   onAdd,
@@ -35,6 +36,7 @@ export default function InvoiceRecheckLineTable({
             <th>Category</th>
             <th>Qty</th>
             <th>Rate</th>
+            <th>Tax</th>
             <th>Amount</th>
             <th aria-label="Actions" />
           </tr>
@@ -42,7 +44,7 @@ export default function InvoiceRecheckLineTable({
         <tbody>
           {lines.length === 0 ? (
             <tr>
-              <td colSpan={6} className="invoice-recheck-empty">
+              <td colSpan={7} className="invoice-recheck-empty">
                 No line items. Add a line if the invoice has items OCR did not pick up.
               </td>
             </tr>
@@ -122,6 +124,15 @@ export default function InvoiceRecheckLineTable({
                     onChange={(e) => onChange(idx, 'unit_price', e.target.value)}
                     aria-label={`Rate for line ${idx + 1}`}
                     aria-invalid={Boolean(issue.unit_price)}
+                  />
+                </td>
+                <td className="invoice-recheck-tax-cell">
+                  <input
+                    type="checkbox"
+                    checked={line.taxable !== false}
+                    onChange={(e) => onTaxableChange?.(idx, e.target.checked)}
+                    aria-label={`Tax applies to line ${idx + 1}`}
+                    title="Include this line in the taxable base"
                   />
                 </td>
                 <td

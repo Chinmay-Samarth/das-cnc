@@ -74,16 +74,28 @@ function taxLineAmount(tax, baseAmount) {
   return 0;
 }
 
-/** Prefer base + tax + round_off when stored total is out of sync (OCR ₹1 gaps). */
+function untaxedLineTotal(invoice) {
+  const lines = Array.isArray(invoice?.line_items) ? invoice.line_items : [];
+  return Math.round(
+    lines.reduce((sum, line) => {
+      if (line?.taxable !== false) return sum;
+      const total = Number(line?.total);
+      return sum + (Number.isFinite(total) ? total : 0);
+    }, 0) * 100
+  ) / 100;
+}
+
+/** Prefer taxable + no-tax lines + tax + round_off when stored total is out of sync. */
 function reconcileGrandTotal(invoice, taxFallback = 0) {
   const base = Number(invoice?.base_amount);
   const taxRaw = invoice?.tax_amount != null ? Number(invoice.tax_amount) : Number(taxFallback);
   const roundOff = Number(invoice?.round_off) || 0;
+  const untaxed = untaxedLineTotal(invoice);
   const stored = Number(invoice?.total_amount);
   if (!Number.isFinite(base) || !Number.isFinite(taxRaw)) {
     return Number.isFinite(stored) ? stored : 0;
   }
-  const computed = Math.round((base + taxRaw + roundOff) * 100) / 100;
+  const computed = Math.round((base + untaxed + taxRaw + roundOff) * 100) / 100;
   if (!Number.isFinite(stored) || Math.abs(stored - computed) >= 0.005) return computed;
   return stored;
 }
@@ -227,6 +239,7 @@ export default function InvoiceDetails() {
   const canSyncPaymentTally =
     invoice.status === 'paid' && invoice.tally_payment_sync_status !== 'synced';
   const totalGst = taxLines.reduce((sum, tax) => sum + taxLineAmount(tax, invoice.base_amount), 0);
+  const untaxedDisplay = untaxedLineTotal(invoice);
   const taxAmountDisplay = Number(invoice.tax_amount ?? totalGst) || 0;
   const roundOffDisplay = Number(invoice.round_off) || 0;
   const grandTotal = reconcileGrandTotal(invoice, totalGst);
@@ -777,6 +790,12 @@ export default function InvoiceDetails() {
                 <span style={styles.summaryLabel}>Subtotal</span>
                 <span style={styles.summaryValue}>₹{fmtMoney(invoice.base_amount)}</span>
               </div>
+              {untaxedDisplay > 0.05 ? (
+                <div style={styles.summaryLine}>
+                  <span style={styles.summaryLabel}>No tax</span>
+                  <span style={styles.summaryValue}>₹{fmtMoney(untaxedDisplay)}</span>
+                </div>
+              ) : null}
               <div style={styles.summaryLine}>
                 <span style={styles.summaryLabel}>Total Taxes</span>
                 <span style={styles.summaryValue}>₹{fmtMoney(taxAmountDisplay)}</span>

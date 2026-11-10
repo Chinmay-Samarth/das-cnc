@@ -127,15 +127,123 @@ function toNumberOrNull(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function lineAmount(line) {
+  const total = Number(line?.total);
+  return Number.isFinite(total) ? total : 0;
+}
+
+function isActiveLine(line) {
+  const text = String(line?.scanned_description || line?.description || '').trim();
+  const qty = line?.quantity == null || line?.quantity === '' ? null : Number(line.quantity);
+  const rate = line?.unit_price == null || line?.unit_price === '' ? null : Number(line.unit_price);
+  return Boolean(text || qty != null || rate != null);
+}
+
+function untaxedLineTotal(lines) {
+  return round2(
+    (Array.isArray(lines) ? lines : []).reduce((sum, line) => {
+      if (line?.taxable !== false) return sum;
+      if (!isActiveLine(line)) return sum;
+      return sum + lineAmount(line);
+    }, 0)
+  );
+}
+
+function activeLineTotal(lines) {
+  return round2(
+    (Array.isArray(lines) ? lines : []).reduce((sum, line) => {
+      if (!isActiveLine(line)) return sum;
+      return sum + lineAmount(line);
+    }, 0)
+  );
+}
+
+function sharedTaxBase(taxes) {
+  const bases = (Array.isArray(taxes) ? taxes : [])
+    .map((tax) => Number(tax?.base))
+    .filter((value) => Number.isFinite(value));
+  if (!bases.length) return null;
+  const first = round2(bases[0]);
+  if (bases.some((value) => Math.abs(round2(value) - first) > 0.05)) return null;
+  return first;
+}
+
+function findUntaxedLineIndexes(lines, gap) {
+  const target = round2(gap);
+  if (!(target > 0.05)) return null;
+  const candidates = [];
+  (Array.isArray(lines) ? lines : []).forEach((line, idx) => {
+    if (!isActiveLine(line)) return;
+    const amount = round2(lineAmount(line));
+    if (amount <= 0.05) return;
+    candidates.push({ idx, amount });
+  });
+  const n = candidates.length;
+  if (!n || n > 16) return null;
+
+  let best = null;
+  const limit = 1 << n;
+  for (let mask = 1; mask < limit; mask += 1) {
+    let sum = 0;
+    let count = 0;
+    let maxIdx = -1;
+    const idxs = [];
+    for (let i = 0; i < n; i += 1) {
+      if ((mask & (1 << i)) === 0) continue;
+      sum += candidates[i].amount;
+      count += 1;
+      idxs.push(candidates[i].idx);
+      if (candidates[i].idx > maxIdx) maxIdx = candidates[i].idx;
+    }
+    if (count === n) continue;
+    if (Math.abs(round2(sum) - target) > 0.05) continue;
+    if (!best || count < best.count || (count === best.count && maxIdx > best.maxIdx)) {
+      best = { idxs, count, maxIdx };
+    }
+  }
+  return best ? best.idxs : null;
+}
+
+/** Mark lines that sit outside a shared GST base. Does not change tax rows. */
+function inferUntaxedLines(lines, taxes) {
+  const list = (Array.isArray(lines) ? lines : []).map((line) => ({ ...line }));
+  if (list.some((line) => line.taxable === false)) {
+    return { lines: list, baseAmount: null, inferred: false };
+  }
+  const taxBase = sharedTaxBase(taxes);
+  if (taxBase == null || taxBase <= 0.05) {
+    return { lines: list, baseAmount: null, inferred: false };
+  }
+  const gap = round2(activeLineTotal(list) - taxBase);
+  if (gap <= 0.05) {
+    return { lines: list, baseAmount: null, inferred: false };
+  }
+  const idxs = findUntaxedLineIndexes(list, gap);
+  if (!idxs) return { lines: list, baseAmount: null, inferred: false };
+  const marked = new Set(idxs);
+  return {
+    lines: list.map((line, idx) => (marked.has(idx) ? { ...line, taxable: false } : line)),
+    baseAmount: taxBase,
+    inferred: true,
+  };
+}
+
 /**
- * Keep base + tax + round_off = total so OCR misreads / tax recalcs
+ * Keep taxable base + untaxed lines + tax + round_off = total so OCR misreads
  * cannot leave a ₹1 gap on the purchase invoice.
  * Grand total always follows the parts; set round_off explicitly for ±₹1 bills.
  */
-function reconcileInvoiceTotals({ baseAmount, taxAmount, roundOff, totalAmount }) {
+function reconcileInvoiceTotals({
+  baseAmount,
+  taxAmount,
+  roundOff,
+  totalAmount,
+  untaxedAmount = 0,
+}) {
   const base = toNumberOrNull(baseAmount);
   const tax = toNumberOrNull(taxAmount);
   let round = toNumberOrNull(roundOff);
+  const untaxed = toNumberOrNull(untaxedAmount) ?? 0;
 
   if (base == null || tax == null) {
     return {
@@ -152,7 +260,7 @@ function reconcileInvoiceTotals({ baseAmount, taxAmount, roundOff, totalAmount }
     base_amount: round2(base),
     tax_amount: round2(tax),
     round_off: round2(round),
-    total_amount: round2(base + tax + round),
+    total_amount: round2(base + Math.max(0, untaxed) + tax + round),
   };
 }
 
@@ -173,6 +281,7 @@ function enrichLineForReview(lineItem, classification = {}) {
     unit: lineItem.unit || '',
     unit_price: lineItem.unit_price ?? null,
     total: lineItem.total ?? null,
+    taxable: lineItem.taxable !== false,
     match_confidence: classification.match_confidence || lineItem.match_confidence || 'none',
     match_source: classification.match_source || lineItem.match_source || null,
   };
@@ -419,6 +528,7 @@ async function confirmReview(invoiceId, body, actorId) {
       unit: line.unit || '',
       unit_price: line.unit_price ?? null,
       total: line.total ?? null,
+      taxable: line.taxable !== false,
       match_confidence: 'none',
     };
   });
@@ -473,6 +583,7 @@ async function confirmReview(invoiceId, body, actorId) {
     taxAmount: resolvedTaxAmount,
     roundOff: body.round_off ?? invoice.round_off ?? 0,
     totalAmount: body.total_amount ?? invoice.total_amount,
+    untaxedAmount: untaxedLineTotal(normalizedLines),
   });
 
   const priorStatus = String(invoice.status || '');
@@ -712,9 +823,27 @@ async function finalizeOcrReview(invoiceId, doc, invoiceDraft) {
     }
   }
 
+  const inferred = inferUntaxedLines(enrichedLines, invoiceDraft.tax_items || []);
+  const lineItems = inferred.lines;
+  let baseAmount = invoiceDraft.base_amount;
+  let totalAmount = invoiceDraft.total_amount;
+  if (inferred.inferred) {
+    const reconciledDraft = reconcileInvoiceTotals({
+      baseAmount: inferred.baseAmount,
+      taxAmount: invoiceDraft.tax_amount,
+      roundOff: invoiceDraft.round_off ?? 0,
+      totalAmount: invoiceDraft.total_amount,
+      untaxedAmount: untaxedLineTotal(lineItems),
+    });
+    baseAmount = reconciledDraft.base_amount;
+    totalAmount = reconciledDraft.total_amount;
+  }
+
   const updatePayload = {
     ...invoiceDraft,
-    line_items: enrichedLines,
+    line_items: lineItems,
+    base_amount: baseAmount,
+    total_amount: totalAmount,
     ocr_confidence_level: ocrConfidenceLevel,
     ocr_warnings: ocrWarnings,
     review_status: reviewStatus,

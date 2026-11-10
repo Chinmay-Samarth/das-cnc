@@ -13,6 +13,130 @@ function formatMoney(value) {
   return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function isActiveLine(line) {
+  const text = String(
+    line?.scanned_description || line?.description || line?.item_description || ''
+  ).trim();
+  const qty = line?.quantity === '' || line?.quantity == null ? null : Number(line.quantity);
+  const rate = line?.unit_price === '' || line?.unit_price == null ? null : Number(line.unit_price);
+  return Boolean(text || line?.master_record_id || qty != null || rate != null);
+}
+
+function lineAmount(line) {
+  const total = Number(line?.total);
+  return Number.isFinite(total) ? total : 0;
+}
+
+/** A line counts toward GST unless it is explicitly marked untaxed. */
+function isTaxableLine(line) {
+  return line?.taxable !== false;
+}
+
+function sumActiveLines(lines, predicate) {
+  return round2(
+    (Array.isArray(lines) ? lines : []).reduce((sum, line) => {
+      if (!isActiveLine(line)) return sum;
+      if (predicate && !predicate(line)) return sum;
+      return sum + lineAmount(line);
+    }, 0)
+  );
+}
+
+function sumTaxedLineTotal(lines) {
+  return sumActiveLines(lines, isTaxableLine);
+}
+
+function sumUntaxedLineTotal(lines) {
+  return sumActiveLines(lines, (line) => !isTaxableLine(line));
+}
+
+/** Shared GST base when every tax row agrees within 5 paise. */
+function sharedTaxBase(taxes) {
+  const bases = (Array.isArray(taxes) ? taxes : [])
+    .map((tax) => Number(tax?.base))
+    .filter((value) => Number.isFinite(value));
+  if (!bases.length) return null;
+  const first = round2(bases[0]);
+  if (bases.some((value) => Math.abs(round2(value) - first) > 0.05)) return null;
+  return first;
+}
+
+/**
+ * Smallest set of line indexes whose amounts equal `gap` (within 5 paise).
+ * Ties prefer lines later on the invoice. Never returns every positive line.
+ */
+function findUntaxedLineIndexes(lines, gap) {
+  const target = round2(gap);
+  if (!(target > 0.05)) return null;
+
+  const candidates = [];
+  (Array.isArray(lines) ? lines : []).forEach((line, idx) => {
+    if (!isActiveLine(line)) return;
+    const amount = round2(lineAmount(line));
+    if (amount <= 0.05) return;
+    candidates.push({ idx, amount });
+  });
+
+  const n = candidates.length;
+  if (!n || n > 16) return null;
+
+  let best = null;
+  const limit = 1 << n;
+  for (let mask = 1; mask < limit; mask += 1) {
+    let sum = 0;
+    let count = 0;
+    let maxIdx = -1;
+    const idxs = [];
+    for (let i = 0; i < n; i += 1) {
+      if ((mask & (1 << i)) === 0) continue;
+      sum += candidates[i].amount;
+      count += 1;
+      idxs.push(candidates[i].idx);
+      if (candidates[i].idx > maxIdx) maxIdx = candidates[i].idx;
+    }
+    if (count === n) continue;
+    if (Math.abs(round2(sum) - target) > 0.05) continue;
+    if (!best || count < best.count || (count === best.count && maxIdx > best.maxIdx)) {
+      best = { idxs, count, maxIdx };
+    }
+  }
+  return best ? best.idxs : null;
+}
+
+/**
+ * When tax rows already share one base and the gap to the line total
+ * equals one or more whole lines, mark those lines untaxed.
+ * Does not change tax rows. `baseAmount` is that shared tax base when inferred.
+ */
+function inferUntaxedLines(lines, taxes) {
+  const list = (Array.isArray(lines) ? lines : []).map((line) => ({ ...line }));
+  if (list.some((line) => line.taxable === false)) {
+    return { lines: list, baseAmount: null, inferred: false };
+  }
+
+  const taxBase = sharedTaxBase(taxes);
+  if (taxBase == null || taxBase <= 0.05) {
+    return { lines: list, baseAmount: null, inferred: false };
+  }
+
+  const gap = round2(sumActiveLines(list) - taxBase);
+  if (gap <= 0.05) {
+    return { lines: list, baseAmount: null, inferred: false };
+  }
+
+  const idxs = findUntaxedLineIndexes(list, gap);
+  if (!idxs) {
+    return { lines: list, baseAmount: null, inferred: false };
+  }
+
+  const marked = new Set(idxs);
+  return {
+    lines: list.map((line, idx) => (marked.has(idx) ? { ...line, taxable: false } : line)),
+    baseAmount: taxBase,
+    inferred: true,
+  };
+}
+
 function taxKind(tax) {
   return String(tax?.kind || '').toUpperCase();
 }
@@ -53,10 +177,8 @@ export function buildInvoiceReviewIssues({
   header,
   lines,
   taxes,
-  lineItemsTotal,
   taxTotal,
   expectedGrandTotal,
-  linesMatchSubtotal,
   totalsBalanced,
   ocrWarnings = [],
 }) {
@@ -108,13 +230,20 @@ export function buildInvoiceReviewIssues({
     });
   }
 
-  if (!linesMatchSubtotal) {
+  const taxedLinesTotal = sumTaxedLineTotal(lines);
+  const untaxedLinesTotal = sumUntaxedLineTotal(lines);
+  const headerBaseEarly = Number(header?.base_amount);
+  const linesMatchTaxable =
+    Number.isFinite(headerBaseEarly) &&
+    Math.abs(taxedLinesTotal - round2(headerBaseEarly)) <= 0.05;
+
+  if (!linesMatchTaxable) {
     push({
       id: 'lines_subtotal',
       severity: 'error',
       target: 'amounts',
-      title: 'Line items do not match taxable',
-      message: `Lines total ₹${formatMoney(lineItemsTotal)} but taxable is ₹${formatMoney(
+      title: 'Taxed lines do not match taxable',
+      message: `Taxed lines total ₹${formatMoney(taxedLinesTotal)} but taxable is ₹${formatMoney(
         header?.base_amount
       )}.`,
       action: 'recalc_lines',
@@ -127,9 +256,11 @@ export function buildInvoiceReviewIssues({
       severity: 'error',
       target: 'amounts',
       title: 'Grand total does not balance',
-      message: `Taxable + tax + round off = ₹${formatMoney(
-        expectedGrandTotal
-      )}, but grand total is ₹${formatMoney(header?.total_amount)}.`,
+      message: `Taxable${
+        untaxedLinesTotal > 0.05 ? ' + no tax' : ''
+      } + tax + round off = ₹${formatMoney(expectedGrandTotal)}, but grand total is ₹${formatMoney(
+        header?.total_amount
+      )}.`,
     });
   }
 
@@ -251,19 +382,26 @@ export function buildInvoiceReviewIssues({
       Number.isFinite(base) &&
       Math.abs(base - headerBase) > 0.05
     ) {
-      taxRowIssues[idx] = {
-        ...(taxRowIssues[idx] || {}),
-        base: true,
-        severity: taxRowIssues[idx]?.severity === 'error' ? 'error' : 'warning',
-      };
-      push({
-        id: `tax_base_${idx}`,
-        severity: 'warning',
-        target: 'tax',
-        title: `${kind || 'Tax'} base differs from taxable`,
-        message: `Tax base ₹${formatMoney(base)} vs taxable ₹${formatMoney(headerBase)}.`,
-        rowIndex: idx,
-      });
+      const gap = Math.abs(base - headerBase);
+      const explainedByUntaxed =
+        untaxedLinesTotal > 0.05 && Math.abs(gap - untaxedLinesTotal) <= 0.05;
+      if (!explainedByUntaxed) {
+        taxRowIssues[idx] = {
+          ...(taxRowIssues[idx] || {}),
+          base: true,
+          severity: 'error',
+        };
+        push({
+          id: `tax_base_${idx}`,
+          severity: 'error',
+          target: 'tax',
+          title: `${kind || 'Tax'} base differs from taxable`,
+          message: `Tax base ₹${formatMoney(base)} must match taxable ₹${formatMoney(
+            headerBase
+          )}. Turn tax off on a line that has no GST if that line should stay out of this base.`,
+          rowIndex: idx,
+        });
+      }
     }
   });
 
@@ -413,4 +551,10 @@ export function buildInvoiceReviewIssues({
   };
 }
 
-export { COMMON_GST_RATES, formatMoney as formatReviewMoney };
+export {
+  COMMON_GST_RATES,
+  formatMoney as formatReviewMoney,
+  inferUntaxedLines,
+  sumTaxedLineTotal,
+  sumUntaxedLineTotal,
+};

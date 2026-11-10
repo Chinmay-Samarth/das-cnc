@@ -11878,6 +11878,17 @@ select.invoice-field-suspect {
   font-variant-numeric: tabular-nums;
 }
 
+.invoice-recheck-tax-cell {
+  width: 52px;
+  text-align: center;
+}
+
+.invoice-recheck-tax-cell input {
+  width: 16px;
+  height: 16px;
+  accent-color: #0f172a;
+}
+
 /* Background invoice upload queue — right-edge collapsible dock */
 .invoice-upload-queue-dock {
   position: fixed;

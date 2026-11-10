@@ -44,6 +44,17 @@ function resolvePartyLedgerName(supplier) {
   return name || null;
 }
 
+function untaxedLineTotal(invoice) {
+  const lines = Array.isArray(invoice?.line_items) ? invoice.line_items : [];
+  return round2(
+    lines.reduce((sum, line) => {
+      if (line?.taxable !== false) return sum;
+      const total = Number(line?.total);
+      return sum + (Number.isFinite(total) ? total : 0);
+    }, 0)
+  );
+}
+
 function buildGstLegs(taxItems, baseAmount) {
   const items = Array.isArray(taxItems) ? taxItems : [];
   const legs = [];
@@ -147,9 +158,11 @@ function buildPurchaseVoucherXml({ invoice, supplier, expenseType }) {
   }
 
   const baseAmount = round2(invoice?.base_amount);
+  const untaxedAmount = untaxedLineTotal(invoice);
+  const preTaxAmount = round2(baseAmount + untaxedAmount);
   const totalAmount = round2(invoice?.total_amount);
 
-  if (!(baseAmount > 0)) {
+  if (!(preTaxAmount > 0)) {
     throw Object.assign(new Error('Invoice base_amount must be > 0 for Tally sync'), {
       code: 'TALLY_AMOUNT',
     });
@@ -164,19 +177,23 @@ function buildPurchaseVoucherXml({ invoice, supplier, expenseType }) {
   const taxSum = round2(gstLegs.reduce((sum, leg) => sum + leg.amount, 0));
 
   // Round Off ledger excluded for now — fold small OCR gaps into the expense debit
-  // so the voucher still balances to total_amount.
-  const gap = round2(totalAmount - baseAmount - taxSum);
+  // so the voucher still balances to total_amount. Untaxed lines stay in that debit.
+  const gap = round2(totalAmount - preTaxAmount - taxSum);
   if (Math.abs(gap) > 25) {
+    const preTaxLabel =
+      untaxedAmount > 0
+        ? `taxable ${baseAmount} + no tax ${untaxedAmount}`
+        : `base ${baseAmount}`;
     throw Object.assign(
       new Error(
-        `Amounts do not balance for Tally (base ${baseAmount} + tax ${taxSum} = ${round2(
-          baseAmount + taxSum
+        `Amounts do not balance for Tally (${preTaxLabel} + tax ${taxSum} = ${round2(
+          preTaxAmount + taxSum
         )}, total ${totalAmount}, gap ${gap})`
       ),
       { code: 'TALLY_BALANCE' }
     );
   }
-  const expenseDebit = round2(baseAmount + gap);
+  const expenseDebit = round2(preTaxAmount + gap);
 
   if (!gstLegs.length && round2(invoice?.tax_amount || 0) > 0.05) {
     throw Object.assign(

@@ -13,7 +13,12 @@ import { appAlert } from '../components/dialog';
 import { getCategoryConfig } from '../girn/girnCategoryConfig';
 import InvoiceRecheckLineTable from './InvoiceRecheckLineTable';
 import InvoiceRecheckTaxTable, { normalizeTaxRows, recalcTax } from './InvoiceRecheckTaxTable';
-import { buildInvoiceReviewIssues } from './invoiceReviewIssues';
+import {
+  buildInvoiceReviewIssues,
+  inferUntaxedLines,
+  sumTaxedLineTotal,
+  sumUntaxedLineTotal,
+} from './invoiceReviewIssues';
 import SupplierSelect from './SupplierSelect';
 import { InvoiceUploadInlineStatus } from './InvoiceUploadQueueStatus';
 import {
@@ -38,13 +43,19 @@ function sumTaxAmount(taxRows) {
   return round2(taxRows.reduce((sum, t) => sum + (Number(t.amount) || 0), 0));
 }
 
-/** Grand total always follows base + tax + round_off. */
-function computeHeaderTotal(baseAmount, taxAmount, roundOff) {
+/** Grand total is taxable base + untaxed lines + tax + round off. */
+function computeHeaderTotal(baseAmount, taxAmount, roundOff, untaxedAmount = 0) {
   const base = Number(baseAmount);
   const tax = Number(taxAmount);
   const round = Number(roundOff);
+  const untaxed = Number(untaxedAmount);
   if (!Number.isFinite(base) || !Number.isFinite(tax)) return '';
-  return round2(base + tax + (Number.isFinite(round) ? round : 0));
+  return round2(
+    base +
+      (Number.isFinite(untaxed) ? untaxed : 0) +
+      tax +
+      (Number.isFinite(round) ? round : 0)
+  );
 }
 
 function isProcessingStatus(status) {
@@ -171,8 +182,12 @@ export default function InvoiceOcrReviewPage() {
       const inv = data.invoice;
       setInvoice(inv);
       setReview(data.review);
-      setLines((data.lines || inv.line_items || []).map(recalcLine));
       const nextTaxes = normalizeTaxRows(inv.tax_items, inv.base_amount);
+      const inferred = inferUntaxedLines(
+        (data.lines || inv.line_items || []).map(recalcLine),
+        nextTaxes
+      );
+      setLines(inferred.lines);
       setTaxes(nextTaxes);
       const suggested = data.suggested_supplier || null;
       setSuggestedSupplier(suggested);
@@ -188,11 +203,12 @@ export default function InvoiceOcrReviewPage() {
       const invoiceDate = inv.invoice_date || '';
       const effectiveCredit = storedCreditDays ?? DEFAULT_CREDIT_DAYS;
       const autoDue = defaultDueDate(invoiceDate, effectiveCredit);
-      const baseAmount = inv.base_amount ?? '';
+      const baseAmount = inferred.inferred ? inferred.baseAmount : (inv.base_amount ?? '');
       const roundOff = inv.round_off ?? '';
       const taxAmount = sumTaxAmount(nextTaxes);
+      const untaxedAmount = sumUntaxedLineTotal(inferred.lines);
       // After tax recalc, derive grand total from parts so OCR ₹1 misreads don't stick.
-      const derivedTotal = computeHeaderTotal(baseAmount, taxAmount, roundOff);
+      const derivedTotal = computeHeaderTotal(baseAmount, taxAmount, roundOff, untaxedAmount);
       setHeader({
         invoice_number: inv.invoice_number || '',
         invoice_date: invoiceDate,
@@ -279,30 +295,18 @@ export default function InvoiceOcrReviewPage() {
   const lineCount = lines.length;
   const ocrPct = Math.round((review?.ocr_confidence_level || 0) * 100);
 
-  const lineItemsTotal = useMemo(() => {
-    return round2(
-      lines.reduce((sum, line) => {
-        const text = String(
-          line.scanned_description || line.description || line.item_description || ''
-        ).trim();
-        const qty = line.quantity === '' || line.quantity == null ? null : Number(line.quantity);
-        const rate = line.unit_price === '' || line.unit_price == null ? null : Number(line.unit_price);
-        if (!(text || line.master_record_id || qty != null || rate != null)) return sum;
-        const total = Number(line.total);
-        return sum + (Number.isFinite(total) ? total : 0);
-      }, 0)
-    );
-  }, [lines]);
+  const taxedLinesTotal = useMemo(() => sumTaxedLineTotal(lines), [lines]);
+  const untaxedLinesTotal = useMemo(() => sumUntaxedLineTotal(lines), [lines]);
 
   const expectedGrandTotal = useMemo(() => {
-    return computeHeaderTotal(header.base_amount, taxTotal, header.round_off);
-  }, [header.base_amount, header.round_off, taxTotal]);
+    return computeHeaderTotal(header.base_amount, taxTotal, header.round_off, untaxedLinesTotal);
+  }, [header.base_amount, header.round_off, taxTotal, untaxedLinesTotal]);
 
   const linesMatchSubtotal = useMemo(() => {
     const subtotal = Number(header.base_amount);
     if (!Number.isFinite(subtotal)) return false;
-    return Math.abs(lineItemsTotal - round2(subtotal)) < 0.005;
-  }, [header.base_amount, lineItemsTotal]);
+    return Math.abs(taxedLinesTotal - round2(subtotal)) <= 0.05;
+  }, [header.base_amount, taxedLinesTotal]);
 
   const totalsBalanced = useMemo(() => {
     if (expectedGrandTotal === '') return false;
@@ -320,10 +324,8 @@ export default function InvoiceOcrReviewPage() {
         header,
         lines,
         taxes,
-        lineItemsTotal,
         taxTotal,
         expectedGrandTotal,
-        linesMatchSubtotal,
         totalsBalanced,
         ocrWarnings: warnings,
       }),
@@ -332,10 +334,8 @@ export default function InvoiceOcrReviewPage() {
       header,
       lines,
       taxes,
-      lineItemsTotal,
       taxTotal,
       expectedGrandTotal,
-      linesMatchSubtotal,
       totalsBalanced,
       warnings,
     ]
@@ -450,23 +450,18 @@ export default function InvoiceOcrReviewPage() {
     });
   }
 
-  /** Keep taxable, tax bases, and grand total derived from line items when lines change. */
+  /** Taxable base and every tax-row base follow taxed lines only. */
   function applyCalculatedFromLines(nextLines, nextTaxes = taxes) {
-    const lineTotal = round2(
-      nextLines.reduce((sum, line) => {
-        const text = String(
-          line.scanned_description || line.description || line.item_description || ''
-        ).trim();
-        const qty = line.quantity === '' || line.quantity == null ? null : Number(line.quantity);
-        const rate = line.unit_price === '' || line.unit_price == null ? null : Number(line.unit_price);
-        if (!(text || line.master_record_id || qty != null || rate != null)) return sum;
-        const total = Number(line.total);
-        return sum + (Number.isFinite(total) ? total : 0);
-      }, 0)
-    );
-    const taxesWithBase = nextTaxes.map((tax) => recalcTax({ ...tax, base: lineTotal }));
+    const taxedTotal = sumTaxedLineTotal(nextLines);
+    const taxesWithBase = nextTaxes.map((tax) => {
+      const next = recalcTax({ ...tax, base: taxedTotal });
+      if (!(taxedTotal > 0)) return { ...next, amount: 0 };
+      return next;
+    });
     setTaxes(taxesWithBase);
-    setHeader((h) => syncHeaderTotal({ ...h, base_amount: lineTotal }, taxesWithBase));
+    setHeader((h) =>
+      syncHeaderTotal({ ...h, base_amount: taxedTotal }, taxesWithBase, nextLines)
+    );
   }
 
   function handleLineChange(idx, field, value) {
@@ -515,6 +510,15 @@ export default function InvoiceOcrReviewPage() {
     });
   }
 
+  function handleTaxableChange(idx, taxable) {
+    setLines((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], taxable: Boolean(taxable) };
+      applyCalculatedFromLines(next);
+      return next;
+    });
+  }
+
   function handleRemoveLine(idx) {
     setLines((prev) => {
       const next = prev.filter((_, i) => i !== idx);
@@ -544,9 +548,14 @@ export default function InvoiceOcrReviewPage() {
     });
   }
 
-  function syncHeaderTotal(nextHeader, nextTaxes = taxes) {
+  function syncHeaderTotal(nextHeader, nextTaxes = taxes, nextLines = lines) {
     const taxAmount = sumTaxAmount(nextTaxes);
-    const total = computeHeaderTotal(nextHeader.base_amount, taxAmount, nextHeader.round_off);
+    const total = computeHeaderTotal(
+      nextHeader.base_amount,
+      taxAmount,
+      nextHeader.round_off,
+      sumUntaxedLineTotal(nextLines)
+    );
     if (total === '') return nextHeader;
     return { ...nextHeader, total_amount: total };
   }
@@ -592,10 +601,15 @@ export default function InvoiceOcrReviewPage() {
 
   function handleTaxChange(idx, field, value) {
     setTaxes((prev) => {
+      if (field === 'base') {
+        const next = prev.map((tax) => recalcTax({ ...tax, base: value }));
+        setHeader((h) => syncHeaderTotal({ ...h, base_amount: value }, next));
+        return next;
+      }
       const next = [...prev];
       const updated = { ...next[idx], [field]: value };
-      // Recalc amount from base × rate when base/rate change; keep manual amount edits
-      if (field === 'base' || field === 'rate') {
+      // Recalc amount from base × rate when rate changes; keep manual amount edits
+      if (field === 'rate') {
         next[idx] = recalcTax(updated);
       } else if (field === 'kind') {
         next[idx] = { ...updated, kind: String(value || 'CGST').toUpperCase() };
@@ -688,7 +702,7 @@ export default function InvoiceOcrReviewPage() {
       const baseAmount = header.base_amount === '' || header.base_amount == null ? null : Number(header.base_amount);
       const reconciledTotal =
         baseAmount != null && Number.isFinite(baseAmount)
-          ? computeHeaderTotal(baseAmount, taxAmount, roundOff)
+          ? computeHeaderTotal(baseAmount, taxAmount, roundOff, untaxedLinesTotal)
           : header.total_amount;
 
       const payload = {
@@ -713,6 +727,7 @@ export default function InvoiceOcrReviewPage() {
             scanned_description: line.scanned_description || line.description || line.item_description || '',
             master_record_id: null,
             master_record_label: '',
+            taxable: line.taxable !== false,
           })),
       };
 
@@ -906,7 +921,13 @@ export default function InvoiceOcrReviewPage() {
               value={`₹${formatMoney(header.base_amount)}`}
               icon={IndianRupee}
               tone={!linesMatchSubtotal ? 'danger' : 'neutral'}
-              hint={!linesMatchSubtotal ? `Lines ₹${formatMoney(lineItemsTotal)}` : undefined}
+              hint={
+                !linesMatchSubtotal
+                  ? `Taxed lines ₹${formatMoney(taxedLinesTotal)}`
+                  : untaxedLinesTotal > 0.05
+                    ? `No tax ₹${formatMoney(untaxedLinesTotal)}`
+                    : undefined
+              }
             />
             <MetricCard
               label="Tax"
@@ -1080,13 +1101,14 @@ export default function InvoiceOcrReviewPage() {
                   Recalculate from line items
                 </button>
                 <span className="invoice-field-hint is-error">
-                  Lines ₹{formatMoney(lineItemsTotal)} ≠ taxable ₹{formatMoney(header.base_amount)}
+                  Taxed lines ₹{formatMoney(taxedLinesTotal)} ≠ taxable ₹{formatMoney(header.base_amount)}
                 </span>
               </div>
             ) : null}
             {!totalsBalanced ? (
               <p className="invoice-field-hint is-error" style={{ marginBottom: 10 }}>
-                Expected ₹{formatMoney(expectedGrandTotal)} (taxable + tax + round off) vs grand ₹
+                Expected ₹{formatMoney(expectedGrandTotal)} (taxable
+                {untaxedLinesTotal > 0.05 ? ' + no tax' : ''} + tax + round off) vs grand ₹
                 {formatMoney(header.total_amount)}.
               </p>
             ) : null}
@@ -1103,6 +1125,12 @@ export default function InvoiceOcrReviewPage() {
                   onChange={(e) => handleHeaderField('base_amount', e.target.value)}
                   aria-invalid={!linesMatchSubtotal}
                 />
+                {untaxedLinesTotal > 0.05 ? (
+                  <span className="invoice-field-hint">
+                    No tax ₹{formatMoney(untaxedLinesTotal)} stays out of this base and is still
+                    included in the grand total.
+                  </span>
+                ) : null}
               </label>
 
               <label className={fieldToneClass(!totalsBalanced, false)}>
@@ -1143,6 +1171,7 @@ export default function InvoiceOcrReviewPage() {
             <InvoiceRecheckLineTable
               lines={lines}
               onChange={handleLineChange}
+              onTaxableChange={handleTaxableChange}
               onMasterSelect={handleMasterSelect}
               onCategoryChange={handleCategoryChange}
               onRemove={handleRemoveLine}

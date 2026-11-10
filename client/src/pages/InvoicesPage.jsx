@@ -96,16 +96,28 @@ const fmt = (val) =>
     ? '—'
     : Number(val).toLocaleString('en-IN');
 
-/** Prefer base + tax + round_off when stored total drifted (OCR ₹1 gaps). */
+function untaxedLineTotal(invoice) {
+  const lines = Array.isArray(invoice?.line_items) ? invoice.line_items : [];
+  return Math.round(
+    lines.reduce((sum, line) => {
+      if (line?.taxable !== false) return sum;
+      const total = Number(line?.total);
+      return sum + (Number.isFinite(total) ? total : 0);
+    }, 0) * 100
+  ) / 100;
+}
+
+/** Prefer taxable + no-tax lines + tax + round_off when stored total drifted. */
 function invoiceDisplayTotal(invoice) {
   const base = Number(invoice?.base_amount);
   const tax = Number(invoice?.tax_amount);
   const roundOff = Number(invoice?.round_off) || 0;
+  const untaxed = untaxedLineTotal(invoice);
   const stored = Number(invoice?.total_amount);
   if (!Number.isFinite(base) || !Number.isFinite(tax)) {
     return Number.isFinite(stored) ? stored : 0;
   }
-  const computed = Math.round((base + tax + roundOff) * 100) / 100;
+  const computed = Math.round((base + untaxed + tax + roundOff) * 100) / 100;
   if (!Number.isFinite(stored) || Math.abs(stored - computed) >= 0.005) return computed;
   return stored;
 }

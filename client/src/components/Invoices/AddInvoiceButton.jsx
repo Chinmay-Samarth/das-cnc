@@ -68,17 +68,10 @@ export default function AddInvoiceButton({ onUploaded }) {
 
     setBulkMode(true);
     setPendingJobId(null);
-    const created = enqueueUploads({
+    enqueueUploads({
       files: selected,
       source: 'invoices',
       returnPath: '/invoices',
-    });
-
-    appAlert({
-      title: 'Invoices queued',
-      message: `${created.length} file${created.length === 1 ? '' : 's'} added to the OCR queue. They will upload and extract one at a time. Use the queue panel to open each for review when ready.`,
-      tone: 'info',
-      confirmLabel: 'OK',
     });
   };
 
