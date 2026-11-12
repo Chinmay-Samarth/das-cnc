@@ -619,7 +619,7 @@ export default function InvoicesPage() {
         </section>
       ) : null}
 
-      <div className="mes-filters">
+      <div className="mes-filters invoice-list-filters">
         <label style={{ flex: 1, minWidth: 220 }}>
           Search
           <input

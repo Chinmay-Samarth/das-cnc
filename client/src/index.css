@@ -7999,6 +7999,34 @@ button:hover:not(:disabled) {
   align-items: flex-end;
 }
 
+.invoice-list-filters input[type='search'],
+.invoice-list-filters .form-search-select-trigger,
+.invoice-list-filters .mp-column-picker > .mes-btn {
+  height: 40px;
+  min-height: 40px;
+  box-sizing: border-box;
+}
+
+.mes-filters .mp-column-picker {
+  align-self: flex-end;
+}
+
+.mes-filters .mp-column-option {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.mes-filters .mp-column-picker > .mes-btn {
+  padding: 0 14px;
+  font-size: 13px;
+  line-height: 1;
+}
+
 .mes-filters .mp-column-panel {
   left: auto;
   right: 0;
