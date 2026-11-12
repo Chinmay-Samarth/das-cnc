@@ -443,6 +443,7 @@ export default function CreatePurchaseOrderWizard() {
                 <table className="app-table">
                   <thead>
                     <tr>
+                      <th className="col-sno">#</th>
                       <th />
                       <th>Item</th>
                       <th>Campaign</th>
@@ -453,8 +454,9 @@ export default function CreatePurchaseOrderWizard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {demand.map((item) => (
+                    {demand.map((item, index) => (
                       <tr key={item.master_record_id}>
+                        <td className="col-sno">{index + 1}</td>
                         <td>
                           <input
                             type="checkbox"
@@ -604,6 +606,7 @@ export default function CreatePurchaseOrderWizard() {
               <table className="app-table">
                 <thead>
                   <tr>
+                    <th className="col-sno">#</th>
                     <th>Item</th>
                     <th>Qty</th>
                     <th>Unit</th>
@@ -621,6 +624,7 @@ export default function CreatePurchaseOrderWizard() {
                     const belowMoq = Number(line.moq) > 0 && qty < Number(line.moq);
                     return (
                       <tr key={line.master_record_id}>
+                        <td className="col-sno">{idx + 1}</td>
                         <td>
                           <strong>{line.item_label || line.master_record_id}</strong>
                           {belowMoq ? (

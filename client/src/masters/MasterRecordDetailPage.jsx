@@ -185,12 +185,14 @@ function RepeatableSectionView({ section, repeatableValues }) {
       <table className="app-table">
         <thead>
           <tr>
+            <th className="col-sno">#</th>
             {section.fields.map(f => <th key={f.id}>{f.label}</th>)}
           </tr>
         </thead>
         <tbody>
           {rows.map((row, ri) => (
             <tr key={ri}>
+              <td className="col-sno">{ri + 1}</td>
               {section.fields.map(field => {
                 const cell      = row[field.slug]
                 const formatted = formatValue(field, cell)
@@ -243,6 +245,7 @@ function MasterRecordStockTab({ recordId }) {
       <table className="app-table">
         <thead>
           <tr>
+            <th className="col-sno">#</th>
             <th>Lot</th>
             <th>Current stock</th>
             <th>Unit</th>
@@ -251,8 +254,9 @@ function MasterRecordStockTab({ recordId }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {rows.map((row, index) => (
             <tr key={row.id}>
+              <td className="col-sno">{index + 1}</td>
               <td>{row.lot_number || '—'}</td>
               <td>{Number(row.current_stock).toLocaleString('en-IN')}</td>
               <td>{row.unit || '—'}</td>

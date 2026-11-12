@@ -269,7 +269,7 @@ export default function InspectionPlanBuilder({ slug, recordId }) {
           <table className="app-table">
             <thead>
               <tr>
-                <th>#</th>
+                <th className="col-sno">#</th>
                 <th>Name</th>
                 <th>Type</th>
                 <th>Instrument</th>
@@ -281,7 +281,7 @@ export default function InspectionPlanBuilder({ slug, recordId }) {
               {parameters.map((param, idx) => (
                 <Fragment key={param.id || `param-${idx}`}>
                   <tr>
-                    <td>{idx + 1}</td>
+                    <td className="col-sno">{idx + 1}</td>
                     <td>
                       <input
                         type="text"
@@ -319,7 +319,7 @@ export default function InspectionPlanBuilder({ slug, recordId }) {
                   </tr>
                   {param.check_type === 'dimensional' ? (
                     <tr>
-                      <td></td>
+                      <td className="col-sno" />
                       <td colSpan={5}>
                         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', padding: '8px 0' }}>
                           <label>
@@ -383,6 +383,7 @@ export default function InspectionPlanBuilder({ slug, recordId }) {
             <table className="app-table">
               <thead>
                 <tr>
+                  <th className="col-sno">#</th>
                   <th>Document Type</th>
                   <th>Mandatory</th>
                   <th></th>
@@ -390,7 +391,8 @@ export default function InspectionPlanBuilder({ slug, recordId }) {
               </thead>
               <tbody>
                 {documents.map((doc, idx) => (
-                  <tr>
+                  <tr key={doc.id || idx}>
+                    <td className="col-sno">{idx + 1}</td>
                     <td>
                       <input
                         type="text"

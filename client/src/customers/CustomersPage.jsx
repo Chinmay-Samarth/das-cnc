@@ -221,6 +221,7 @@ export default function CustomersPage() {
           <table className="app-table">
             <thead>
               <tr>
+                <th className="col-sno">#</th>
                 {visibleColumns.map((column) => (
                   <th key={column.id} onClick={() => handleSort(column.id)}>
                     {column.label}
@@ -232,7 +233,7 @@ export default function CustomersPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredCustomers.map((customer) => (
+              {filteredCustomers.map((customer, index) => (
                 <tr
                   key={customer.id}
                   role="button"
@@ -245,6 +246,7 @@ export default function CustomersPage() {
                   }}
                   style={{ cursor: 'pointer' }}
                 >
+                  <td className="col-sno">{index + 1}</td>
                   {visibleColumns.map((column) => (
                     <td key={column.id}>
                       {column.render

@@ -530,6 +530,7 @@ export default function SalesInvoiceDetailsPage() {
           <table className="app-table">
             <thead>
               <tr>
+                <th className="col-sno">#</th>
                 <th>Description</th>
                 <th>Qty</th>
                 <th>Rate</th>
@@ -539,6 +540,7 @@ export default function SalesInvoiceDetailsPage() {
             <tbody>
               {lines.map((line, i) => (
                 <tr key={i}>
+                  <td className="col-sno">{i + 1}</td>
                   <td>
                     <div>{line.description}</div>
                     {line.drawing_number ? (

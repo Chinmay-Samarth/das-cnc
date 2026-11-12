@@ -142,6 +142,7 @@ export default function PurchaseOrdersTab() {
             <table className="app-table">
               <thead>
                 <tr>
+                  <th className="col-sno">#</th>
                   <th>Item</th>
                   <th>Campaign need</th>
                   <th>On-hand</th>
@@ -152,8 +153,9 @@ export default function PurchaseOrdersTab() {
                 </tr>
               </thead>
               <tbody>
-                {demand.map((item) => (
+                {demand.map((item, index) => (
                   <tr key={item.master_record_id}>
+                    <td className="col-sno">{index + 1}</td>
                     <td>
                       {item.item_label}
                       <div className="muted">{item.trigger_reason?.replace(/_/g, ' ')}</div>
@@ -219,6 +221,7 @@ export default function PurchaseOrdersTab() {
         <table className="app-table">
           <thead>
             <tr>
+              <th className="col-sno">#</th>
               <th>PO#</th>
               <th>Supplier</th>
               <th>GIRN</th>
@@ -230,8 +233,9 @@ export default function PurchaseOrdersTab() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((row) => (
+            {filtered.map((row, index) => (
               <tr key={row.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/purchase-orders/${row.id}`)}>
+                <td className="col-sno">{index + 1}</td>
                 <td>{row.po_number}</td>
                 <td>{row.supplier_name || '—'}</td>
                 <td>

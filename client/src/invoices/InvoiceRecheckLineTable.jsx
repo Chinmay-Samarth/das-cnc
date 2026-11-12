@@ -32,6 +32,7 @@ export default function InvoiceRecheckLineTable({
       <table className="app-table">
         <thead>
           <tr>
+            <th className="col-sno">#</th>
             <th>Invoice line</th>
             <th>Category</th>
             <th>Qty</th>
@@ -44,7 +45,7 @@ export default function InvoiceRecheckLineTable({
         <tbody>
           {lines.length === 0 ? (
             <tr>
-              <td colSpan={7} className="invoice-recheck-empty">
+              <td colSpan={8} className="invoice-recheck-empty">
                 No line items. Add a line if the invoice has items OCR did not pick up.
               </td>
             </tr>
@@ -65,6 +66,7 @@ export default function InvoiceRecheckLineTable({
                       : undefined
                 }
               >
+                <td className="col-sno">{idx + 1}</td>
                 <td>
                   {line.manual || !(line.scanned_description || line.description) ? (
                     <input

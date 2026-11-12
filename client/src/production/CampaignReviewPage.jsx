@@ -180,6 +180,7 @@ function CampaignDetail({ campaign }) {
             <table className="app-table">
               <thead>
                 <tr>
+                  <th className="col-sno">#</th>
                   <th>Schedule</th>
                   <th>Due</th>
                   <th>Qty</th>
@@ -189,8 +190,9 @@ function CampaignDetail({ campaign }) {
                 </tr>
               </thead>
               <tbody>
-                {schedules.map((s) => (
+                {schedules.map((s, index) => (
                   <tr key={s.id}>
+                    <td className="col-sno">{index + 1}</td>
                     <td>{s.schedule_number || s.delivery_schedule_id?.slice(0, 8) || '—'}</td>
                     <td>{s.due_date ? formatDisplayDate(s.due_date) : '—'}</td>
                     <td>{qty(s.schedule_qty)}</td>

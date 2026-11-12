@@ -200,6 +200,7 @@ export default function EmployeesPage() {
           <table className="app-table">
             <thead>
               <tr>
+                <th className="col-sno">#</th>
                 <th onClick={() => handleSort('full_name')}>
                   Name<span className="sort-indicator">{sortKey === 'full_name' ? (sortAsc ? ' ▲' : ' ▼') : ''}</span>
                 </th>
@@ -221,7 +222,7 @@ export default function EmployeesPage() {
               </tr>
             </thead>
             <tbody>
-              {paginatedEmployees.map((employee) => (
+              {paginatedEmployees.map((employee, index) => (
                 <tr
                   key={employee.id}
                   role="button"
@@ -234,6 +235,7 @@ export default function EmployeesPage() {
                   }}
                   style={{ cursor: 'pointer' }}
                 >
+                  <td className="col-sno">{(recordsPage - 1) * RECORDS_PAGE_SIZE + index + 1}</td>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                       <img

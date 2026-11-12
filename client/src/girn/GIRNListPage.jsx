@@ -133,6 +133,7 @@ export default function GIRNListPage() {
           <table className="app-table">
             <thead>
               <tr>
+                <th className="col-sno">#</th>
                 <th onClick={() => handleSort('girn_number')}>
                   GIRN Number<span className="sort-indicator">{sortArrow('girn_number')}</span>
                 </th>
@@ -157,7 +158,7 @@ export default function GIRNListPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((g) => (
+              {filtered.map((g, index) => (
                 <tr
                   key={g.id}
                   role="button"
@@ -168,6 +169,7 @@ export default function GIRNListPage() {
                     if (e.key === 'Enter' || e.key === ' ') navigate(`/girn/${g.id}`);
                   }}
                 >
+                  <td className="col-sno">{index + 1}</td>
                   <td>
                     <strong>{g.girn_number}</strong>
                   </td>

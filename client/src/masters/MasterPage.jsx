@@ -445,6 +445,7 @@ export default function MasterPage() {
           <table className="app-table">
             <thead>
               <tr>
+                <th className="col-sno">#</th>
                 {visibleColumns.map((c) => (
                   <th key={c.id} onClick={() => handleSort(`${c.id}`)}>
                     {columnHeading(c, columns)}
@@ -456,7 +457,7 @@ export default function MasterPage() {
               </tr>
             </thead>
             <tbody>
-              {pageRecords.map((r) => (
+              {pageRecords.map((r, index) => (
                 <tr
                   key={r.id}
                   role="button"
@@ -469,6 +470,7 @@ export default function MasterPage() {
                   }}
                   style={{ cursor: 'pointer' }}
                 >
+                  <td className="col-sno">{pageStart + index + 1}</td>
                   {visibleColumns.map((c) => {
                     const value = valueForColumn(r, c, columns)
                     return <td key={c.id}>{displayCell(c, value, relationLabels)}</td>

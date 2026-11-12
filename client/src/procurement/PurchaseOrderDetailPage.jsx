@@ -518,7 +518,7 @@ export default function PurchaseOrderDetailPage() {
         <table className="app-table">
           <thead>
             <tr>
-              <th>#</th>
+              <th className="col-sno">#</th>
               <th>Item</th>
               <th>Trigger</th>
               <th>Campaign need</th>
@@ -531,7 +531,7 @@ export default function PurchaseOrderDetailPage() {
           <tbody>
             {(po.lines || []).map((l) => (
               <tr key={l.id}>
-                <td>{l.line_no}</td>
+                <td className="col-sno">{l.line_no}</td>
                 <td>{l.item_label}</td>
                 <td>{l.trigger_reason || '—'}</td>
                 <td>{l.campaign_requirement ?? '—'}</td>

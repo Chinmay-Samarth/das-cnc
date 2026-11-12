@@ -111,6 +111,7 @@ export default function StockDetailPage() {
               <table className="app-table">
                 <thead>
                   <tr>
+                    <th className="col-sno">#</th>
                     <th>Date</th>
                     <th>Change</th>
                     <th>Balance after</th>
@@ -119,8 +120,9 @@ export default function StockDetailPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {ledger.map((entry) => (
+                  {ledger.map((entry, index) => (
                     <tr key={entry.id}>
+                      <td className="col-sno">{index + 1}</td>
                       <td>{formatDate(entry.created_at)}</td>
                       <td style={{ color: Number(entry.change_qty) >= 0 ? '#166534' : '#991b1b', fontWeight: 600 }}>
                         {Number(entry.change_qty) >= 0 ? '+' : ''}{fmt(entry.change_qty)}
@@ -144,7 +146,7 @@ export default function StockDetailPage() {
                   ))}
                   {ledger.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="muted">No ledger entries yet.</td>
+                      <td colSpan={6} className="muted">No ledger entries yet.</td>
                     </tr>
                   ) : null}
                 </tbody>
@@ -157,6 +159,7 @@ export default function StockDetailPage() {
                 <table className="data-table">
                   <thead>
                     <tr>
+                      <th className="col-sno">#</th>
                       <th>Serial</th>
                       <th>Life remaining</th>
                       <th>Life total</th>
@@ -165,8 +168,9 @@ export default function StockDetailPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {toolInstances.map((ti) => (
+                    {toolInstances.map((ti, index) => (
                       <tr key={ti.id}>
+                        <td className="col-sno">{index + 1}</td>
                         <td>{ti.serial_number}</td>
                         <td>{fmt(ti.life_remaining)}</td>
                         <td>{fmt(ti.life_total)}</td>

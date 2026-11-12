@@ -62,6 +62,7 @@ export default function InvoiceRecheckTaxTable({
       <table className="app-table">
         <thead>
           <tr>
+            <th className="col-sno">#</th>
             <th>Kind</th>
             <th>Rate %</th>
             <th>Taxable base</th>
@@ -72,7 +73,7 @@ export default function InvoiceRecheckTaxTable({
         <tbody>
           {taxes.length === 0 ? (
             <tr>
-              <td colSpan={5} className="invoice-recheck-empty">
+              <td colSpan={6} className="invoice-recheck-empty">
                 No tax lines. Add CGST/SGST or IGST if this invoice has GST.
               </td>
             </tr>
@@ -91,6 +92,7 @@ export default function InvoiceRecheckTaxTable({
                       : undefined
                 }
               >
+                <td className="col-sno">{idx + 1}</td>
                 <td>
                   <select
                     className={fieldClass('invoice-recheck-select', issue.kind, sev)}

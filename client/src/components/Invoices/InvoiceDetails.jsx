@@ -716,14 +716,15 @@ export default function InvoiceDetails() {
               <table style={styles.table}>
                 <thead style={styles.thead}>
                   <tr>
-                    {['Description', 'Qty', 'Rate (₹)', 'Total (₹)'].map((h) => (
-                      <th key={h} style={styles.th}>{h}</th>
+                    {['#', 'Description', 'Qty', 'Rate (₹)', 'Total (₹)'].map((h) => (
+                      <th key={h} style={h === '#' ? styles.thSno : styles.th}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {lineItems.map((item, i) => (
                     <tr key={i}>
+                      <td style={styles.tdSno}>{i + 1}</td>
                       <td style={styles.td}>{item.description ?? '—'}</td>
                       <td style={{ ...styles.td, ...styles.tdNum }}>{fmt(item.quantity)}</td>
                       <td style={{ ...styles.td, ...styles.tdNum }}>{fmtMoney(item.unit_price)}</td>
@@ -745,8 +746,8 @@ export default function InvoiceDetails() {
                 <table style={styles.table}>
                   <thead style={styles.thead}>
                     <tr>
-                      {['Kind', 'Rate', 'Amount (₹)'].map((h) => (
-                        <th key={h} style={styles.th}>{h}</th>
+                      {['#', 'Kind', 'Rate', 'Amount (₹)'].map((h) => (
+                        <th key={h} style={h === '#' ? styles.thSno : styles.th}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -756,6 +757,7 @@ export default function InvoiceDetails() {
                       const badge = taxKindBadge(kind);
                       return (
                         <tr key={i}>
+                          <td style={styles.tdSno}>{i + 1}</td>
                           <td style={styles.td}>
                             <span
                               style={{
@@ -1080,6 +1082,30 @@ const styles = {
     textTransform: 'uppercase',
     letterSpacing: '0.04em',
     borderBottom: '1px solid #d1d5db',
+  },
+
+  thSno: {
+    padding: '10px 6px 10px 0',
+    textAlign: 'left',
+    color: '#6b7280',
+    fontWeight: 600,
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 0,
+    borderBottom: '1px solid #d1d5db',
+    width: 1,
+    whiteSpace: 'nowrap',
+  },
+
+  tdSno: {
+    padding: '10px 8px 10px 0',
+    color: '#6b7280',
+    fontSize: 13,
+    borderBottom: '1px solid #f9fafb',
+    verticalAlign: 'top',
+    width: 1,
+    whiteSpace: 'nowrap',
+    fontVariantNumeric: 'tabular-nums',
   },
 
   td: {

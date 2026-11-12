@@ -278,7 +278,7 @@ function ItemsTab({ items }) {
       <table className="app-table">
         <thead>
           <tr>
-            <th>#</th>
+            <th className="col-sno">#</th>
             <th>Category</th>
             <th>Item</th>
             <th>Code</th>
@@ -295,7 +295,7 @@ function ItemsTab({ items }) {
             const cfg = getCategoryConfig(item.item_category || 'raw_material');
             return (
               <tr key={item.id}>
-                <td>{idx + 1}</td>
+                <td className="col-sno">{idx + 1}</td>
                 <td>{cfg.label}</td>
                 <td>
                   {item.master_record_label || item.raw_material_label || item.item_description || '—'}
@@ -558,6 +558,7 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
                 <table className="app-table">
                   <thead>
                     <tr>
+                      <th className="col-sno">#</th>
                       <th>Parameter</th>
                       <th>Type</th>
                       <th>Spec</th>
@@ -567,7 +568,7 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
                     </tr>
                   </thead>
                   <tbody>
-                    {(plan.parameters || []).map((param) => {
+                    {(plan.parameters || []).map((param, index) => {
                       const spec =
                         param.check_type === 'dimensional'
                           ? `${param.nominal_value ?? '—'} ${param.unit || ''} (+${param.tol_plus ?? 0}/-${param.tol_minus ?? 0})`
@@ -575,6 +576,7 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
                       const input = valueInputs[param.id] || {};
                       return (
                         <tr key={param.id}>
+                          <td className="col-sno">{index + 1}</td>
                           <td>
                             {param.parameter_name}
                             {param.is_mandatory ? ' *' : ''}

@@ -808,11 +808,12 @@ export default function EmployeeDetailsPage() {
                         <div className="attendance-table-wrap">
                           <table className="app-table">
                             <thead>
-                              <tr><th>Date</th><th>Shift</th><th>In</th><th>Out</th><th>Status</th><th>Minutes</th><th>OT</th></tr>
+                              <tr><th className="col-sno">#</th><th>Date</th><th>Shift</th><th>In</th><th>Out</th><th>Status</th><th>Minutes</th><th>OT</th></tr>
                             </thead>
                             <tbody>
-                              {attendanceRecords.map((row) => (
+                              {attendanceRecords.map((row, index) => (
                                 <tr key={`${row.shift_date}-${row.punched_in_at || ''}-${row.punched_out_at || ''}`}>
+                                  <td className="col-sno">{index + 1}</td>
                                   <td>{formatDisplayDate(row.shift_date)}</td>
                                   <td>{row.shift || '--'}</td>
                                   <td>{toDisplayTime(row.punched_in_at)}</td>

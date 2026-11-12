@@ -102,6 +102,7 @@ export default function WorkCentersPage() {
           <table className="app-table">
             <thead>
               <tr>
+                <th className="col-sno">#</th>
                 <th onClick={() => handleSort('code')}>
                   Code<span className="sort-indicator">{sortMark('code')}</span>
                 </th>
@@ -126,7 +127,7 @@ export default function WorkCentersPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((wc) => (
+              {filtered.map((wc, index) => (
                 <tr
                   key={wc.id}
                   role="button"
@@ -139,6 +140,7 @@ export default function WorkCentersPage() {
                   }}
                   style={{ cursor: 'pointer' }}
                 >
+                  <td className="col-sno">{index + 1}</td>
                   <td>
                     <strong>{wc.code}</strong>
                   </td>

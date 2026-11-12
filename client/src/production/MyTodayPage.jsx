@@ -507,6 +507,7 @@ function EfficiencyMatrix({
         <table className="app-table">
           <thead>
             <tr>
+              <th className="col-sno">#</th>
               <th>Employee</th>
               <th>Efficiency %</th>
               <th>Notes</th>
@@ -515,6 +516,7 @@ function EfficiencyMatrix({
           <tbody>
             {rows.map((row, idx) => (
               <tr key={row.employee_id}>
+                <td className="col-sno">{idx + 1}</td>
                 <td>
                   {row.full_name}
                   {row.is_manager ? (

@@ -224,6 +224,7 @@ export default function ProductionBoardPage() {
             <table className="app-table">
               <thead>
                 <tr>
+                  <th className="col-sno">#</th>
                   <th>Date</th>
                   <th>WC</th>
                   <th>Component</th>
@@ -236,7 +237,7 @@ export default function ProductionBoardPage() {
                 </tr>
               </thead>
               <tbody>
-                {commitments.map((c) => {
+                {commitments.map((c, index) => {
                   const remaining = Math.max(
                     0,
                     Number(c.committed_qty || 0) - Number(c.good_qty || 0)
@@ -251,6 +252,7 @@ export default function ProductionBoardPage() {
                       onClick={() => navigate(`/production/cards/${c.id}`)}
                       style={{ cursor: 'pointer' }}
                     >
+                      <td className="col-sno">{index + 1}</td>
                       <td>
                         <span className="prod-date-cell">
                           {c.work_date || '—'}

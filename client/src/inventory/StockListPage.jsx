@@ -199,6 +199,7 @@ export default function StockListPage() {
             <table className="app-table">
               <thead>
                 <tr>
+                  <th className="col-sno">#</th>
                   <th onClick={() => handleSort('category')}>
                     Category<span className="sort-indicator">{sortArrow('category')}</span>
                   </th>
@@ -214,7 +215,7 @@ export default function StockListPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {rows.map((row, index) => (
                   <tr
                     key={row.id}
                     role="button"
@@ -231,6 +232,7 @@ export default function StockListPage() {
                       if (e.key === 'Enter' || e.key === ' ') navigate(`/stock/${row.id}`);
                     }}
                   >
+                    <td className="col-sno">{(page - 1) * LIMIT + index + 1}</td>
                     <td>
                       <CategoryBadge category={row.item_category} label={row.category_label} />
                     </td>

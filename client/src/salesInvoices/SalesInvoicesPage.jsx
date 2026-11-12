@@ -310,6 +310,7 @@ export default function SalesInvoicesPage() {
             <table className="app-table">
               <thead>
                 <tr>
+                  <th className="col-sno">#</th>
                   <th onClick={() => handleSort('customer_name')} style={{ cursor: 'pointer' }}>
                     Customer
                     <span className="sort-indicator">{sortMark('customer_name')}</span>
@@ -338,7 +339,7 @@ export default function SalesInvoicesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((inv) => (
+                {filteredRows.map((inv, index) => (
                   <tr
                     key={inv.id}
                     role="button"
@@ -352,6 +353,7 @@ export default function SalesInvoicesPage() {
                     }}
                     style={{ cursor: 'pointer' }}
                   >
+                    <td className="col-sno">{index + 1}</td>
                     <td>{inv.customer_name || '—'}</td>
                     <td>{inv.invoice_number || 'Draft'}</td>
                     <td>{formatDisplayDate(inv.invoice_date || inv.created_at)}</td>

@@ -299,6 +299,7 @@ export default function PurchasePaymentsPage() {
               <table className="app-table">
                 <thead>
                   <tr>
+                    <th className="col-sno">#</th>
                     <th style={{ width: 40 }} />
                     <th>Invoice</th>
                     <th>Due</th>
@@ -307,8 +308,9 @@ export default function PurchasePaymentsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {group.invoices.map((inv) => (
+                  {group.invoices.map((inv, index) => (
                     <tr key={inv.id}>
+                      <td className="col-sno">{index + 1}</td>
                       <td>
                         <input
                           type="checkbox"

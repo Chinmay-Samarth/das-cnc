@@ -567,6 +567,7 @@ export default function HorizonPlannerPage() {
                       <table className="app-table">
                         <thead>
                           <tr>
+                            <th className="col-sno">#</th>
                             <th>Rank</th>
                             <th>Component</th>
                             <th>Cover</th>
@@ -579,7 +580,7 @@ export default function HorizonPlannerPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {campaigns.map((campaign) => {
+                          {campaigns.map((campaign, index) => {
                             const rate = rateLabel(campaign);
                             const runOut = Number(campaign.run_out_days);
                             return (
@@ -587,6 +588,7 @@ export default function HorizonPlannerPage() {
                                 key={campaign.master_record_id}
                                 className={campaign.demand_rank === 1 ? 'is-focus-row' : ''}
                               >
+                                <td className="col-sno">{index + 1}</td>
                                 <td>
                                   <strong>#{campaign.demand_rank}</strong>
                                 </td>

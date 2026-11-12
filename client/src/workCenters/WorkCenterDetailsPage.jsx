@@ -775,7 +775,7 @@ export default function WorkCenterDetailsPage() {
                 <table className="app-table">
                   <thead>
                     <tr>
-                      <th>#</th>
+                      <th className="col-sno">#</th>
                       <th>Machine</th>
                       <th style={{ width: 100 }}>Actions</th>
                     </tr>
@@ -783,7 +783,7 @@ export default function WorkCenterDetailsPage() {
                   <tbody>
                     {machines.map((m) => (
                       <tr key={m.id}>
-                        <td>{m.sequence}</td>
+                        <td className="col-sno">{m.sequence}</td>
                         <td>
                           <strong>{m.label}</strong>
                           <div className="table-subtext">{m.machine_record_id.slice(0, 8)}…</div>

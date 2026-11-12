@@ -398,6 +398,7 @@ export default function ProductionCardTrackingPage() {
             <table className="app-table">
               <thead>
                 <tr>
+                  <th className="col-sno">#</th>
                   <th>Op</th>
                   <th>WC</th>
                   <th>Operator</th>
@@ -408,8 +409,9 @@ export default function ProductionCardTrackingPage() {
                 </tr>
               </thead>
               <tbody>
-                {handoffRows.map((t) => (
+                {handoffRows.map((t, index) => (
                   <tr key={t.node_id || t.id || `${t.label}-${t.status}`}>
+                    <td className="col-sno">{index + 1}</td>
                     <td>
                       <strong>{t.label || '—'}</strong>
                       {t.activity_type ? (

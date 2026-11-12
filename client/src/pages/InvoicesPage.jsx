@@ -9,6 +9,9 @@ import { appAlert, appConfirm } from '../components/dialog';
 import { useAuth } from '../auth/authContext';
 import PurchaseOrdersTab from '../procurement/PurchaseOrdersTab';
 import FormSearchSelect from '../components/shared/FormSearchSelect';
+import TableColumnPicker from '../components/shared/TableColumnPicker';
+import useTableColumns from '../components/shared/useTableColumns';
+import { sortBy } from '../utils/listHelpers';
 
 const STATUS_OPTIONS = [
   { value: 'needs_review', label: 'Needs review' },
@@ -140,7 +143,144 @@ function statusTone(status) {
   return status || 'pending';
 }
 
-import { sortBy } from '../utils/listHelpers';
+const INVOICE_COLUMNS = [
+  {
+    id: 'supplier_name',
+    label: 'Vendor',
+    section: 'Invoice',
+    default: true,
+    getValue: (row) => row.suppliers?.name || '',
+    render: (row) => row.suppliers?.name || '—',
+  },
+  {
+    id: 'invoice_number',
+    label: 'Invoice #',
+    section: 'Invoice',
+    default: true,
+    getValue: (row) => row.invoice_number || '',
+  },
+  {
+    id: 'invoice_date',
+    label: 'Date',
+    section: 'Invoice',
+    default: true,
+    getValue: (row) => row.invoice_date || row.created_at || '',
+    render: (row) => formatDisplayDate(row.invoice_date || row.created_at),
+  },
+  {
+    id: 'customer_GSTIN',
+    label: 'GSTIN',
+    section: 'Invoice',
+    getValue: (row) => row.customer_GSTIN || row.suppliers?.GSTIN || '',
+  },
+  {
+    id: 'girn_number',
+    label: 'GIRN',
+    section: 'Invoice',
+    getValue: (row) => row.girn_number || '',
+  },
+  {
+    id: 'register_serial',
+    label: 'Register SL',
+    section: 'Invoice',
+    getValue: (row) => (row.register_serial == null ? '' : String(row.register_serial)),
+  },
+  {
+    id: 'IRN',
+    label: 'IRN',
+    section: 'Invoice',
+    getValue: (row) => row.IRN || '',
+  },
+  {
+    id: 'total_amount',
+    label: 'Total',
+    section: 'Amounts',
+    default: true,
+    getValue: (row) => invoiceDisplayTotal(row),
+    render: (row) => `₹${fmt(invoiceDisplayTotal(row))}`,
+  },
+  {
+    id: 'po_advance_amount',
+    label: 'Advance',
+    section: 'Amounts',
+    default: true,
+    getValue: (row) => Number(row.po_advance_amount) || 0,
+    render: (row) =>
+      Number(row.po_advance_amount) > 0 ? `₹${fmt(row.po_advance_amount)}` : '—',
+  },
+  {
+    id: 'base_amount',
+    label: 'Taxable amount',
+    section: 'Amounts',
+    getValue: (row) => row.base_amount ?? '',
+    render: (row) => (row.base_amount == null || row.base_amount === '' ? '—' : `₹${fmt(row.base_amount)}`),
+  },
+  {
+    id: 'tax_amount',
+    label: 'Tax',
+    section: 'Amounts',
+    getValue: (row) => row.tax_amount ?? '',
+    render: (row) => (row.tax_amount == null || row.tax_amount === '' ? '—' : `₹${fmt(row.tax_amount)}`),
+  },
+  {
+    id: 'due_date',
+    label: 'Due date',
+    section: 'Payment',
+    default: true,
+    getValue: (row) => row.due_date || '',
+    render: (row) => formatDisplayDate(row.due_date),
+  },
+  {
+    id: 'credit_period_days',
+    label: 'Credit days',
+    section: 'Payment',
+    getValue: (row) => (row.credit_period_days == null ? '' : String(row.credit_period_days)),
+  },
+  {
+    id: 'paid_at',
+    label: 'Paid on',
+    section: 'Payment',
+    getValue: (row) => row.paid_at || '',
+    render: (row) => formatDisplayDate(row.paid_at),
+  },
+  {
+    id: 'payment_reference',
+    label: 'Payment ref',
+    section: 'Payment',
+    getValue: (row) => row.payment_reference || '',
+  },
+  {
+    id: 'payment_deduction',
+    label: 'Deduction',
+    section: 'Payment',
+    getValue: (row) => row.payment_deduction ?? '',
+    render: (row) =>
+      row.payment_deduction == null || row.payment_deduction === ''
+        ? '—'
+        : `₹${fmt(row.payment_deduction)}`,
+  },
+  {
+    id: 'status',
+    label: 'Status',
+    section: 'Status',
+    default: true,
+    getValue: (row) => invoicePrimaryBadge(row).label,
+    render: (row) => {
+      const badge = invoicePrimaryBadge(row);
+      return <StatusBadge status={badge.tone}>{badge.label}</StatusBadge>;
+    },
+  },
+  {
+    id: 'tally_sync_status',
+    label: 'Tally',
+    section: 'Status',
+    getValue: (row) => row.tally_sync_status || '',
+    render: (row) => {
+      const status = String(row.tally_sync_status || '').trim();
+      return status ? status.replace(/_/g, ' ').toUpperCase() : '—';
+    },
+  },
+];
 
 async function readExportError(err) {
   const data = err.response?.data;
@@ -173,6 +313,10 @@ export default function InvoicesPage() {
   const [exporting, setExporting] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [syncingAll, setSyncingAll] = useState(false);
+  const { visibleColumns, columnGroups, toggleColumn, resetColumns } = useTableColumns(
+    'das-cnc-purchase-invoice-columns',
+    INVOICE_COLUMNS
+  );
 
   const exportDateError = useMemo(() => {
     if (!exportOpen) return '';
@@ -208,27 +352,15 @@ export default function InvoicesPage() {
       if (displayStatus === 'cancelled' && statusFilter !== 'cancelled') return false;
       if (!matchesStatusFilter(invoice, statusFilter)) return false;
       if (!query) return true;
-      return [
-        invoice.suppliers?.name,
-        invoice.invoice_number,
-        invoice.invoice_date,
-        invoiceDisplayTotal(invoice),
-        invoice.due_date,
-        invoice.status,
-        invoice.tally_sync_status,
-        invoice.girn_number,
-        invoice.customer_GSTIN,
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(query);
+      return INVOICE_COLUMNS.some((column) =>
+        String(column.getValue(invoice) ?? '').toLowerCase().includes(query)
+      );
     });
 
-    return sortBy(matches, sortKey, sortAsc, (row) => {
-      if (sortKey === 'total_amount') return invoiceDisplayTotal(row);
-      if (sortKey === 'supplier_name') return row.suppliers?.name ?? row.supplier_name ?? '';
-      return row[sortKey] ?? '';
-    });
+    const sortColumn = INVOICE_COLUMNS.find((column) => column.id === sortKey);
+    return sortBy(matches, sortKey, sortAsc, (row) =>
+      sortColumn ? sortColumn.getValue(row) : row[sortKey] ?? ''
+    );
   }, [invoices, search, statusFilter, sortKey, sortAsc]);
 
   const unsyncedCount = useMemo(
@@ -508,6 +640,12 @@ export default function InvoicesPage() {
             emptyMessage="No statuses"
           />
         </label>
+        <TableColumnPicker
+          columnGroups={columnGroups}
+          visibleColumns={visibleColumns}
+          onToggle={toggleColumn}
+          onReset={resetColumns}
+        />
       </div>
 
       
@@ -529,38 +667,23 @@ export default function InvoicesPage() {
             <table className="app-table">
               <thead>
                 <tr>
-                  <th onClick={() => handleSort('supplier_name')} style={{ cursor: 'pointer' }}>
-                    Vendor
-                    <span className="sort-indicator">{sortMark('supplier_name')}</span>
-                  </th>
-                  <th onClick={() => handleSort('invoice_number')} style={{ cursor: 'pointer' }}>
-                    Invoice #
-                    <span className="sort-indicator">{sortMark('invoice_number')}</span>
-                  </th>
-                  <th onClick={() => handleSort('invoice_date')} style={{ cursor: 'pointer' }}>
-                    Date
-                    <span className="sort-indicator">{sortMark('invoice_date')}</span>
-                  </th>
-                  <th onClick={() => handleSort('total_amount')} style={{ cursor: 'pointer' }}>
-                    Total
-                    <span className="sort-indicator">{sortMark('total_amount')}</span>
-                  </th>
-                  <th>Advance</th>
-                  <th onClick={() => handleSort('due_date')} style={{ cursor: 'pointer' }}>
-                    Due date
-                    <span className="sort-indicator">{sortMark('due_date')}</span>
-                  </th>
-                  <th onClick={() => handleSort('status')} style={{ cursor: 'pointer' }}>
-                    Status
-                    <span className="sort-indicator">{sortMark('status')}</span>
-                  </th>
+                  <th className="col-sno">#</th>
+                  {visibleColumns.map((column) => (
+                    <th
+                      key={column.id}
+                      onClick={() => handleSort(column.id)}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      {column.label}
+                      <span className="sort-indicator">{sortMark(column.id)}</span>
+                    </th>
+                  ))}
                   <th style={{ width: 88 }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredInvoices.map((item) => {
+                {filteredInvoices.map((item, index) => {
                   const displayStatus = invoiceDisplayStatus(item);
-                  const badge = invoicePrimaryBadge(item);
                   const canDeleteDraft =
                     displayStatus === 'needs_review' || displayStatus === 'error';
                   return (
@@ -577,19 +700,12 @@ export default function InvoicesPage() {
                     }}
                     style={{ cursor: 'pointer' }}
                   >
-                    <td>{item.suppliers?.name || '—'}</td>
-                    <td>{item.invoice_number || '—'}</td>
-                    <td>{formatDisplayDate(item.invoice_date || item.created_at)}</td>
-                    <td>₹{fmt(invoiceDisplayTotal(item))}</td>
-                    <td>
-                      {Number(item.po_advance_amount) > 0
-                        ? `₹${fmt(item.po_advance_amount)}`
-                        : '—'}
-                    </td>
-                    <td>{formatDisplayDate(item.due_date)}</td>
-                    <td>
-                      <StatusBadge status={badge.tone}>{badge.label}</StatusBadge>
-                    </td>
+                    <td className="col-sno">{index + 1}</td>
+                    {visibleColumns.map((column) => (
+                      <td key={column.id}>
+                        {column.render ? column.render(item) : column.getValue(item) || '—'}
+                      </td>
+                    ))}
                     <td onClick={(event) => event.stopPropagation()}>
                       {canDeleteDraft ? (
                         <button

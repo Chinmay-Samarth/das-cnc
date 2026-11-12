@@ -171,6 +171,7 @@ export default function GirnApprovalsTab({ initialStatus = 'ready' }) {
           <table className="app-table">
             <thead>
               <tr>
+                <th className="col-sno">#</th>
                 <th>GIRN</th>
                 <th>Supplier</th>
                 <th>Received</th>
@@ -183,12 +184,13 @@ export default function GirnApprovalsTab({ initialStatus = 'ready' }) {
               </tr>
             </thead>
             <tbody>
-              {girns.map((row) => {
+              {girns.map((row, index) => {
                 const reviewer = reviewerCell(row);
                 const canAct = row.queue_status === 'ready';
                 return (
-                  <tr key={row.id}>
-                    <td>
+                <tr key={row.id}>
+                  <td className="col-sno">{index + 1}</td>
+                  <td>
                       <Link to={`/girn/${row.id}`}>{row.girn_number || '—'}</Link>
                     </td>
                     <td>{row.supplier_name || '—'}</td>

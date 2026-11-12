@@ -478,6 +478,7 @@ export default function PayrollPage() {
           <table className="app-table payroll-table">
             <thead>
               <tr>
+                <th className="payroll-col-sticky payroll-col-sno col-sno">#</th>
                 <th className="payroll-col-sticky payroll-col-code" title="Employee code">Code</th>
                 <th className="payroll-col-sticky payroll-col-name" title="Employee name">Name</th>
                 <th title="Wage period (days in month)">Wage</th>
@@ -499,7 +500,7 @@ export default function PayrollPage() {
               </tr>
             </thead>
             <tbody>
-              {lines.map((line) => {
+              {lines.map((line, index) => {
                 const dirty = Boolean(drafts[line.id] && Object.keys(drafts[line.id]).length);
                 const renderInput = (key) =>
                   locked ? (
@@ -517,6 +518,7 @@ export default function PayrollPage() {
                   );
                 return (
                   <tr key={line.id} className={dirty ? 'is-dirty' : undefined}>
+                    <td className="payroll-col-sticky payroll-col-sno col-sno">{index + 1}</td>
                     <td className="payroll-col-sticky payroll-col-code">{line.employee_code || '—'}</td>
                     <td className="payroll-col-sticky payroll-col-name" title={line.employee_name || ''}>
                       {line.employee_name || '—'}

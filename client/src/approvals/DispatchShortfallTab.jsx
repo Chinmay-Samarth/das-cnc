@@ -139,6 +139,7 @@ export default function DispatchShortfallTab({ initialStatus = 'pending' }) {
           <table className="app-table">
             <thead>
               <tr>
+                <th className="col-sno">#</th>
                 <th>Lot</th>
                 <th>Component</th>
                 <th>Lot qty</th>
@@ -150,8 +151,9 @@ export default function DispatchShortfallTab({ initialStatus = 'pending' }) {
               </tr>
             </thead>
             <tbody>
-              {requests.map((row) => (
+              {requests.map((row, index) => (
                 <tr key={row.id}>
+                  <td className="col-sno">{index + 1}</td>
                   <td>
                     <div>{row.lot_number || '—'}</div>
                     {row.schedule_number ? (

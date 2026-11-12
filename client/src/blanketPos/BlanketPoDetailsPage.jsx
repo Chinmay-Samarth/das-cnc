@@ -580,7 +580,7 @@ export default function BlanketPoDetailsPage() {
                   <table className="app-table">
                     <thead>
                       <tr>
-                        <th>#</th>
+                        <th className="col-sno">#</th>
                         <th>Component</th>
                         <th>UOM</th>
                         <th>Unit price</th>
@@ -591,7 +591,7 @@ export default function BlanketPoDetailsPage() {
                     <tbody>
                       {lines.map((l) => (
                         <tr key={l.id}>
-                          <td>{l.line_no}</td>
+                          <td className="col-sno">{l.line_no}</td>
                           <td>
                             <TruncatedText as="strong">{l.component_label}</TruncatedText>
                           </td>
@@ -696,6 +696,7 @@ export default function BlanketPoDetailsPage() {
                   <table className="app-table">
                     <thead>
                       <tr>
+                        <th className="col-sno">#</th>
                         <th>Line</th>
                         <th>Cadence</th>
                         <th>When</th>
@@ -706,7 +707,7 @@ export default function BlanketPoDetailsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {rules.map((r) => {
+                      {rules.map((r, index) => {
                         const line = lines.find((l) => l.id === r.blanket_po_line_id);
                         const ruleStatus = r.is_active
                           ? 'active'
@@ -715,6 +716,7 @@ export default function BlanketPoDetailsPage() {
                             : 'draft';
                         return (
                           <tr key={r.id}>
+                            <td className="col-sno">{index + 1}</td>
                             <td>
                               <TruncatedText>
                                 {line?.component_label || r.blanket_po_line_id.slice(0, 8)}

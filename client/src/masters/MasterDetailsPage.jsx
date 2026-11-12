@@ -128,6 +128,7 @@ function RepeatableSectionView({ section, repeatableValues }) {
       <table className="app-table">
         <thead>
           <tr>
+            <th className="col-sno">#</th>
             {section.fields.map(f => (
               <th key={f.id}>{f.label}</th>
             ))}
@@ -136,6 +137,7 @@ function RepeatableSectionView({ section, repeatableValues }) {
         <tbody>
           {rows.map((row, ri) => (
             <tr key={ri}>
+              <td className="col-sno">{ri + 1}</td>
               {section.fields.map(field => {
                 const cell      = row[field.slug]
                 const formatted = formatValue(field, cell)

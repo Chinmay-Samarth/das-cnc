@@ -315,6 +315,7 @@ export default function AttendancePage() {
                 <table className="app-table">
                   <thead>
                     <tr>
+                      <th className="col-sno">#</th>
                       <th>Employee</th>
                       <th>Shift</th>
                       <th>Check-In</th>
@@ -323,10 +324,11 @@ export default function AttendancePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {paginatedRecords.map((row) => {
+                    {paginatedRecords.map((row, index) => {
                       const statusMeta = formatRecordStatus(row.status);
                       return (
                       <tr key={`${row.employee_code}-${row.local_in}-${row.local_out}`} onClick={()=>{navigate(`/employees/${row.id}`)}}>
+                        <td className="col-sno">{(recordsPage - 1) * RECORDS_PAGE_SIZE + index + 1}</td>
                         <td className='name-column'>
                           <div className="table-avatar">
                       

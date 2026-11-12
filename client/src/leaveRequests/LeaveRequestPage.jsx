@@ -362,6 +362,7 @@ function AdminLeaveView({ initialStatus = 'pending' }) {
           <table className="app-table">
             <thead>
               <tr>
+                <th className="col-sno">#</th>
                 <th>Employee</th>
                 <th>Period</th>
                 <th>Days</th>
@@ -373,10 +374,11 @@ function AdminLeaveView({ initialStatus = 'pending' }) {
               </tr>
             </thead>
             <tbody>
-              {requests.map((row) => {
+              {requests.map((row, index) => {
                 const drafting = approveDraft?.id === row.id;
                 return (
                   <tr key={row.id}>
+                    <td className="col-sno">{index + 1}</td>
                     <td>
                       <div>{row.employee_name || '—'}</div>
                       {row.employee_code ? (

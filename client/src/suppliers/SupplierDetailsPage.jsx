@@ -542,6 +542,7 @@ export default function SupplierDetailsPage() {
                 <table className="app-table">
                   <thead>
                     <tr>
+                      <th className="col-sno">#</th>
                       <th>Invoice #</th>
                       <th>Date</th>
                       <th>Due Date</th>
@@ -550,7 +551,7 @@ export default function SupplierDetailsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {invoices.map((invoice) => (
+                    {invoices.map((invoice, index) => (
                       <tr
                         key={invoice.id}
                         role="button"
@@ -563,6 +564,7 @@ export default function SupplierDetailsPage() {
                         }}
                         style={{ cursor: 'pointer' }}
                       >
+                        <td className="col-sno">{index + 1}</td>
                         <td>{invoice.invoice_number || '--'}</td>
                         <td>{formatDisplayDate(invoice.invoice_date || invoice.created_at, '--')}</td>
                         <td>{formatDisplayDate(invoice.due_date, '--')}</td>

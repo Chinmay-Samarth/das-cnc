@@ -257,6 +257,7 @@ export default function SuppliersPage() {
           <table className="app-table">
             <thead>
               <tr>
+                <th className="col-sno">#</th>
                 {visibleColumns.map((column) => (
                   <th key={column.id} onClick={() => handleSort(column.id)}>
                     {column.label}
@@ -268,7 +269,7 @@ export default function SuppliersPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredSuppliers.map((supplier) => (
+              {filteredSuppliers.map((supplier, index) => (
                 <tr
                   key={supplier.id}
                   role="button"
@@ -281,6 +282,7 @@ export default function SuppliersPage() {
                   }}
                   style={{ cursor: 'pointer' }}
                 >
+                  <td className="col-sno">{index + 1}</td>
                   {visibleColumns.map((column) => (
                     <td key={column.id}>
                       {column.render
