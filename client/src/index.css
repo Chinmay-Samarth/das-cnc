@@ -7999,16 +7999,37 @@ button:hover:not(:disabled) {
   align-items: flex-end;
 }
 
+.invoice-list-filters {
+  align-items: flex-end;
+}
+
+.invoice-columns-field {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.invoice-columns-spacer {
+  visibility: hidden;
+  user-select: none;
+}
+
 .invoice-list-filters input[type='search'],
 .invoice-list-filters .form-search-select-trigger,
-.invoice-list-filters .mp-column-picker > .mes-btn {
+.invoice-list-filters .invoice-columns-field .mes-btn {
   height: 40px;
   min-height: 40px;
+  margin: 0;
   box-sizing: border-box;
 }
 
+.invoice-list-filters .form-search-select {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
 .mes-filters .mp-column-picker {
-  align-self: flex-end;
+  align-self: stretch;
 }
 
 .mes-filters .mp-column-option {
@@ -8022,6 +8043,7 @@ button:hover:not(:disabled) {
 }
 
 .mes-filters .mp-column-picker > .mes-btn {
+  width: 100%;
   padding: 0 14px;
   font-size: 13px;
   line-height: 1;

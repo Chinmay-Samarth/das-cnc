@@ -640,12 +640,17 @@ export default function InvoicesPage() {
             emptyMessage="No statuses"
           />
         </label>
-        <TableColumnPicker
-          columnGroups={columnGroups}
-          visibleColumns={visibleColumns}
-          onToggle={toggleColumn}
-          onReset={resetColumns}
-        />
+        <label className="invoice-columns-field">
+          <span className="invoice-columns-spacer" aria-hidden="true">
+            Columns
+          </span>
+          <TableColumnPicker
+            columnGroups={columnGroups}
+            visibleColumns={visibleColumns}
+            onToggle={toggleColumn}
+            onReset={resetColumns}
+          />
+        </label>
       </div>
 
       
