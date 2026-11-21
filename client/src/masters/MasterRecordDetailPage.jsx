@@ -11,6 +11,7 @@ import { isBomsMasterSlug } from './bomsMasterSlugs'
 import { isRoutableMasterSlug } from './routableMasterSlugs'
 import { Pencil } from 'lucide-react'
 import { formatDisplayDate } from '../utils/dateFormat'
+import { SkeletonDetail, SkeletonList } from '../components/mes'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -236,7 +237,9 @@ function MasterRecordStockTab({ recordId }) {
     return () => { mounted = false }
   }, [recordId])
 
-  if (loading) return <p className="muted">Loading stock...</p>
+  if (loading) {
+    return <SkeletonList embedded showHeader={false} showFilters={false} rows={4} cols={4} />
+  }
   if (error) return <p className="error-message">{error}</p>
   if (!rows.length) return <p className="muted">No stock recorded for this item yet.</p>
 
@@ -397,11 +400,7 @@ export default function MasterRecordDetailPage() {
   if (loading) {
     return (
       <div className="mes-shell employee-shell">
-        <div className="card" style={{ display: 'grid', gap: 16, padding: 32 }}>
-          <div className="skeleton" style={{ height: 32, width: '40%', borderRadius: 8 }} />
-          <div className="skeleton" style={{ height: 44, width: '60%', borderRadius: 10 }} />
-          <div className="skeleton" style={{ height: 200, borderRadius: 12 }} />
-        </div>
+        <SkeletonDetail showTabs={false} />
       </div>
     )
   }

@@ -14,7 +14,15 @@ import api from '../api/client';
 import { useAuth } from '../auth/authContext';
 import { appAlert, appConfirm } from '../components/dialog';
 import AvailableMachineSelect from './AvailableMachineSelect';
-import { AlertBanner, EmptyState, FormActions, MetricCard, StatusBadge, TruncatedText } from '../components/mes';
+import {
+  AlertBanner,
+  EmptyState,
+  FormActions,
+  MetricCard,
+  StatusBadge,
+  TruncatedText,
+  SkeletonDetail,
+} from '../components/mes';
 
 function initials(name) {
   if (!name) return '?';
@@ -459,7 +467,7 @@ export default function WorkCenterDetailsPage() {
 
       <section className="card employee-main">
         {loading ? (
-          <p className="muted">Loading work center details...</p>
+          <SkeletonDetail showHeader={false} showTabs={false} />
         ) : error && !workCenter ? (
           <p className="error-message">{error}</p>
         ) : !workCenter ? (

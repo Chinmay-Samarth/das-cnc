@@ -250,11 +250,8 @@ async function syncSalesVoucherForInvoice(invoice, customer) {
 
   try {
     const xml = buildSalesVoucherXml({ invoice, customer });
-    const { tallyUrl } = require('./tallyClient');
-    console.log(
-      `[tally] posting Sales voucher ${invoice?.invoice_number} date=${toTallyDate(invoice?.issued_at || invoice?.invoice_date || invoice?.issue_date)} → ${tallyUrl()}`
-    );
     await postTallyXml(xml);
+    console.log(`[tally] Sales synced: ${invoice?.invoice_number || '—'}`);
     return {
       status: 'synced',
       error: null,
@@ -262,7 +259,7 @@ async function syncSalesVoucherForInvoice(invoice, customer) {
       syncedAt: new Date().toISOString(),
     };
   } catch (err) {
-    console.error('[tally] sales sync failed:', err.message);
+    console.error('[tally] Sales sync failed:', err.message);
     return {
       status: 'failed',
       error: err.message || 'Tally sync failed',

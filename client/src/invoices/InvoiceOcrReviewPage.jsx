@@ -1,21 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Check, ChevronDown, ChevronRight, IndianRupee, Percent, Receipt } from 'lucide-react';
+import { Check, IndianRupee, Percent, Receipt } from 'lucide-react';
 import api from '../api/client';
 import InvoicePdfViewer from '../components/Invoices/InvoicePdfViewer';
 import {
   AlertBanner,
   MetricCard,
   PageHeader,
+  SkeletonInvoiceReview,
   StatusBadge,
 } from '../components/mes';
 import { appAlert } from '../components/dialog';
 import { getCategoryConfig } from '../girn/girnCategoryConfig';
 import InvoiceRecheckLineTable from './InvoiceRecheckLineTable';
-import InvoiceRecheckTaxTable, { normalizeTaxRows, recalcTax } from './InvoiceRecheckTaxTable';
+import InvoiceRecheckTaxTable, { recalcTax, taxRowsFromInvoice } from './InvoiceRecheckTaxTable';
+import { repairInvoiceDraft } from './invoiceReviewAutofix';
 import {
   buildInvoiceReviewIssues,
-  inferUntaxedLines,
   sumTaxedLineTotal,
   sumUntaxedLineTotal,
 } from './invoiceReviewIssues';
@@ -117,6 +118,14 @@ function fieldToneClass(hasError, hasWarning) {
   return '';
 }
 
+function isMajorReviewWarning(issue) {
+  const id = String(issue?.id || '');
+  if (id.startsWith('ocr_ocr_service_warning')) return false;
+  return issue?.severity === 'warning';
+}
+
+const autoSavedInvoiceIds = new Set();
+
 export default function InvoiceOcrReviewPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -131,9 +140,7 @@ export default function InvoiceOcrReviewPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [issuesOpen, setIssuesOpen] = useState(false);
-  const issuesAutoOpenedRef = useRef(false);
-  const issuesPanelRef = useRef(null);
+  const repairKeyRef = useRef('');
   const [invoice, setInvoice] = useState(null);
   const [review, setReview] = useState(null);
   const [lines, setLines] = useState([]);
@@ -161,14 +168,15 @@ export default function InvoiceOcrReviewPage() {
     try {
       setLoading(true);
       setError('');
+      // Clear prior form so opening another invoice / editor always shows skeleton.
+      setReview(null);
+      setLines([]);
+      setTaxes([]);
 
       const detail = await api.get(`/invoices/${id}`);
       const invStatus = detail.data?.invoice?.status;
       if (isProcessingStatus(invStatus)) {
         setInvoice(detail.data.invoice);
-        setReview(null);
-        setLines([]);
-        setTaxes([]);
         return;
       }
 
@@ -182,13 +190,6 @@ export default function InvoiceOcrReviewPage() {
       const inv = data.invoice;
       setInvoice(inv);
       setReview(data.review);
-      const nextTaxes = normalizeTaxRows(inv.tax_items, inv.base_amount);
-      const inferred = inferUntaxedLines(
-        (data.lines || inv.line_items || []).map(recalcLine),
-        nextTaxes
-      );
-      setLines(inferred.lines);
-      setTaxes(nextTaxes);
       const suggested = data.suggested_supplier || null;
       setSuggestedSupplier(suggested);
       setSupplierLedger(data.supplier_ledger || null);
@@ -203,19 +204,31 @@ export default function InvoiceOcrReviewPage() {
       const invoiceDate = inv.invoice_date || '';
       const effectiveCredit = storedCreditDays ?? DEFAULT_CREDIT_DAYS;
       const autoDue = defaultDueDate(invoiceDate, effectiveCredit);
-      const baseAmount = inferred.inferred ? inferred.baseAmount : (inv.base_amount ?? '');
-      const roundOff = inv.round_off ?? '';
-      const taxAmount = sumTaxAmount(nextTaxes);
-      const untaxedAmount = sumUntaxedLineTotal(inferred.lines);
-      // After tax recalc, derive grand total from parts so OCR ₹1 misreads don't stick.
-      const derivedTotal = computeHeaderTotal(baseAmount, taxAmount, roundOff, untaxedAmount);
+      const repaired = repairInvoiceDraft({
+        lines: (data.lines || inv.line_items || []).map(recalcLine),
+        taxes: taxRowsFromInvoice(inv.tax_items, inv.base_amount),
+        header: {
+          invoice_number: inv.invoice_number || '',
+          invoice_date: invoiceDate,
+          due_date: autoDue || inv.due_date || '',
+          total_amount: inv.total_amount ?? '',
+          base_amount: inv.base_amount ?? '',
+          round_off: inv.round_off ?? '',
+        },
+      });
+      const scannedTotal = inv.total_amount;
+      const keepScannedTotal = scannedTotal != null && scannedTotal !== '';
+      const derivedTotal = computeHeaderTotal(
+        repaired.header.base_amount,
+        sumTaxAmount(repaired.taxes),
+        repaired.header.round_off,
+        sumUntaxedLineTotal(repaired.lines)
+      );
+      setLines(repaired.lines);
+      setTaxes(repaired.taxes);
       setHeader({
-        invoice_number: inv.invoice_number || '',
-        invoice_date: invoiceDate,
-        due_date: autoDue || inv.due_date || '',
-        total_amount: derivedTotal !== '' ? derivedTotal : inv.total_amount ?? '',
-        base_amount: baseAmount,
-        round_off: roundOff,
+        ...repaired.header,
+        total_amount: keepScannedTotal ? scannedTotal : derivedTotal !== '' ? derivedTotal : '',
       });
     } catch (err) {
       setError(err.response?.data?.error || 'Unable to load invoice review.');
@@ -226,6 +239,8 @@ export default function InvoiceOcrReviewPage() {
 
   useEffect(() => {
     handledCompleteRef.current = false;
+    setInvoice(null);
+    setLoading(true);
     load();
   }, [load]);
 
@@ -252,15 +267,10 @@ export default function InvoiceOcrReviewPage() {
     }
 
     if (queueJob.status === 'done') {
-      const inv = queueJob.result?.invoice;
       dismissJob(queueJob.id);
+      // GIRN must still open the invoice editor — do not skip to create/register.
       if (context === 'girn') {
-        const params = new URLSearchParams(returnTo ? returnTo.split('?')[1] || '' : '');
-        params.set('invoice_id', id);
-        params.set('reviewed', '1');
-        navigate(`/girn/create?${params.toString()}`, {
-          state: { invoice: inv, draft_girn: null },
-        });
+        load();
         return;
       }
       navigate('/invoices');
@@ -270,21 +280,7 @@ export default function InvoiceOcrReviewPage() {
     if (queueJob.status === 'needs_review') {
       load();
     }
-  }, [queueJob, context, returnTo, id, navigate, dismissJob, load]);
-
-  // Auto-accepted invoice opened on review URL (no active queue job)
-  useEffect(() => {
-    if (processing || loading || !invoice) return;
-    if (queueJob && isInvoiceUploadBusy(queueJob.status)) return;
-    if (invoice.review_status === 'auto_accepted' && invoice.status === 'pending' && context === 'girn') {
-      const params = new URLSearchParams(returnTo ? returnTo.split('?')[1] || '' : '');
-      params.set('invoice_id', id);
-      params.set('reviewed', '1');
-      navigate(`/girn/create?${params.toString()}`, {
-        state: { invoice, draft_girn: null },
-      });
-    }
-  }, [invoice, processing, loading, context, returnTo, id, navigate, queueJob]);
+  }, [queueJob, context, id, navigate, dismissJob, load]);
 
   const warnings = useMemo(
     () => (Array.isArray(review?.ocr_warnings) ? review.ocr_warnings : []),
@@ -344,32 +340,36 @@ export default function InvoiceOcrReviewPage() {
   const errorCount = reviewIssues.errors.length;
 
   useEffect(() => {
-    if (errorCount > 0 && !issuesAutoOpenedRef.current) {
-      issuesAutoOpenedRef.current = true;
-      setIssuesOpen(true);
-    }
-    if (errorCount === 0) {
-      issuesAutoOpenedRef.current = false;
-      setIssuesOpen(false);
-    }
-  }, [errorCount]);
+    if (loading) return;
+    const repaired = repairInvoiceDraft({ lines, taxes, header, mode: 'edit' });
+    if (!repaired.changed || repairKeyRef.current === repaired.signature) return;
+    repairKeyRef.current = repaired.signature;
+    setLines(repaired.lines);
+    setTaxes(repaired.taxes);
+    setHeader(repaired.header);
+  }, [loading, lines, taxes, header]);
+
+  const hasIgst = taxes.some((tax) => String(tax?.kind || '').toUpperCase() === 'IGST');
+  const reviewingNew =
+    !editMode &&
+    invoice &&
+    invoice.review_status !== 'confirmed' &&
+    (context === 'girn' || invoice.review_status !== 'auto_accepted');
+  const canAutoSave =
+    reviewingNew &&
+    context !== 'girn' &&
+    !hasIgst &&
+    totalsBalanced &&
+    reviewIssues.errors.length === 0 &&
+    !reviewIssues.warnings.some(isMajorReviewWarning);
 
   useEffect(() => {
-    if (!issuesOpen) return undefined;
-    const onPointerDown = (event) => {
-      const root = issuesPanelRef.current;
-      if (root && !root.contains(event.target)) setIssuesOpen(false);
-    };
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape') setIssuesOpen(false);
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [issuesOpen]);
+    if (!canAutoSave || submitting || processing) return;
+    if (repairInvoiceDraft({ lines, taxes, header, mode: 'edit' }).changed) return;
+    if (autoSavedInvoiceIds.has(id)) return;
+    autoSavedInvoiceIds.add(id);
+    handleConfirm();
+  }, [canAutoSave, submitting, processing, lines, taxes, header, id]);
 
   function getSaveBlockers() {
     return reviewIssues.errors.map((issue) => `${issue.title}: ${issue.message}`);
@@ -451,7 +451,7 @@ export default function InvoiceOcrReviewPage() {
   }
 
   /** Taxable base and every tax-row base follow taxed lines only. */
-  function applyCalculatedFromLines(nextLines, nextTaxes = taxes) {
+  function applyCalculatedFromLines(nextLines, nextTaxes = taxes, { preserveTotal = false } = {}) {
     const taxedTotal = sumTaxedLineTotal(nextLines);
     const taxesWithBase = nextTaxes.map((tax) => {
       const next = recalcTax({ ...tax, base: taxedTotal });
@@ -459,9 +459,11 @@ export default function InvoiceOcrReviewPage() {
       return next;
     });
     setTaxes(taxesWithBase);
-    setHeader((h) =>
-      syncHeaderTotal({ ...h, base_amount: taxedTotal }, taxesWithBase, nextLines)
-    );
+    setHeader((h) => {
+      const next = { ...h, base_amount: taxedTotal };
+      if (preserveTotal) return next;
+      return syncHeaderTotal(next, taxesWithBase, nextLines);
+    });
   }
 
   function handleLineChange(idx, field, value) {
@@ -734,16 +736,13 @@ export default function InvoiceOcrReviewPage() {
       const { data } = await api.post(`/invoices/${id}/confirm-review`, payload);
       if (queueJob) dismissJob(queueJob.id);
 
-      // Admin re-edit of an already saved invoice → purchase invoices list.
-      const alreadySaved =
-        editMode ||
-        (invoice?.review_status === 'confirmed' || invoice?.review_status === 'auto_accepted');
-      if (alreadySaved) {
+      // Admin re-edit of an already confirmed invoice → purchase invoices list.
+      if (editMode || invoice?.review_status === 'confirmed') {
         navigate('/invoices', { replace: true });
         return;
       }
 
-      // First confirm: AP invoices are due for GIRN Register & review next.
+      // First confirm (including former auto_accepted): continue to GIRN register.
       const params = new URLSearchParams(
         returnTo ? returnTo.split('?')[1] || '' : searchParams.toString()
       );
@@ -770,7 +769,7 @@ export default function InvoiceOcrReviewPage() {
     const editingSaved =
       editMode ||
       invoice?.review_status === 'confirmed' ||
-      invoice?.review_status === 'auto_accepted';
+      (invoice?.review_status === 'auto_accepted' && context !== 'girn');
 
     // Don't discard a saved invoice when cancelling an admin edit.
     if (editingSaved) {
@@ -792,8 +791,22 @@ export default function InvoiceOcrReviewPage() {
     navigate('/invoices');
   }
 
-  if (loading && !invoice && !processing) {
-    return <p className="muted mes-shell">Loading review…</p>;
+  // Initial open of details/edit/review, or OCR still running with no form data yet.
+  if ((loading && !invoice) || (processing && !invoice)) {
+    return (
+      <main className="mes-shell invoice-recheck-page">
+        {processing ? <InvoiceUploadInlineStatus invoiceId={id} /> : null}
+        <SkeletonInvoiceReview
+          statusLabel={
+            processing
+              ? 'Extracting invoice data…'
+              : editMode
+                ? 'Opening invoice editor…'
+                : 'Opening invoice review…'
+          }
+        />
+      </main>
+    );
   }
 
   if (processing) {
@@ -806,27 +819,21 @@ export default function InvoiceOcrReviewPage() {
 
         <InvoiceUploadInlineStatus invoiceId={id} />
 
-        <div className="invoice-recheck-layout">
-          <section className="mes-card invoice-recheck-pdf">
-            <header className="invoice-recheck-panel-head">
-              <h2 className="invoice-recheck-panel-title">Source file</h2>
-            </header>
-            <InvoicePdfViewer
-              file={invoice?.file_url || queueJob?.previewUrl}
-              fileName={queueJob?.fileName || ''}
-              title={invoice?.invoice_number || queueJob?.fileName || 'Scanned invoice'}
-              loading={!invoice?.file_url && !queueJob?.previewUrl}
-              emptyTitle="Uploading…"
-              emptyDescription="The file will appear here once upload finishes."
-            />
-          </section>
+        <SkeletonInvoiceReview
+          showHeader={false}
+          statusLabel="Extraction in progress — form fields appear when ready"
+        />
+      </main>
+    );
+  }
 
-          <section className="mes-card invoice-recheck-form">
-            <header className="invoice-recheck-panel-head">
-              <h2 className="invoice-recheck-panel-title">Extraction in progress</h2>
-            </header>
-          </section>
-        </div>
+  // Still fetching review payload after the invoice record exists (edit / recheck open).
+  if (loading) {
+    return (
+      <main className="mes-shell invoice-recheck-page">
+        <SkeletonInvoiceReview
+          statusLabel={editMode ? 'Opening invoice editor…' : 'Opening invoice review…'}
+        />
       </main>
     );
   }
@@ -834,7 +841,7 @@ export default function InvoiceOcrReviewPage() {
   const isSavedEdit =
     editMode ||
     invoice?.review_status === 'confirmed' ||
-    invoice?.review_status === 'auto_accepted';
+    (invoice?.review_status === 'auto_accepted' && context !== 'girn');
 
   const confirmLabel = submitting
     ? isSavedEdit
@@ -875,17 +882,8 @@ export default function InvoiceOcrReviewPage() {
 
         <section className="mes-card invoice-recheck-form">
           {errorCount > 0 ? (
-            <div
-              ref={issuesPanelRef}
-              className={`invoice-issues-panel has-errors${issuesOpen ? ' is-open' : ''}`}
-              aria-label="Issues to fix"
-            >
-              <button
-                type="button"
-                className="invoice-issues-summary"
-                onClick={() => setIssuesOpen((open) => !open)}
-                aria-expanded={issuesOpen}
-              >
+            <div className="invoice-issues-panel has-errors" aria-label="Issues to fix">
+              <div className="invoice-issues-summary">
                 <span className="invoice-issues-summary-text">
                   <strong>Issues</strong>
                   <span className="invoice-issues-summary-counts">
@@ -896,17 +894,11 @@ export default function InvoiceOcrReviewPage() {
                 </span>
                 <span className="invoice-issues-summary-meta">
                   <StatusBadge status="overdue">Fix before save</StatusBadge>
-                  {issuesOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                 </span>
-              </button>
-
-              {issuesOpen ? (
-                <div className="invoice-issues-dropdown">
-                  <ul className="invoice-issues-list">
-                    {reviewIssues.errors.map(renderIssueRow)}
-                  </ul>
-                </div>
-              ) : null}
+              </div>
+              <ul className="invoice-issues-list">
+                {reviewIssues.errors.map(renderIssueRow)}
+              </ul>
             </div>
           ) : null}
 

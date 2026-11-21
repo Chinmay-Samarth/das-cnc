@@ -1,9 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Plus, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 import api from '../api/client';
 import { formatDisplayDate } from '../utils/dateFormat';
-import { PageHeader, EmptyState, StatusBadge, AlertBanner, MetricCard, ProgressBar } from '../components/mes';
+import {
+  PageHeader,
+  EmptyState,
+  StatusBadge,
+  AlertBanner,
+  MetricCard,
+  ProgressBar,
+  SkeletonList,
+} from '../components/mes';
 import { appAlert } from '../components/dialog';
 
 function poStatusTone(status) {
@@ -29,6 +37,8 @@ const STATUS_TABS = [
 
 export default function PurchaseOrdersTab() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const highlightMasterId = searchParams.get('highlightMaster');
   const [rows, setRows] = useState([]);
   const [demand, setDemand] = useState([]);
   const [demandTotals, setDemandTotals] = useState({ item_count: 0 });
@@ -38,6 +48,8 @@ export default function PurchaseOrdersTab() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [generating, setGenerating] = useState(false);
   const [demandOpen, setDemandOpen] = useState(true);
+  const [highlightId, setHighlightId] = useState(highlightMasterId);
+  const highlightRowRef = useRef(null);
 
   const load = useCallback(async () => {
     try {
@@ -61,6 +73,16 @@ export default function PurchaseOrdersTab() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    setHighlightId(highlightMasterId);
+    if (highlightMasterId) setDemandOpen(true);
+  }, [highlightMasterId]);
+
+  useEffect(() => {
+    if (!highlightId || !highlightRowRef.current) return;
+    highlightRowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [highlightId, demand, demandOpen]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -134,7 +156,7 @@ export default function PurchaseOrdersTab() {
         </div>
         {demandOpen ? (
           loading && !demand.length ? (
-            <p className="muted">Loading demand…</p>
+            <SkeletonList embedded showHeader={false} showFilters={false} rows={4} cols={4} />
           ) : demand.length === 0 ? (
             <EmptyState title="No reorder gaps" description="Stock covers campaign need and reorder levels." />
           ) : (
@@ -153,8 +175,15 @@ export default function PurchaseOrdersTab() {
                 </tr>
               </thead>
               <tbody>
-                {demand.map((item, index) => (
-                  <tr key={item.master_record_id}>
+                {demand.map((item, index) => {
+                  const isHighlighted =
+                    highlightId && String(item.master_record_id) === String(highlightId);
+                  return (
+                  <tr
+                    key={item.master_record_id}
+                    ref={isHighlighted ? highlightRowRef : undefined}
+                    className={isHighlighted ? 'is-alert-highlight' : undefined}
+                  >
                     <td className="col-sno">{index + 1}</td>
                     <td>
                       {item.item_label}
@@ -182,7 +211,8 @@ export default function PurchaseOrdersTab() {
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             </div>
@@ -213,7 +243,7 @@ export default function PurchaseOrdersTab() {
       </div>
 
       {loading && !rows.length ? (
-        <p className="muted">Loading purchase orders…</p>
+        <SkeletonList embedded showHeader={false} showFilters={false} />
       ) : filtered.length === 0 ? (
         <EmptyState title="No purchase orders" description="Create a draft from demand or the wizard." />
       ) : (

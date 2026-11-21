@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Bell,
@@ -19,22 +19,19 @@ import {
   CalendarOff,
   PackageCheck,
   ShoppingCart,
+  Trash2,
   Wrench,
+  X,
 } from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
-import {
-  PageHeader,
-  EmptyState,
-  StatusBadge,
-  TruncatedText,
-} from '../components/mes';
+import { PageHeader, EmptyState, Skeleton } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
-import { formatDisplayDateTime } from '../utils/dateFormat';
+import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 import { useSocket } from '../socket/socketContext';
 
 const TYPE_META = {
-  open_punch_out: { icon: LogOut, label: 'Punch-out', category: 'attendance' },
+  open_punch_out: { icon: LogOut, label: 'Missing punch-out', category: 'attendance' },
   low_attendance: { icon: Percent, label: 'Attendance %', category: 'attendance' },
   consecutive_absent: { icon: CalendarX2, label: 'Absence streak', category: 'attendance' },
   leave_request_pending: { icon: CalendarOff, label: 'Leave request', category: 'attendance' },
@@ -51,7 +48,7 @@ const TYPE_META = {
   girn_ready_for_approval: { icon: ClipboardCheck, label: 'GIRN approval', category: 'inventory' },
   girn_approved: { icon: ClipboardCheck, label: 'GIRN approved', category: 'inventory' },
   invoice_overdue: { icon: FileText, label: 'Invoice overdue', category: 'finance' },
-  purchase_invoice_overdue: { icon: FileText, label: 'Purchase overdue', category: 'finance' },
+  purchase_invoice_overdue: { icon: FileText, label: 'Purchase due', category: 'finance' },
   purchase_invoice_tally_unsynced: { icon: FileText, label: 'Purchase Tally sync', category: 'finance' },
   sales_invoice_tally_unsynced: { icon: FileText, label: 'Sales Tally sync', category: 'finance' },
   op1_schedule_delay: { icon: Timer, label: 'Op1 delay', category: 'production' },
@@ -60,6 +57,7 @@ const TYPE_META = {
   horizon_wave_stuck: { icon: Factory, label: 'Wave stuck', category: 'production' },
 };
 
+const FOCUS_TYPES = new Set(['purchase_invoice_overdue', 'invoice_overdue', 'open_punch_out']);
 const SEVERITY_RANK = { critical: 0, warning: 1, info: 2 };
 
 function relativeTime(iso) {
@@ -77,10 +75,17 @@ function relativeTime(iso) {
   return formatDisplayDateTime(iso);
 }
 
+function notificationPriority(n) {
+  return Number(n.priority) || (n.category === 'inventory' ? 1 : 2);
+}
+
 function sortNotifications(list) {
   return [...list].sort((a, b) => {
-    const pa = Number(a.priority) || (a.category === 'inventory' ? 1 : 2);
-    const pb = Number(b.priority) || (b.category === 'inventory' ? 1 : 2);
+    const focusA = FOCUS_TYPES.has(a.type) ? 0 : 1;
+    const focusB = FOCUS_TYPES.has(b.type) ? 0 : 1;
+    if (focusA !== focusB) return focusA - focusB;
+    const pa = notificationPriority(a);
+    const pb = notificationPriority(b);
     if (pa !== pb) return pa - pb;
     const sa = SEVERITY_RANK[a.severity] ?? 9;
     const sb = SEVERITY_RANK[b.severity] ?? 9;
@@ -89,19 +94,188 @@ function sortNotifications(list) {
   });
 }
 
+function limitWords(text, max = 10) {
+  const words = String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+  if (words.length <= max) return words.join(' ');
+  return `${words.slice(0, max).join(' ')}…`;
+}
+
+function formatStockRemaining(qty) {
+  if (qty == null || qty === '') return '';
+  const n = Number(qty);
+  if (!Number.isFinite(n)) return String(qty);
+  return Number.isInteger(n) ? String(n) : n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+}
+
+/** One short informative line for the tile (max ~12 words, with concrete ids/dates). */
+function tileSummary(n) {
+  const p = n.payload || {};
+  const person = p.employee_name || p.employee_code || '';
+  const bodySupplier = String(n.body || '').match(/^(.+?)\s+[—-]/)?.[1]?.trim() || '';
+  const supplier = p.supplier_name || p.vendor_name || bodySupplier || '';
+  const due = p.due_date || '';
+  const shiftDate = p.shift_date || '';
+  const component = p.component_label || p.item_label || p.label || '';
+  const onHand = formatStockRemaining(p.on_hand_qty);
+  const unit = p.unit ? ` ${p.unit}` : '';
+
+  let line = '';
+  if (n.type === 'open_punch_out') {
+    const dateLabel = shiftDate ? formatDisplayDate(shiftDate) : '';
+    line = person
+      ? `${person} · Missing punch-out${dateLabel ? ` · ${dateLabel}` : ''}`
+      : `Missing punch-out${dateLabel ? ` · ${dateLabel}` : ''}`;
+  } else if (n.type === 'purchase_invoice_overdue' || n.type === 'invoice_overdue') {
+    const dateLabel = due ? formatDisplayDate(due) : '';
+    const label = TYPE_META[n.type]?.label || 'Invoice overdue';
+    line = supplier
+      ? `${supplier} · ${label}${dateLabel ? ` · ${dateLabel}` : ''}`
+      : `${label}${dateLabel ? ` · ${dateLabel}` : ''}`;
+  } else if (n.type === 'purchase_invoice_tally_unsynced' || n.type === 'sales_invoice_tally_unsynced') {
+    const label = TYPE_META[n.type]?.label || 'Tally sync';
+    line = supplier ? `${supplier} · ${label}` : label;
+  } else if (n.type === 'insufficient_stock' || n.type === 'reorder_purchase_required' || n.type === 'predictive_reorder') {
+    if (component && onHand !== '') {
+      line = `${component} · ${onHand}${unit} left`;
+    } else if (component) {
+      line = `Stock alert: ${component}`;
+    } else {
+      line = limitWords(n.title || n.body || 'Stock alert', 12);
+    }
+  } else if (n.type === 'girn_pending_inspection' || n.type === 'girn_ready_for_approval' || n.type === 'girn_approved') {
+    const girn = p.girn_number || p.girn_id || '';
+    line = girn ? `GIRN ${girn}: ${TYPE_META[n.type]?.label || 'update'}` : TYPE_META[n.type]?.label || 'GIRN alert';
+  } else if (n.title) {
+    line = n.title;
+  } else if (n.body) {
+    line = n.body;
+  } else {
+    line = TYPE_META[n.type]?.label || 'Alert';
+  }
+  return limitWords(line, 12);
+}
+
+function navigateForNotification(navigate, n) {
+  const p = n.payload || {};
+
+  if (n.type === 'open_punch_out') {
+    const empId = p.employee_id || n.employee_id;
+    const date = p.shift_date || '';
+    const qs = new URLSearchParams();
+    if (date) qs.set('date', date);
+    if (empId) qs.set('highlightEmployee', empId);
+    navigate(qs.toString() ? `/attendance?${qs}` : '/attendance');
+    return;
+  }
+
+  if (
+    n.type === 'insufficient_stock' ||
+    n.type === 'reorder_purchase_required' ||
+    n.type === 'predictive_reorder'
+  ) {
+    const masterId = p.master_record_id;
+    navigate(
+      masterId
+        ? `/purchase-orders?highlightMaster=${encodeURIComponent(masterId)}`
+        : '/purchase-orders'
+    );
+    return;
+  }
+
+  if (n.type === 'op1_schedule_delay') {
+    const cardId = p.parent_card_id;
+    const qs = new URLSearchParams();
+    if (cardId) qs.set('highlightCard', cardId);
+    if (p.card_number) qs.set('card', p.card_number);
+    navigate(qs.toString() ? `/production?${qs}` : '/production');
+    return;
+  }
+
+  if (n.type === 'purchase_invoice_overdue') {
+    const invId = p.invoice_id;
+    const qs = new URLSearchParams();
+    if (invId) qs.set('highlightInvoice', invId);
+    if (p.supplier_id) qs.set('supplierId', p.supplier_id);
+    navigate(qs.toString() ? `/purchase-payments?${qs}` : '/purchase-payments');
+    return;
+  }
+
+  if (n.type === 'leave_request_pending') {
+    navigate('/leave-requests?status=pending');
+    return;
+  }
+  if (n.type === 'dispatch_shortfall_pending') {
+    navigate('/approvals?tab=dispatch&status=pending');
+    return;
+  }
+  if (n.type === 'girn_ready_for_approval') {
+    navigate('/approvals?tab=girn&status=ready');
+    return;
+  }
+  if (n.type === 'girn_approved') {
+    navigate(p.girn_id ? `/girn/${p.girn_id}` : '/girn');
+    return;
+  }
+  if (n.type === 'girn_pending_inspection') {
+    navigate('/approvals?tab=girn&status=awaiting_inspection');
+    return;
+  }
+  if (n.employee_id) {
+    navigate(`/employees/${n.employee_id}`);
+    return;
+  }
+  if (n.type === 'outsource_lead_delay') {
+    navigate('/production/outsource');
+    return;
+  }
+  if (n.type === 'horizon_wave_renewed' || n.type === 'horizon_wave_stuck') {
+    navigate('/production/horizon-planner');
+    return;
+  }
+  if (n.category === 'inventory') {
+    navigate('/delivery-schedules');
+    return;
+  }
+  if (n.category === 'finance' || n.type === 'invoice_overdue') {
+    if (n.type === 'purchase_invoice_tally_unsynced') {
+      const invId = p.invoice_id;
+      navigate(invId ? `/invoices/${invId}` : '/invoices');
+      return;
+    }
+    if (p.path) {
+      navigate(p.path);
+      return;
+    }
+    const invId = p.sales_invoice_id || p.invoice_id;
+    navigate(invId ? `/sales-invoices/${invId}` : '/sales-invoices?tab=due');
+    return;
+  }
+  if (n.category === 'production') {
+    navigate('/production/horizon-planner');
+  }
+}
+
 export default function NotificationsPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { hasAccess, defaultHomePath } = useAuth();
+  const { hasAccess, isAdmin: authIsAdmin, defaultHomePath } = useAuth();
   const { subscribe } = useSocket();
-  const isAdmin = hasAccess('ADMIN');
+  const isAdmin = authIsAdmin() || hasAccess('ADMIN');
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [statusFilter, setStatusFilter] = useState('unread');
+  const [viewTab, setViewTab] = useState(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'opened') return 'opened';
+    if (tab === 'all') return 'all';
+    return 'unread';
+  });
   const [categoryFilter, setCategoryFilter] = useState(() => searchParams.get('category') || 'all');
-  const [priorityFilter] = useState(() => searchParams.get('priority') || '');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [threshold, setThreshold] = useState(80);
   const [settingsBusy, setSettingsBusy] = useState(false);
@@ -118,10 +292,11 @@ export default function NotificationsPage() {
       setError(null);
     }
     try {
-      const params = {};
-      if (statusFilter === 'unread') params.status = 'unread';
+      const params = { limit: 200 };
+      if (viewTab === 'opened') params.status = 'read';
+      else if (viewTab === 'unread') params.status = 'unread';
+      // viewTab === 'all' → omit status (API returns unread + read)
       if (categoryFilter !== 'all') params.category = categoryFilter;
-      if (priorityFilter) params.priority = priorityFilter;
       const { data } = await api.get('/notifications', { params });
       setItems(sortNotifications(data.notifications || []));
     } catch (err) {
@@ -132,7 +307,7 @@ export default function NotificationsPage() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [isAdmin, statusFilter, categoryFilter, priorityFilter]);
+  }, [isAdmin, viewTab, categoryFilter]);
 
   const loadSettings = useCallback(async () => {
     if (!isAdmin) return;
@@ -159,16 +334,13 @@ export default function NotificationsPage() {
     });
   }, [isAdmin, subscribe, load]);
 
-  const unreadCount = useMemo(
-    () => items.filter((n) => n.status === 'unread').length,
-    [items]
-  );
+  const totalCount = items.length;
 
   async function handleMarkAllRead() {
-    if (!isAdmin) return;
+    if (!isAdmin || viewTab !== 'unread') return;
     const ok = await appConfirm({
       title: 'Mark all as read?',
-      message: 'All unread alerts will be marked read.',
+      message: 'Unread alerts move to the Opened tab.',
       confirmLabel: 'Mark all read',
     });
     if (!ok) return;
@@ -184,70 +356,37 @@ export default function NotificationsPage() {
     }
   }
 
+  async function handleDeleteAllOpened() {
+    if (!isAdmin || viewTab !== 'opened') return;
+    const ok = await appConfirm({
+      title: 'Delete all opened?',
+      message: 'This permanently deletes every opened notification. This cannot be undone.',
+      tone: 'danger',
+      confirmLabel: 'Delete all',
+    });
+    if (!ok) return;
+    try {
+      await api.post('/notifications/delete-opened');
+      setItems([]);
+      await load();
+    } catch (err) {
+      await appAlert({
+        title: 'Could not delete',
+        message: err.response?.data?.error || 'Delete all opened failed',
+        tone: 'danger',
+      });
+    }
+  }
+
   async function handleOpen(n) {
     if (busyId) return;
     setBusyId(n.id);
     try {
       if (n.status === 'unread') {
         await api.post(`/notifications/${n.id}/read`);
+        setItems((prev) => prev.filter((x) => x.id !== n.id));
       }
-      if (n.type === 'leave_request_pending') {
-        navigate('/leave-requests?status=pending');
-      } else if (n.type === 'dispatch_shortfall_pending') {
-        navigate('/approvals?tab=dispatch&status=pending');
-      } else if (n.type === 'girn_ready_for_approval') {
-        navigate('/approvals?tab=girn&status=ready');
-      } else if (n.type === 'girn_approved') {
-        const girnId = n.payload?.girn_id;
-        navigate(girnId ? `/girn/${girnId}` : '/girn');
-      } else if (n.employee_id && n.type !== 'leave_request_pending') {
-        navigate(`/employees/${n.employee_id}`);
-      } else if (n.type === 'girn_pending_inspection') {
-        navigate('/approvals?tab=girn&status=awaiting_inspection');
-      } else if (n.type === 'reorder_purchase_required' || n.type === 'predictive_reorder') {
-        if (isAdmin) {
-          try {
-            const { data } = await api.post('/purchase-orders/from-alert', {
-              ...n.payload,
-              notification_id: n.id,
-            });
-            navigate(`/purchase-orders/${data.purchase_order.id}`);
-            return;
-          } catch {
-            /* fall through to stock */
-          }
-        }
-        const cat = n.payload?.item_category || 'raw_material';
-        const masterId = n.payload?.master_record_id;
-        navigate(
-          masterId
-            ? `/stock?category=${encodeURIComponent(cat)}&master_record_id=${encodeURIComponent(masterId)}`
-            : '/stock'
-        );
-      } else if (n.type === 'op1_schedule_delay') {
-        const cardId = n.payload?.parent_card_id;
-        navigate(cardId ? `/production/cards/${cardId}` : '/production/horizon-planner');
-      } else if (n.type === 'outsource_lead_delay') {
-        navigate('/production/outsource');
-      } else if (n.type === 'horizon_wave_renewed' || n.type === 'horizon_wave_stuck') {
-        navigate('/production/horizon-planner');
-      } else if (n.category === 'inventory') {
-        navigate('/delivery-schedules');
-      } else if (n.category === 'finance' || n.type === 'invoice_overdue') {
-        if (n.payload?.path) {
-          navigate(n.payload.path);
-        } else if (n.type === 'purchase_invoice_overdue' || n.type === 'purchase_invoice_tally_unsynced') {
-          const invId = n.payload?.invoice_id;
-          navigate(invId ? `/invoices/${invId}` : '/invoices');
-        } else {
-          const invId = n.payload?.sales_invoice_id;
-          navigate(invId ? `/sales-invoices/${invId}` : '/sales-invoices?tab=due');
-        }
-      } else if (n.category === 'production') {
-        navigate('/production/horizon-planner');
-      } else {
-        await load();
-      }
+      navigateForNotification(navigate, n);
     } catch {
       await load();
     } finally {
@@ -311,10 +450,88 @@ export default function NotificationsPage() {
     return <Navigate to={defaultHomePath()} replace />;
   }
 
+  function renderRow(n) {
+    const meta = TYPE_META[n.type] || { icon: UserX, label: n.type };
+    const Icon = meta.icon;
+    const summary = tileSummary(n);
+    const priority = notificationPriority(n);
+    const isPunch = n.type === 'open_punch_out';
+    const isFinance =
+      n.category === 'finance' ||
+      n.type === 'purchase_invoice_overdue' ||
+      n.type === 'invoice_overdue' ||
+      n.type === 'purchase_invoice_tally_unsynced' ||
+      n.type === 'sales_invoice_tally_unsynced';
+    const isDue =
+      n.type === 'purchase_invoice_overdue' || n.type === 'invoice_overdue';
+
+    let chipName = '';
+    let chipLabel = '';
+    let chipDate = '';
+    if (isPunch) {
+      chipName = n.payload?.employee_name || n.payload?.employee_code || '';
+      chipLabel = 'Missing punch-out';
+      chipDate = n.payload?.shift_date ? formatDisplayDate(n.payload.shift_date) : '';
+    } else if (isFinance) {
+      chipName =
+        n.payload?.supplier_name ||
+        n.payload?.vendor_name ||
+        n.payload?.customer_name ||
+        '';
+      chipLabel = meta.label || 'Accounting alert';
+      chipDate = n.payload?.due_date ? formatDisplayDate(n.payload.due_date) : '';
+    }
+    const useChipTitle = isPunch || isFinance;
+
+    return (
+      <button
+        key={n.id}
+        type="button"
+        className={`notif-row is-compact${n.status === 'unread' ? ' is-unread' : ''}${
+          priority === 1 ? ' is-critical' : ''
+        }${isPunch ? ' is-punch' : ''}${isDue ? ' is-due' : ''}`}
+        onClick={() => handleOpen(n)}
+        disabled={busyId === n.id}
+        title={n.body || n.title || summary}
+      >
+        <div className="notif-row-main">
+          <span className={`notif-type-icon notif-sev-${n.severity || 'warning'}`} aria-hidden>
+            <Icon size={14} />
+          </span>
+          <div className="notif-row-copy">
+            {useChipTitle ? (
+              <span className="notif-row-title notif-chip-title">
+                {chipName ? <span className="notif-chip-name">{chipName}</span> : null}
+                <span className="notif-chip-label">{chipLabel}</span>
+                {chipDate ? <span className="notif-chip-date">{chipDate}</span> : null}
+              </span>
+            ) : (
+              <span className="notif-row-title">{summary}</span>
+            )}
+            <span className="notif-row-meta">{relativeTime(n.created_at)}</span>
+          </div>
+        </div>
+        <span
+          role="button"
+          tabIndex={0}
+          className="notif-dismiss"
+          onClick={(e) => handleDismiss(e, n)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleDismiss(e, n);
+            }
+          }}
+        >
+          <X size={14} />
+        </span>
+      </button>
+    );
+  }
+
   return (
-    <div className="mes-shell">
+    <div className="mes-shell notif-page">
       <PageHeader
-        eyebrow="Alerts"
         title="Notifications"
         actions={
           <>
@@ -330,15 +547,28 @@ export default function NotificationsPage() {
               <Settings size={15} />
               Settings
             </button>
-            <button
-              type="button"
-              className="mes-btn mes-btn-secondary"
-              onClick={handleMarkAllRead}
-              disabled={unreadCount === 0}
-            >
-              <CheckCheck size={15} />
-              Mark all read
-            </button>
+            {viewTab === 'unread' ? (
+              <button
+                type="button"
+                className="mes-btn mes-btn-secondary"
+                onClick={handleMarkAllRead}
+                disabled={totalCount === 0}
+              >
+                <CheckCheck size={15} />
+                Mark all read
+              </button>
+            ) : null}
+            {viewTab === 'opened' ? (
+              <button
+                type="button"
+                className="mes-btn mes-btn-secondary"
+                onClick={handleDeleteAllOpened}
+                disabled={totalCount === 0}
+              >
+                <Trash2 size={15} />
+                Delete all
+              </button>
+            ) : null}
           </>
         }
       />
@@ -348,24 +578,19 @@ export default function NotificationsPage() {
           <h3 className="mes-section-title" style={{ marginTop: 0, fontSize: 15 }}>
             Attendance threshold
           </h3>
-          {/* <p className="muted" style={{ marginTop: 0, marginBottom: 12 }}>
-            Alert when an active employee’s month-to-date attendance falls below this percentage.
-          </p> */}
-          <div style={{display: 'flex', alignItems: "center", gap: '24px', flexDirection: 'row', }}>
-          <label className="notif-settings-field">
-            Threshold %
-          </label >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexDirection: 'row' }}>
+            <label className="notif-settings-field">Threshold %</label>
             <input
               type="number"
               min={0}
               max={100}
               step={1}
               value={threshold}
-              style={{width: '50%'}}
+              style={{ width: '50%' }}
               onChange={(e) => setThreshold(e.target.value)}
               disabled={settingsBusy}
-              />
-            </div>
+            />
+          </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
             <button type="submit" className="primary-button" disabled={settingsBusy}>
               {settingsBusy ? 'Saving…' : 'Save'}
@@ -382,140 +607,83 @@ export default function NotificationsPage() {
         </form>
       ) : null}
 
-      <div className="mes-view-toggle" role="group" aria-label="Status filter" style={{ marginBottom: 12 }}>
-        <button
-          type="button"
-          className={`mes-view-toggle-btn${statusFilter === 'unread' ? ' is-active' : ''}`}
-          onClick={() => setStatusFilter('unread')}
-        >
-          Unread
-        </button>
-        <button
-          type="button"
-          className={`mes-view-toggle-btn${statusFilter === 'all' ? ' is-active' : ''}`}
-          onClick={() => setStatusFilter('all')}
-        >
-          All
-        </button>
-      </div>
-
-      <div className="mes-view-toggle" role="group" aria-label="Category filter" style={{ marginBottom: 16, marginLeft: 16 }}>
-        <button
-          type="button"
-          className={`mes-view-toggle-btn${categoryFilter === 'all' ? ' is-active' : ''}`}
-          onClick={() => setCategoryFilter('all')}
-        >
-          All types
-        </button>
-        <button
-          type="button"
-          className={`mes-view-toggle-btn${categoryFilter === 'attendance' ? ' is-active' : ''}`}
-          onClick={() => setCategoryFilter('attendance')}
-        >
-          Attendance
-        </button>
-        <button
-          type="button"
-          className={`mes-view-toggle-btn${categoryFilter === 'inventory' ? ' is-active' : ''}`}
-          onClick={() => setCategoryFilter('inventory')}
-        >
-          Inventory
-        </button>
-        <button
-          type="button"
-          className={`mes-view-toggle-btn${categoryFilter === 'production' ? ' is-active' : ''}`}
-          onClick={() => setCategoryFilter('production')}
-        >
-          Production
-        </button>
-        <button
-          type="button"
-          className={`mes-view-toggle-btn${categoryFilter === 'finance' ? ' is-active' : ''}`}
-          onClick={() => setCategoryFilter('finance')}
-        >
-          Accounting
-        </button>
+      <div className="notif-toolbar">
+        <div className="mes-view-toggle" role="group" aria-label="Inbox tab">
+          <button
+            type="button"
+            className={`mes-view-toggle-btn${viewTab === 'unread' ? ' is-active' : ''}`}
+            onClick={() => setViewTab('unread')}
+          >
+            Unread
+          </button>
+          <button
+            type="button"
+            className={`mes-view-toggle-btn${viewTab === 'opened' ? ' is-active' : ''}`}
+            onClick={() => setViewTab('opened')}
+          >
+            Opened
+          </button>
+          <button
+            type="button"
+            className={`mes-view-toggle-btn${viewTab === 'all' ? ' is-active' : ''}`}
+            onClick={() => setViewTab('all')}
+          >
+            All
+          </button>
+        </div>
+        <div className="mes-view-toggle" role="group" aria-label="Category filter">
+          {[
+            ['all', 'All types'],
+            ['attendance', 'Attendance'],
+            ['inventory', 'Inventory'],
+            ['production', 'Production'],
+            ['finance', 'Accounting'],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={`mes-view-toggle-btn${categoryFilter === value ? ' is-active' : ''}`}
+              onClick={() => setCategoryFilter(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading notifications…</p> : null}
 
-      {!loading && items.length === 0 ? (
+      {loading ? (
+        <div className="notif-list-clean notif-skeleton" role="status" aria-label="Loading notifications">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="notif-row is-compact notif-skeleton-row">
+              <div className="notif-row-main">
+                <Skeleton className="skeleton-circle" width={28} height={28} radius={8} />
+                <div className="notif-row-copy" style={{ gap: 6, display: 'flex', flexDirection: 'column' }}>
+                  <Skeleton height={12} width={i % 2 === 0 ? '58%' : '46%'} radius={6} />
+                  <Skeleton height={10} width={72} radius={6} />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {!loading && totalCount === 0 ? (
         <EmptyState
           icon={Bell}
-          title="You're all caught up"
-          description="Missed punch-outs, attendance, stock shortages, production delays, GIRN inspection, and invoice alerts will appear here."
+          title={
+            viewTab === 'unread'
+              ? 'No unread alerts'
+              : viewTab === 'opened'
+                ? 'No opened alerts'
+                : 'No alerts'
+          }
         />
       ) : null}
 
-      {!loading && items.length > 0 ? (
-        <div className="mes-card notif-list" style={{ padding: 12 }}>
-          <p className="muted" style={{ margin: '4px 8px 12px', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            Priority 1 (inventory) first
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {items.map((n) => {
-              const meta = TYPE_META[n.type] || { icon: UserX, label: n.type };
-              const Icon = meta.icon;
-              const unread = n.status === 'unread';
-              const priority = Number(n.priority) || (n.category === 'inventory' ? 1 : 2);
-              return (
-                <button
-                  key={n.id}
-                  type="button"
-                  className={`mes-list-item notif-row${unread ? ' is-unread' : ''}${priority === 1 ? ' is-critical' : ''}`}
-                  onClick={() => handleOpen(n)}
-                  disabled={busyId === n.id}
-                >
-                  <div className="notif-row-main">
-                    <span className={`notif-type-icon notif-sev-${n.severity || 'warning'}`} aria-hidden>
-                      <Icon size={16} />
-                    </span>
-                    <div className="notif-row-copy">
-                      <div className="mes-list-item-top">
-                        <span className="mes-list-item-title">
-                          <TruncatedText>{n.title}</TruncatedText>
-                        </span>
-                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-                          <StatusBadge status={priority === 1 ? 'overdue' : 'ready'}>
-                            P{priority}
-                          </StatusBadge>
-                          {unread ? <StatusBadge status="ready">Unread</StatusBadge> : null}
-                          <StatusBadge status={n.severity === 'critical' ? 'overdue' : 'ready'}>
-                            {meta.label}
-                          </StatusBadge>
-                        </div>
-                      </div>
-                      <p className="mes-list-item-sub" style={{ marginBottom: 0 }}>
-                        <TruncatedText>{n.body}</TruncatedText>
-                      </p>
-                      <p className="mes-list-item-meta" style={{ marginBottom: 0, marginTop: 4 }}>
-                        {relativeTime(n.created_at)}
-                        {n.payload?.employee_code ? ` · ${n.payload.employee_code}` : ''}
-                        {n.payload?.component_label ? ` · ${n.payload.component_label}` : ''}
-                        {n.payload?.due_date ? ` · due ${n.payload.due_date}` : ''}
-                      </p>
-                    </div>
-                  </div>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    className="notif-dismiss"
-                    onClick={(e) => handleDismiss(e, n)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        handleDismiss(e, n);
-                      }
-                    }}
-                  >
-                    Dismiss
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+      {!loading && totalCount > 0 ? (
+        <div className="notif-list-clean">{items.map(renderRow)}</div>
       ) : null}
     </div>
   );

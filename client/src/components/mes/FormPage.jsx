@@ -1,5 +1,6 @@
 import PageHeader from './PageHeader';
 import AlertBanner from './AlertBanner';
+import { SkeletonForm } from './SkeletonLayouts';
 
 export default function FormPage({
   eyebrow,
@@ -8,6 +9,7 @@ export default function FormPage({
   error,
   children,
   wide = false,
+  loading = false,
 }) {
   return (
     <main className={`mes-shell form-page${wide ? ' form-page-wide' : ''}`}>
@@ -17,7 +19,9 @@ export default function FormPage({
         subtitle={subtitle}
       />
       {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
-      <section className="mes-card form-page-card">{children}</section>
+      <section className="mes-card form-page-card">
+        {loading ? <SkeletonForm embedded showHeader={false} /> : children}
+      </section>
     </main>
   );
 }

@@ -11,6 +11,7 @@ import {
   ListPage,
   EmptyState,
   AlertBanner,
+  SkeletonList,
 } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import FormSearchSelect from '../components/shared/FormSearchSelect';
@@ -391,7 +392,8 @@ export default function PayrollPage() {
             <Settings2 size={16} /> Formulas
           </button>
           <button type="button" className="mes-btn mes-btn-secondary" onClick={handleExport} disabled={busy}>
-            <Download size={16} /> Export
+            <Download size={15} />
+            Export to XLS
           </button>
           {!locked ? (
             <button type="button" className="mes-btn mes-btn-secondary" onClick={handleLock} disabled={busy || !lines.length}>
@@ -442,7 +444,7 @@ export default function PayrollPage() {
         </AlertBanner>
       ) : null}
 
-      {loading ? <p className="muted">Loading payroll…</p> : null}
+      {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
 
       {!loading && lines.length === 0 ? (
         <EmptyState

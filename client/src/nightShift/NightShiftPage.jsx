@@ -8,6 +8,7 @@ import {
   PageHeader,
   StatusBadge,
   TruncatedText,
+  SkeletonList,
 } from '../components/mes';
 
 function initials(name) {
@@ -440,7 +441,7 @@ export default function NightShiftPage() {
       {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
 
       {loading ? (
-        <p className="muted">Loading night shift roster…</p>
+        <SkeletonList embedded showHeader={false} showFilters={false} />
       ) : !weeks.length ? (
         <section className="mes-card">
           <EmptyState

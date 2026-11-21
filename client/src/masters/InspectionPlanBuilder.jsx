@@ -1,5 +1,6 @@
 import { useEffect, useState, Fragment } from 'react';
 import api from '../api/client'
+import { SkeletonForm } from '../components/mes';
 import {Plus, X, CirclePlay} from 'lucide-react';
 
 const CHECK_TYPES = ['dimensional', 'visual', 'functional', 'document'];
@@ -199,7 +200,7 @@ export default function InspectionPlanBuilder({ slug, recordId }) {
   }
 
   if (loading) {
-    return <p className="muted">Loading inspection plan...</p>;
+    return <SkeletonForm embedded showHeader={false} />;
   }
 
   const canEdit = !isActive || planMeta?.status === 'draft';

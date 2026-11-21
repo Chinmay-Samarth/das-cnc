@@ -4,7 +4,7 @@ import { CalendarOff } from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
 import { useSocket } from '../socket/socketContext';
-import { PageHeader, EmptyState, StatusBadge, TruncatedText } from '../components/mes';
+import { PageHeader, EmptyState, StatusBadge, TruncatedText, SkeletonList } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 
@@ -165,7 +165,7 @@ function ApplicantLeaveView() {
       </form>
 
       {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading requests…</p> : null}
+      {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
 
       {!loading && requests.length === 0 ? (
         <EmptyState
@@ -343,7 +343,7 @@ function AdminLeaveView({ initialStatus = 'pending' }) {
       </div>
 
       {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading requests…</p> : null}
+      {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
 
       {!loading && requests.length === 0 ? (
         <EmptyState

@@ -4,7 +4,13 @@ import api from '../api/client';
 import ImageLightbox from '../components/shared/ImageLightBox';
 import { Banknote, Pencil } from 'lucide-react';
 import { formatDisplayDate } from '../utils/dateFormat';
-import { AlertBanner, FilePicker, FormActions } from '../components/mes';
+import {
+  AlertBanner,
+  FilePicker,
+  FormActions,
+  SkeletonDetail,
+  SkeletonList,
+} from '../components/mes';
 import { appAlert } from '../components/dialog';
 import {
   openPurchasePaymentDialog,
@@ -365,7 +371,7 @@ export default function SupplierDetailsPage() {
       <section className="card employee-main">
 
         {loading ? (
-          <p className="muted">Loading supplier details...</p>
+          <SkeletonDetail showHeader={false} showTabs={false} showMetrics={false} />
         ) : error ? (
           <p className="error-message">{error}</p>
         ) : !supplier ? (
@@ -532,7 +538,7 @@ export default function SupplierDetailsPage() {
             </div>
 
             {invoicesLoading ? (
-              <p className="muted">Loading invoices...</p>
+              <SkeletonList embedded showHeader={false} showFilters={false} rows={5} cols={4} />
             ) : invoicesError ? (
               <p className="error-message">{invoicesError}</p>
             ) : invoices.length === 0 ? (

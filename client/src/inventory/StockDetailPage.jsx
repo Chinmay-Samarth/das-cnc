@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useSocket } from '../socket/socketContext';
 import { formatDisplayDateTime } from '../utils/dateFormat';
-import { PageHeader, AlertBanner } from '../components/mes';
+import { PageHeader, AlertBanner, SkeletonDetail } from '../components/mes';
 
 const fmt = (val) =>
   val == null || isNaN(Number(val)) ? '—' : Number(val).toLocaleString('en-IN');
@@ -73,7 +73,7 @@ export default function StockDetailPage() {
 
       <section className="mes-card form-card">
         {loading ? (
-          <p className="muted">Loading stock detail...</p>
+          <SkeletonDetail showHeader={false} showTabs={false} showMetrics={false} />
         ) : error ? (
           <AlertBanner tone="danger">{error}</AlertBanner>
         ) : !stock ? (

@@ -14,7 +14,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Plus, X, Check } from 'lucide-react'
 import api from '../api/client'   // your existing axios instance
-import { PageHeader, AlertBanner } from '../components/mes'
+import { PageHeader, AlertBanner, SkeletonForm } from '../components/mes'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -728,12 +728,7 @@ export default function MasterForm({ slug, recordId, onSave, onCancel, variant }
 
   // ── Render ──────────────────────────────────────────────────────────────────
   if (loading) {
-    return (
-      <div className="mf-loading">
-        <i className="ti ti-loader-2 mf-spin" />
-        Loading form…
-      </div>
-    )
+    return <SkeletonForm embedded showHeader={false} />
   }
 
   if (!schema) return <div className="mf-error">Failed to load form schema.</div>

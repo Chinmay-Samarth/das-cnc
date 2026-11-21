@@ -45,8 +45,8 @@ function parseDateParts(value) {
     };
   }
 
-  // Already dd-mm-yyyy
-  const dmy = /^(\d{2})-(\d{2})-(\d{4})$/.exec(str);
+  // Already dd-mm-yyyy or dd/mm/yyyy
+  const dmy = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/.exec(str);
   if (dmy) {
     return {
       year: Number(dmy[3]),

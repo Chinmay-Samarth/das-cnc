@@ -15,6 +15,7 @@ import { appAlert, appConfirm, appForm } from "../../components/dialog";
 import InvoicePdfViewer from "./InvoicePdfViewer";
 import { formatDisplayDate, toISODateString } from '../../utils/dateFormat';
 import { useAuth } from '../../auth/authContext';
+import { SkeletonInvoiceDetails } from '../../components/mes';
 
 const STATUS_STYLES = {
   paid:       { bg: '#f0fdf4', color: '#16a34a', label: 'PAID' },
@@ -187,6 +188,9 @@ export default function InvoiceDetails() {
       try {
         setLoading(true);
         setError(null);
+        setInvoice(null);
+        setLineItems([]);
+        setTaxLines([]);
 
         const invoiceRes = await api.get(`/invoices/${id}`);
         if (!mounted) return;
@@ -222,7 +226,13 @@ export default function InvoiceDetails() {
     return () => clearTimeout(timer);
   }, [actionMessage]);
 
-  if (loading) return <div style={styles.stateScreen}>Loading invoice…</div>;
+  if (loading) {
+    return (
+      <div style={styles.pageWrapper}>
+        <SkeletonInvoiceDetails />
+      </div>
+    );
+  }
   if (error) return <div style={styles.stateScreen}>Error: {error}</div>;
   if (!invoice) return <div style={styles.stateScreen}>Invoice not found.</div>;
 

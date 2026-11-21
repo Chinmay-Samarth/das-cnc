@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Check, Printer, Send, Download, Trash2, FileText } from 'lucide-react';
 import api from '../api/client';
-import { PageHeader, AlertBanner, EmptyState, StatusBadge } from '../components/mes';
+import { PageHeader, AlertBanner, EmptyState, StatusBadge, SkeletonForm } from '../components/mes';
 import { appAlert } from '../components/dialog';
 import MasterItemSelect from '../girn/MasterItemSelect';
 import { printPurchaseOrderPdf, downloadPurchaseOrderPdf, formatInr } from './downloadPurchaseOrderPdf';
@@ -385,7 +385,7 @@ export default function CreatePurchaseOrderWizard() {
   if (loading) {
     return (
       <main className="mes-shell bpo-setup-page po-setup-page">
-        <p className="muted">Loading demand…</p>
+        <SkeletonForm />
       </main>
     );
   }

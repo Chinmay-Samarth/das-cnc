@@ -59,7 +59,10 @@ async function evaluatePurchaseInvoiceOverdueAlerts() {
         invoice_number: inv.invoice_number,
         due_date: inv.due_date,
         supplier_id: inv.supplier_id,
-        path: `/invoices/${inv.id}`,
+        supplier_name: supplierName,
+        path: `/purchase-payments?highlightInvoice=${inv.id}${
+          inv.supplier_id ? `&supplierId=${inv.supplier_id}` : ''
+        }`,
       },
       dedupe_key: `purchase_invoice_overdue:${inv.id}:${today}`,
     });

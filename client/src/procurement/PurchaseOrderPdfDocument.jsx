@@ -17,9 +17,14 @@ function fmtQty(value) {
 
 function fmtDate(value) {
   if (!value) return '—';
+  const str = String(value).trim();
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(str);
+  if (iso) return `${iso[3]}-${iso[2]}-${iso[1]}`;
   const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value).slice(0, 10);
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-');
+  if (Number.isNaN(d.getTime())) return str.slice(0, 10);
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  return `${day}-${month}-${d.getFullYear()}`;
 }
 
 function logoSrc() {

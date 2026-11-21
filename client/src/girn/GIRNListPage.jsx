@@ -95,6 +95,7 @@ export default function GIRNListPage() {
       title="Goods Inwards Receipt Notes"
       subtitle="Track and manage all incoming raw material receipts."
       error={error}
+      loading={loading}
       filters={
         <div className="employees-actions">
           <input
@@ -125,8 +126,7 @@ export default function GIRNListPage() {
         </div>
       }
     >
-      {loading ? <p className="muted">Loading GIRNs...</p> : null}
-      {!loading && filtered.length === 0 ? (
+      {filtered.length === 0 ? (
         <EmptyState title="No GIRNs found" description="Create a new GIRN or adjust your filters." />
       ) : (
         <div className="employees-table-wrap">

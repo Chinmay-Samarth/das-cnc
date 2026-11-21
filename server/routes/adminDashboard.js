@@ -5,6 +5,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const { getFactoryDashboard } = require('../services/factoryDashboardEngine');
+const { listActivityEvents } = require('../services/activityFeedEngine');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
@@ -47,6 +48,19 @@ router.get('/factory-dashboard', async (req, res) => {
   } catch (err) {
     console.error('Factory dashboard error:', err);
     res.status(500).json({ error: err.message || 'Unable to load factory dashboard' });
+  }
+});
+
+router.get('/activity-feed', async (req, res) => {
+  try {
+    if (!isAdmin(req.user)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    const items = await listActivityEvents({ limit: req.query.limit });
+    res.json({ items });
+  } catch (err) {
+    console.error('Activity feed error:', err);
+    res.status(500).json({ error: err.message || 'Unable to load activity feed' });
   }
 });
 

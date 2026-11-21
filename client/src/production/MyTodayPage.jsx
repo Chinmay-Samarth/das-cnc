@@ -19,9 +19,11 @@ import {
   TruncatedText,
   ShopCardPrintDialog,
   LotCardSheet,
+  SkeletonDetail,
+  SkeletonList,
 } from '../components/mes';
 import { appAlert } from '../components/dialog';
-import { formatDisplayDate } from '../utils/dateFormat';
+import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 import FormSearchSelect from '../components/shared/FormSearchSelect';
 
 const DONE_CHIP_LIMIT = 8;
@@ -697,7 +699,7 @@ function OperatorPersonalToday() {
       />
 
       {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading…</p> : null}
+      {loading ? <SkeletonDetail showHeader={false} showTabs={false} /> : null}
 
       {!loading ? (
         <>
@@ -1113,23 +1115,13 @@ function ManagerMyToday({ floorOnly, navigate }) {
       : null;
 
   function formatOpTime(iso) {
-    if (!iso) return '—';
-    try {
-      return new Date(iso).toLocaleString(undefined, {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    } catch {
-      return '—';
-    }
+    return formatDisplayDateTime(iso);
   }
 
   if (!accessReady || (loading && !command && hasManagerAccess)) {
     return (
       <main className="mes-shell mt-page">
-        <p className="muted">Loading…</p>
+        <SkeletonList />
       </main>
     );
   }

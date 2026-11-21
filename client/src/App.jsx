@@ -63,6 +63,7 @@ import NotFoundPage from './pages/NotFoundPage';
 import PurchaseOrderDetailPage from './procurement/PurchaseOrderDetailPage';
 import CreatePurchaseOrderWizard from './procurement/CreatePurchaseOrderWizard';
 import PurchaseOrdersTab from './procurement/PurchaseOrdersTab';
+import { SkeletonAuth } from './components/mes';
 
 function PurchaseOrdersListPage() {
   return (
@@ -73,7 +74,7 @@ function PurchaseOrdersListPage() {
 }
 
 function MesLoading() {
-  return <main className="mes-shell mes-loading-shell">Loading…</main>;
+  return <SkeletonAuth />;
 }
 
 function RequireAuth() {
@@ -285,6 +286,7 @@ export default function App() {
         </Route>
 
         <Route path="/" element={<HomeRedirect />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
       </SocketProvider>
     </AuthProvider>

@@ -29,6 +29,7 @@ const OPEN_SESSION_LOOKBACK_DAYS = 2;
 
 /** Plant-local lunch / phase bands (minutes from midnight). */
 const LUNCH_START_MINUTES = 12 * 60; // 12:00
+/** Lunch OUT window ends 15:30 — evening CHECK_OUT from 16:00 (INOUT recheck covers gaps). */
 const LUNCH_END_MINUTES = 15 * 60 + 30; // 15:30
 /** Day CHECK_OUT only from this clock time onward (lunch band must never close the day). */
 const EVENING_OUT_START_MINUTES = 16 * 60; // 16:00
@@ -1235,8 +1236,8 @@ async function markAbsentees() {
     if (insertError) throw insertError;
   }
 
-  console.log(`[DasCNC] Absent sweep: marked ${toInsert.length} employees absent for ${yesterday}`);
   if (toInsert.length > 0) {
+    console.log(`[DasCNC] Absent sweep: marked ${toInsert.length} employees absent for ${yesterday}`);
     emitAttendanceUpdated({ date: yesterday, action: 'absent' });
   }
 }

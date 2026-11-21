@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Save } from 'lucide-react';
 import api from '../api/client';
-import { AlertBanner, PageHeader } from '../components/mes';
+import { AlertBanner, PageHeader, SkeletonForm } from '../components/mes';
 import { appConfirm } from '../components/dialog';
 import MasterBuilderKanban from './MasterBuilderKanban';
 import MasterFieldDrawer from './MasterFieldDrawer';
@@ -248,10 +248,7 @@ export default function MasterBuilderPage() {
   if (loading) {
     return (
       <main className="mes-shell mes-shell-wide mmb-page">
-        <div className="mes-card" style={{ display: 'grid', gap: 16, padding: 32 }}>
-          <div className="skeleton" style={{ height: 40, width: '50%', borderRadius: 10 }} />
-          <div className="skeleton" style={{ height: 20, width: '70%', borderRadius: 8 }} />
-        </div>
+        <SkeletonForm />
       </main>
     );
   }

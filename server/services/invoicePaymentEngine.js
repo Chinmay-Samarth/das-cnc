@@ -213,6 +213,26 @@ async function recordVendorInvoicePayment(id, actorId, body = {}) {
   const paidInvoice = await getInvoice(id);
   const supplier = paidInvoice.suppliers || inv.suppliers || null;
 
+  {
+    const supplierName = supplier?.name || 'Supplier';
+    const invNo = paidInvoice.invoice_number || inv.invoice_number || id;
+    const { recordActivityEvent, EVENT_TYPES } = require('./activityFeedEngine');
+    void recordActivityEvent({
+      eventType: EVENT_TYPES.PURCHASE_PAYMENT_UPDATED,
+      title: 'Purchase payment recorded',
+      body: `${invNo} · ${supplierName}`,
+      entityType: 'purchase_invoice',
+      entityId: id,
+      href: `/invoices/${id}`,
+      actorId: actorId || null,
+      payload: {
+        invoice_number: invNo,
+        payment_reference: txnId,
+        supplier_id: paidInvoice.supplier_id || inv.supplier_id || null,
+      },
+    });
+  }
+
   if (isTallyEnabled()) {
     const syncResult = await syncPaymentVoucherForInvoice(paidInvoice, supplier, {
       bankLedger,
@@ -596,6 +616,29 @@ async function recordBulkVendorPayments(actorId, body = {}) {
   const paid = [];
   for (const inv of enriched) {
     paid.push(await getInvoice(inv.id));
+  }
+
+  {
+    const supplierName = supplier?.name || 'Supplier';
+    const { recordActivityEvent, EVENT_TYPES } = require('./activityFeedEngine');
+    void recordActivityEvent({
+      eventType: EVENT_TYPES.PURCHASE_PAYMENT_UPDATED,
+      title: 'Purchase payment recorded',
+      body:
+        paid.length > 1
+          ? `${paid.length} invoices · ${supplierName}`
+          : `${paid[0]?.invoice_number || invoiceIds[0]} · ${supplierName}`,
+      entityType: 'purchase_invoice',
+      entityId: paid[0]?.id || invoiceIds[0],
+      href: paid[0]?.id ? `/invoices/${paid[0].id}` : '/purchase-payments',
+      actorId: actorId || null,
+      payload: {
+        invoice_ids: invoiceIds,
+        payment_reference: txnId,
+        supplier_id: supplierId,
+        count: paid.length,
+      },
+    });
   }
 
   return {

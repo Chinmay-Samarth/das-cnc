@@ -645,7 +645,30 @@ async function confirmReview(invoiceId, body, actorId) {
 
   await upsertAliases(supplierId, normalizedLines, actorId);
 
-  return getInvoice(invoiceId);
+  const confirmed = await getInvoice(invoiceId);
+
+  if (wasDraft) {
+    const supplierName =
+      confirmed?.suppliers?.name ||
+      confirmed?.supplier_name ||
+      'Supplier';
+    const { recordActivityEvent, EVENT_TYPES } = require('./activityFeedEngine');
+    void recordActivityEvent({
+      eventType: EVENT_TYPES.PURCHASE_INVOICE_PUBLISHED,
+      title: 'Purchase invoice published',
+      body: `${invoiceNumber} · ${supplierName}`,
+      entityType: 'purchase_invoice',
+      entityId: invoiceId,
+      href: `/invoices/${invoiceId}`,
+      actorId: actorId || null,
+      payload: {
+        invoice_number: invoiceNumber,
+        supplier_id: supplierId,
+      },
+    });
+  }
+
+  return confirmed;
 }
 
 /**

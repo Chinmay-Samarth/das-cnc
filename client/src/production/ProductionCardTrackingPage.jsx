@@ -12,7 +12,9 @@ import {
   StatusBadge,
   EmptyState,
   TruncatedText,
+  SkeletonDetail,
 } from '../components/mes';
+import { formatDisplayDateTime } from '../utils/dateFormat';
 import ProductionCardFlowChart from './ProductionCardFlowChart';
 
 export default function ProductionCardTrackingPage() {
@@ -174,23 +176,13 @@ export default function ProductionCardTrackingPage() {
   }, [detail?.tracking]);
 
   function formatWhen(iso) {
-    if (!iso) return '—';
-    try {
-      return new Date(iso).toLocaleString(undefined, {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    } catch {
-      return '—';
-    }
+    return formatDisplayDateTime(iso);
   }
 
   if (loading && !detail) {
     return (
       <main className="mes-shell">
-        <p className="muted">Loading route tracking…</p>
+        <SkeletonDetail />
       </main>
     );
   }

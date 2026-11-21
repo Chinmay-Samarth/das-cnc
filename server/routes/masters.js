@@ -374,12 +374,9 @@ router.get('/:slug/records', wrap(async (req, res) => {
     .in('record_id', recordIds)
     .eq('field_id', labelField?.field_id)
 
-    console.log(labelField.field_label)
- 
   const labelMap = {}
   for (const lv of labelValues || []) labelMap[lv.record_id] = lv.value
- 
-  console.log(labelMap)
+
   // Apply search filter in JS (for simplicity; move to DB FTS later if needed)
   let result = records.map(r => ({
     id:         r.id,
@@ -424,8 +421,6 @@ router.get('/:slug/records/:id', wrap(async (req, res) => {
     .select('label')
     .eq("record_id", id)
     .single()
-
-  console.log(label)
 
   if (labelErr) throw {status: 404, message: "Record not found"}
 
@@ -502,8 +497,6 @@ router.get('/:slug/records/:id', wrap(async (req, res) => {
 router.post('/:slug/records', upload.any(), wrap(async (req, res) => {
   const master = await getMaster(req.params.slug)
 
-  console.log("i reached post option")
- 
   if (master.source_type === 'legacy') {
     throw { status: 400, message: 'Legacy masters use their own routes (/api/suppliers or /api/customers)' }
   }
@@ -575,22 +568,21 @@ router.post('/:slug/records', upload.any(), wrap(async (req, res) => {
     } else {
       // multi_file — collect all files for this field
       const existing = flatInserts.find(r => r.field_id === field.id)
-      console.log(existing)
       if (existing) {
         existing.file_urls.push(uploaded.url)
-        console.log('im in existing', flatInserts)
       } else {
         row.file_urls = [uploaded.url]
         flatInserts.push(row)
-        console.log('Im the culprit', flatInserts)
       }
     }
   }
  
   if (flatInserts.length) {
     const { error } = await supabase.from('record_values').insert(flatInserts)
-    console.dir(error, {depth: null})
-    if (error) throw { status: 500, message: error.message }
+    if (error) {
+      console.error('Master record_values insert failed:', error.message || error)
+      throw { status: 500, message: error.message }
+    }
   }
  
   // ── Insert repeatable rows ─────────────────────────────────────────────────

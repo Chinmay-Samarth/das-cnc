@@ -432,9 +432,9 @@ export default function MasterPage() {
           </button>
         </div>
       }
+      loading={loading}
     >
-      {loading ? <p className="muted">Loading {masterName}…</p> : null}
-      {!loading && filteredRecords.length === 0 ? (
+      {filteredRecords.length === 0 ? (
         <EmptyState
           title={`No ${masterName} found`}
           description="Create a record or adjust your search."

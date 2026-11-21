@@ -22,9 +22,14 @@ export const CHART = {
 
 export function formatShortDate(ymd) {
   if (!ymd) return '';
-  const d = new Date(`${String(ymd).slice(0, 10)}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return String(ymd).slice(5);
-  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  const str = String(ymd).slice(0, 10);
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+  if (iso) return `${iso[3]}-${iso[2]}-${iso[1]}`;
+  const d = new Date(`${str}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return str;
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  return `${day}-${month}-${d.getFullYear()}`;
 }
 
 export function formatInr(n) {

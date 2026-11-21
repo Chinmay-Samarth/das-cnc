@@ -9,6 +9,7 @@ import {
   AlertBanner,
   StatusBadge,
   TruncatedText,
+  SkeletonList,
 } from '../components/mes';
 import FormSearchSelect from '../components/shared/FormSearchSelect';
 import { appAlert, appConfirm } from '../components/dialog';
@@ -399,7 +400,9 @@ export default function HorizonPlannerPage() {
 
       {error ? <p className="error-message">{error}</p> : null}
 
-      {!accessReady ? <p className="muted">Loading work centers…</p> : null}
+      {!accessReady ? (
+        <SkeletonList embedded showHeader={false} showFilters={false} rows={4} cols={4} />
+      ) : null}
 
       {accessReady && workCenters.length === 0 ? (
         <EmptyState
@@ -513,7 +516,9 @@ export default function HorizonPlannerPage() {
             </div>
           </section>
 
-          {loading && !preview ? <p className="muted">Loading preview…</p> : null}
+          {loading && !preview ? (
+            <SkeletonList embedded showHeader={false} showFilters={false} />
+          ) : null}
 
           {preview ? (
             <div className="mes-metric-grid">

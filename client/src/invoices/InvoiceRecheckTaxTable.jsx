@@ -38,6 +38,17 @@ export function normalizeTaxRows(taxItems = [], baseAmount) {
   );
 }
 
+/** Keep the scanned tax amount so review can drop duplicate rows before recalculating. */
+export function taxRowsFromInvoice(taxItems = [], baseAmount) {
+  const rows = Array.isArray(taxItems) ? taxItems : [];
+  return rows.map((t) => ({
+    kind: String(t.kind || 'CGST').toUpperCase(),
+    rate: toPercent(t.rate),
+    base: t.base ?? baseAmount ?? '',
+    amount: t.amount ?? '',
+  }));
+}
+
 function fieldClass(base, flag, severity) {
   if (!flag) return base;
   return `${base} ${severity === 'error' ? 'invoice-field-invalid' : 'invoice-field-suspect'}`;

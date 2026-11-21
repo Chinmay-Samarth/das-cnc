@@ -9,6 +9,7 @@ export const SIZE_OPTIONS = [
 export const SIZE_SPAN = Object.fromEntries(SIZE_OPTIONS.map((s) => [s.id, s.span]));
 
 const ALLOWED_SIZES = {
+  activity: ['full'],
   attendance: ['half', 'full'],
   approvals: ['half', 'full'],
   delivery: ['full'],
@@ -21,6 +22,7 @@ const ALLOWED_SIZES = {
 };
 
 const DEFAULT_SIZES = {
+  activity: 'full',
   revenue: 'half',
   yield: 'half',
   delivery_load: 'half',
@@ -37,6 +39,7 @@ const DEFAULT_SIZES = {
 };
 
 export const DEFAULT_WIDGET_ORDER = [
+  'activity',
   'revenue',
   'yield',
   'delivery_load',
@@ -94,7 +97,11 @@ function normalizeLayout(raw) {
     next.push({ id: item.id, size: normalizeSize(item.size, item.id) });
   }
   for (const id of DEFAULT_WIDGET_ORDER) {
-    if (!seen.has(id)) next.push({ id, size: normalizeSize(DEFAULT_SIZES[id], id) });
+    if (seen.has(id)) continue;
+    const item = { id, size: normalizeSize(DEFAULT_SIZES[id], id) };
+    // New live feed should sit at the top of existing saved layouts
+    if (id === 'activity') next.unshift(item);
+    else next.push(item);
   }
   return next;
 }

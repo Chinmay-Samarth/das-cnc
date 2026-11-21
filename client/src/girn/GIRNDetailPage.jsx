@@ -21,6 +21,8 @@ import {
   MetricCard,
   PageHeader,
   ProgressBar,
+  SkeletonDetail,
+  SkeletonList,
   StatusBadge,
   ShopCardPrintDialog,
   GirnTagSheet,
@@ -505,7 +507,9 @@ function ItemInspectionPanel({ girnId, item, isPending, onSave, initialInspectio
 
       {open ? (
         <div className="girn-inspect-body">
-          {loadingPlan ? <p className="muted">Loading inspection plan…</p> : null}
+          {loadingPlan ? (
+            <SkeletonList embedded showHeader={false} showFilters={false} rows={3} cols={3} />
+          ) : null}
           {loadError ? <AlertBanner tone="danger">{loadError}</AlertBanner> : null}
           {autoApprovedMsg ? <AlertBanner tone="success">{autoApprovedMsg}</AlertBanner> : null}
 
@@ -955,7 +959,7 @@ export default function GIRNDetailPage() {
         {actionError ? <AlertBanner tone="danger">{actionError}</AlertBanner> : null}
 
         {loading ? (
-          <p className="muted">Loading GIRN…</p>
+          <SkeletonDetail showHeader={false} showTabs={false} showMetrics />
         ) : error ? (
           <AlertBanner tone="danger">{error}</AlertBanner>
         ) : !girn ? (

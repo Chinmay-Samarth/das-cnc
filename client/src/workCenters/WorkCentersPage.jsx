@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
-import { ListPage, EmptyState, StatusBadge } from '../components/mes';
+import { ListPage, EmptyState, StatusBadge, SkeletonList } from '../components/mes';
 import { sortBy } from '../utils/listHelpers';
 
 export default function WorkCentersPage() {
@@ -94,7 +94,7 @@ export default function WorkCentersPage() {
         </div>
       }
     >
-      {loading ? <p className="muted">Loading work centers...</p> : null}
+      {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
       {!loading && filtered.length === 0 ? (
         <EmptyState title="No work centers found" description="Try adjusting your search." />
       ) : (

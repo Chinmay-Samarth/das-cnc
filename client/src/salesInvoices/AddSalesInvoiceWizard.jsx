@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Check, Printer, Truck } from 'lucide-react';
 import api from '../api/client';
-import { PageHeader, AlertBanner } from '../components/mes';
+import { PageHeader, AlertBanner, SkeletonForm } from '../components/mes';
 import { printSalesInvoicePdf, formatInr } from './downloadSalesInvoicePdf';
 import { printPackingSlipPdf } from './downloadPackingSlipPdf';
+import { formatDisplayDate } from '../utils/dateFormat';
 
 const STEPS = [
   { id: 1, title: 'Lot & schedule', hint: 'Confirm what you are billing' },
@@ -336,7 +337,7 @@ export default function AddSalesInvoiceWizard() {
   if (loading) {
     return (
       <main className="mes-shell bpo-setup-page">
-        <p className="muted">Loading…</p>
+        <SkeletonForm />
       </main>
     );
   }
@@ -380,7 +381,7 @@ export default function AddSalesInvoiceWizard() {
             </p>
             <p className="muted">
               Schedule: <strong>{preview.schedule?.schedule_number}</strong> · Due{' '}
-              {preview.schedule?.due_date}
+              {formatDisplayDate(preview.schedule?.due_date)}
               {preview.remaining_qty != null ? (
                 <>
                   {' '}

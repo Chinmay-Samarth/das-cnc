@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import api from '../api/client';
 import { appConfirm } from '../components/dialog';
+import { SkeletonList } from '../components/mes';
 import MasterItemSelect from '../girn/MasterItemSelect';
 import { useSocket } from '../socket/socketContext';
 import { Plus, ChevronRight, ChevronDown, Pencil, Trash2, X, Check } from 'lucide-react';
@@ -515,7 +516,7 @@ export default function BomBuilder({ slug, recordId, recordTitle }) {
   }
 
   if (loading) {
-    return <p className="muted">Loading BOM...</p>;
+    return <SkeletonList embedded showHeader={false} showFilters={false} />;
   }
 
   const isDraft = version?.status === 'draft';

@@ -149,6 +149,7 @@ export default function EmployeesPage() {
       title="Employees"
       subtitle="Search, sort, and browse employee details from one place."
       error={error}
+      loading={loading}
       filters={
         <div className="employees-actions">
           <div className="mes-view-toggle" role="group" aria-label="Employee status">
@@ -181,8 +182,8 @@ export default function EmployeesPage() {
             disabled={exporting}
             onClick={exportPreviousMonthPayroll}
           >
-            <Download size={16} style={{ display: 'inline', marginRight: 4 }} />
-            {exporting ? 'Exporting…' : 'Export previous month'}
+            <Download size={15} />
+            {exporting ? 'Exporting…' : 'Export to XLS'}
           </button>
           <button type="button" className="primary-button" onClick={() => navigate('/employees/add')}>
             <UserPlus size={16} style={{ display: 'inline', marginRight: 4 }} />
@@ -191,8 +192,7 @@ export default function EmployeesPage() {
         </div>
       }
     >
-      {loading ? <p className="muted">Loading employees...</p> : null}
-      {!loading && filteredEmployees.length === 0 ? (
+      {filteredEmployees.length === 0 ? (
         <EmptyState title="No employees found" description="Try adjusting your search or status filter." />
       ) : (
         <>

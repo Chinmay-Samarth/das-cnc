@@ -8,7 +8,12 @@ const helmet     = require('helmet');
 const rateLimit  = require('express-rate-limit');
 const { rateLimitKey } = require('./utils/rateLimitKey');
 const { markAbsentees } = require('./services/attendanceEngine');
-const { syncBiometricData } = require('./services/biometricSync');
+const {
+  startBiometricPoller,
+  runBiometricSyncTick,
+  getBiometricPollerStatus,
+} = require('./services/biometricPoller');
+const { purgeOpenedNotifications } = require('./services/notificationPurgeEngine');
 const { evaluateAttendanceAlerts } = require('./services/attendanceAlertEngine');
 const { evaluateTomorrowDeliveryStockAlerts } = require('./services/inventoryAlertEngine');
 const { evaluateSalesInvoiceOverdueAlerts } = require('./services/salesInvoiceAlertEngine');
@@ -95,14 +100,16 @@ app.use('/api/admin', require('./routes/adminDashboard'));
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', ts: new Date() }));
 
-// Manual biometric sync trigger for debugging
+// Manual biometric sync trigger for debugging / on-demand catch-up
 app.post('/api/sync/biometric', async (req, res) => {
-  console.log('Manual biometric sync requested via POST');
   try {
-    const result = await Promise.race([
-      syncBiometricData()
-    ]);
-    return res.json({ status: 'ok', message: result.message, result });
+    const result = await runBiometricSyncTick('manual');
+    return res.json({
+      status: 'ok',
+      message: result?.message || (result?.skipped ? 'Sync already running' : 'ok'),
+      result,
+      poller: getBiometricPollerStatus(),
+    });
   } catch (err) {
     console.error('Manual biometric sync failed:', err);
     return res.status(500).json({ status: 'error', message: err?.message || 'Sync failed' });
@@ -110,16 +117,22 @@ app.post('/api/sync/biometric', async (req, res) => {
 });
 
 app.get('/api/sync/biometric', async (req, res) => {
-  console.log('Manual biometric sync requested via GET');
   try {
-    const result = await Promise.race([
-      syncBiometricData()
-    ]);
-    return res.json({ status: 'ok', message: result.message, result });
+    const result = await runBiometricSyncTick('manual');
+    return res.json({
+      status: 'ok',
+      message: result?.message || (result?.skipped ? 'Sync already running' : 'ok'),
+      result,
+      poller: getBiometricPollerStatus(),
+    });
   } catch (err) {
     console.error('Manual biometric sync failed:', err);
     return res.status(500).json({ status: 'error', message: err?.message || 'Sync failed' });
   }
+});
+
+app.get('/api/sync/biometric/status', (req, res) => {
+  res.json({ status: 'ok', poller: getBiometricPollerStatus() });
 });
  
 // ─────────────────────────────────────────────
@@ -128,7 +141,6 @@ app.get('/api/sync/biometric', async (req, res) => {
 // Marks anyone with no punch as ABSENT
 // ─────────────────────────────────────────────
 cron.schedule('0 7 * * *', async () => {
-  console.log('Running daily absent sweep...');
   try {
     await markAbsentees();
   } catch (err) {
@@ -140,10 +152,9 @@ cron.schedule('0 7 * * *', async () => {
 
 // Apply night-shift roster at start of ISO week (Monday 00:05 plant time)
 cron.schedule('5 0 * * 1', async () => {
-  console.log('Applying night shift weekly roster...');
   try {
     const result = await applyCurrentWeek();
-    console.log('Night shift roster applied:', result);
+    console.log('[cron] Night shift roster applied:', result);
   } catch (err) {
     console.error('Night shift roster apply failed:', err);
   }
@@ -151,18 +162,27 @@ cron.schedule('5 0 * * 1', async () => {
   timezone: process.env.TIMEZONE || 'Asia/Kolkata'
 });
 
-cron.schedule('*/5 * * * *', async () => {
-  console.log('Fetching Biometric Data...');
+// Near-realtime biometric sync: adaptive poller (no device webhook available).
+// Plant hours → fast poll; off-hours → slow poll; overlap-locked.
+startBiometricPoller();
+
+// Opened/dismissed notifications older than 30 days — 1st of each month 03:15 plant time
+cron.schedule('15 3 1 * *', async () => {
   try {
-    await syncBiometricData();
+    const result = await purgeOpenedNotifications({ olderThanDays: 30 });
+    const deleted = Number(result?.deleted || result?.count || 0);
+    if (deleted > 0) {
+      console.log(`[cron] Purged ${deleted} opened notification(s)`);
+    }
   } catch (err) {
-    console.log('Failed to Fetch Data', err);
+    console.error('Opened notification purge failed:', err);
   }
+}, {
+  timezone: process.env.TIMEZONE || 'Asia/Kolkata'
 });
 
 // Admin inbox alerts: attendance + inventory + production + invoice
 cron.schedule('*/20 * * * *', async () => {
-  console.log('Evaluating admin alerts...');
   try {
     await evaluateAttendanceAlerts();
   } catch (err) {
@@ -215,20 +235,16 @@ cron.schedule('*/20 * * * *', async () => {
 // Run once shortly after boot so the inbox is not empty until the first cron tick
 setTimeout(() => {
   evaluateAttendanceAlerts()
-    // .then((result) => console.log('Initial attendance alerts:', result.created))
     .catch((err) => console.error('Initial attendance alert evaluation failed:', err));
   evaluateTomorrowDeliveryStockAlerts()
-    // .then((result) => console.log('Initial inventory delivery alerts:', result.created))
     .catch((err) => console.error('Initial inventory delivery alert evaluation failed:', err));
   evaluateReorderAlerts()
     .catch((err) => console.error('Initial reorder alert evaluation failed:', err));
   evaluatePredictiveReorder()
     .catch((err) => console.error('Initial predictive reorder evaluation failed:', err));
   evaluateProductionAlerts()
-    // .then((result) => console.log('Initial production alerts:', result.created))
     .catch((err) => console.error('Initial production alert evaluation failed:', err));
   evaluateSalesInvoiceOverdueAlerts()
-    // .then((result) => console.log('Initial sales invoice overdue alerts:', result.created))
     .catch((err) => console.error('Initial sales invoice overdue alert evaluation failed:', err));
   evaluatePurchaseInvoiceOverdueAlerts()
     .catch((err) => console.error('Initial purchase invoice overdue alert evaluation failed:', err));
@@ -250,7 +266,7 @@ server.listen(PORT, () => {
   migratePlaintextPasswords().catch((err) =>
     console.error('Password plaintext migration failed:', err.message)
   );
-  // Warm custom invoice OCR (Render) so first upload is not stuck on cold start
+  // Warm custom invoice OCR so first upload is not stuck on cold start
   const ocrHealth =
     process.env.INVOICE_OCR_HEALTH_URL ||
     (process.env.INVOICE_OCR_URL || 'http://127.0.0.1:8080/health').replace(
@@ -259,6 +275,5 @@ server.listen(PORT, () => {
     );
   axios
     .get(ocrHealth, { timeout: 60000 })
-    .then(() => console.log('Invoice OCR warm-up OK:', ocrHealth))
     .catch((err) => console.warn('Invoice OCR warm-up skipped:', err.message));
 });

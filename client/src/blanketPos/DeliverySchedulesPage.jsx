@@ -18,6 +18,7 @@ import {
   StatusBadge,
   EmptyState,
   TruncatedText,
+  SkeletonList,
 } from '../components/mes';
 
 const STATUS_OPTIONS = [
@@ -411,7 +412,7 @@ export default function DeliverySchedulesPage() {
       </div>
 
       {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading schedules…</p> : null}
+      {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
 
       {!loading && view === 'list' && !filtered.length ? (
         <EmptyState

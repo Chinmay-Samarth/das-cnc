@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FileText, Search } from 'lucide-react';
 import api from '../api/client';
-import { EmptyState, PageHeader, StatusBadge } from '../components/mes';
+import { EmptyState, PageHeader, StatusBadge, SkeletonList } from '../components/mes';
 import FormSearchSelect from '../components/shared/FormSearchSelect';
 import ImageLightbox from '../components/shared/ImageLightBox';
 
@@ -88,7 +88,7 @@ export default function ImageLibraryPage() {
 
         {error ? <p className="image-library-error">{error}</p> : null}
 
-        {loading ? <p className="muted">Loading images…</p> : null}
+        {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
 
         {!loading && results.length === 0 ? (
           <EmptyState

@@ -172,11 +172,10 @@ async function syncReceiptVoucher(opts) {
 
   try {
     const xml = buildReceiptVoucherXml(opts);
-    const { tallyUrl } = require('./tallyClient');
-    console.log(
-      `[tally] posting Receipt voucher ${opts.voucherNumber || opts.reference} bank=${opts.bankLedger} → ${tallyUrl()}`
-    );
     await postTallyXml(xml);
+    console.log(
+      `[tally] Receipt synced: ${opts.voucherNumber || opts.reference || '—'}`
+    );
     return {
       status: 'synced',
       error: null,
@@ -184,7 +183,7 @@ async function syncReceiptVoucher(opts) {
       syncedAt: new Date().toISOString(),
     };
   } catch (err) {
-    console.error('[tally] receipt sync failed:', err.message);
+    console.error('[tally] Receipt sync failed:', err.message);
     return {
       status: 'failed',
       error: err.message || 'Tally receipt sync failed',

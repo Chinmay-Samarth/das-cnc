@@ -4,7 +4,7 @@ import { pdf } from '@react-pdf/renderer';
 import api from '../api/client';
 import { appAlert, appConfirm, appForm } from '../components/dialog';
 import { formatDisplayDate, formatDisplayDateTime, toISODateString } from '../utils/dateFormat';
-import { PageHeader, StatusBadge, AlertBanner, ProgressRing } from '../components/mes';
+import { PageHeader, StatusBadge, AlertBanner, ProgressRing, SkeletonDetail } from '../components/mes';
 import InvoicePdfViewer from '../components/Invoices/InvoicePdfViewer';
 import PurchaseOrderPdfDocument from './PurchaseOrderPdfDocument';
 import {
@@ -266,7 +266,13 @@ export default function PurchaseOrderDetailPage() {
     }
   }
 
-  if (loading) return <p className="muted">Loading…</p>;
+  if (loading) {
+    return (
+      <main className="mes-shell">
+        <SkeletonDetail />
+      </main>
+    );
+  }
   if (error) return <AlertBanner tone="danger">{error}</AlertBanner>;
   if (!po) return null;
 

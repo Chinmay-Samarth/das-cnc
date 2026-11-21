@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { ClipboardCheck } from 'lucide-react';
 import api from '../api/client';
 import { useSocket } from '../socket/socketContext';
-import { EmptyState, StatusBadge } from '../components/mes';
+import { EmptyState, StatusBadge, SkeletonList } from '../components/mes';
 import { appAlert, appConfirm, appPrompt } from '../components/dialog';
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 
@@ -152,7 +152,7 @@ export default function GirnApprovalsTab({ initialStatus = 'ready' }) {
       </div>
 
       {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading GIRNs…</p> : null}
+      {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
 
       {!loading && girns.length === 0 ? (
         <EmptyState

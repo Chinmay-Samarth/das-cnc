@@ -227,6 +227,7 @@ export default function SuppliersPage() {
       title="Suppliers"
       subtitle="Search, sort, and browse supplier records from one place."
       error={error}
+      loading={loading}
       filters={
         <div className="employees-actions">
           <input
@@ -249,8 +250,7 @@ export default function SuppliersPage() {
         </div>
       }
     >
-      {loading ? <p className="muted">Loading suppliers...</p> : null}
-      {!loading && filteredSuppliers.length === 0 ? (
+      {filteredSuppliers.length === 0 ? (
         <EmptyState title="No suppliers found" description="Try adjusting your search." />
       ) : (
         <div className="employees-table-wrap">

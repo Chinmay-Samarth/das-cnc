@@ -529,6 +529,35 @@ router.post('/', verifyEmployeeAuth, async (req, res) => {
       emitInventoryUpdated({ action: 'girn_approved', girnId: newGirn.id });
     }
 
+    try {
+      const { recordActivityEvent, EVENT_TYPES } = require('../services/activityFeedEngine');
+      let supplierLabel = String(supplier_name || '').trim();
+      if (!supplierLabel && resolvedSupplierId) {
+        const { data: supRow } = await supabase
+          .from('suppliers')
+          .select('name')
+          .eq('id', resolvedSupplierId)
+          .maybeSingle();
+        supplierLabel = supRow?.name || '';
+      }
+      void recordActivityEvent({
+        eventType: EVENT_TYPES.GIRN_UPLOADED,
+        title: 'GIRN uploaded',
+        body: supplierLabel ? `${girnNumber} · ${supplierLabel}` : girnNumber,
+        entityType: 'girn',
+        entityId: newGirn.id,
+        href: `/girn/${newGirn.id}`,
+        actorId: req.user?.sub || received_by || null,
+        payload: {
+          girn_number: girnNumber,
+          supplier_id: resolvedSupplierId,
+          status: initialStatus,
+        },
+      });
+    } catch (activityErr) {
+      console.error('GIRN activity feed failed:', activityErr.message);
+    }
+
     let tallyPurchase = null;
     if (invoice_id) {
       try {
@@ -597,7 +626,6 @@ router.post('/extract-invoice', verifyEmployeeAuth, upload.single('invoice'), as
       ocr_warnings: result.ocr_warnings,
     });
   } catch (err) {
-    console.dir(err, {depth: null})
     console.error('GIRN invoice extraction error:', err);
     return res.status(500).json({ error: err.message || 'Unable to extract invoice' });
   }

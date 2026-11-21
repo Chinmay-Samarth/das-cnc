@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Pencil, Banknote } from 'lucide-react';
 import api from '../api/client';
 import { formatDisplayDateTime } from '../utils/dateFormat';
-import { AlertBanner, FormActions, PageHeader } from '../components/mes';
+import { AlertBanner, FormActions, PageHeader, SkeletonDetail } from '../components/mes';
 import { formatInr } from '../salesInvoices/downloadSalesInvoicePdf';
 import { openSalesPaymentDialog } from '../salesInvoices/salesPaymentDialog';
 import { appAlert } from '../components/dialog';
@@ -237,7 +237,7 @@ export default function CustomerDetailsPage() {
 
       <section className="mes-card employee-main">
         {loading ? (
-          <p className="muted">Loading customer details...</p>
+          <SkeletonDetail showHeader={false} showTabs={false} showMetrics={false} />
         ) : error ? (
           <AlertBanner tone="danger">{error}</AlertBanner>
         ) : !customer ? (

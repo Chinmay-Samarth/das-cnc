@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
-import { FormActions, FormPage } from '../components/mes';
+import { FormActions, FormPage, SkeletonForm } from '../components/mes';
 import { appAlert } from '../components/dialog';
 
 const FIELDS = [
@@ -72,7 +72,7 @@ export default function CompanySettingsPage() {
       error={error}
     >
       {loading ? (
-        <p className="muted">Loading…</p>
+        <SkeletonForm embedded showHeader={false} />
       ) : (
         <form onSubmit={handleSave}>
           <div className="form-page-grid">

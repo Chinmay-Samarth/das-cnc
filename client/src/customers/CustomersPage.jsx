@@ -191,6 +191,7 @@ export default function CustomersPage() {
       title="Customers"
       subtitle="Search, sort, and browse customer records from one place."
       error={error}
+      loading={loading}
       filters={
         <div className="employees-actions">
           <input
@@ -213,8 +214,7 @@ export default function CustomersPage() {
         </div>
       }
     >
-      {loading ? <p className="muted">Loading customers...</p> : null}
-      {!loading && filteredCustomers.length === 0 ? (
+      {filteredCustomers.length === 0 ? (
         <EmptyState title="No customers found" description="Try adjusting your search." />
       ) : (
         <div className="employees-table-wrap">

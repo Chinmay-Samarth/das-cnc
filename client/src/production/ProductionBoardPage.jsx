@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { RefreshCw, Package, CheckCircle2, AlertCircle, XCircle } from 'lucide-react';
 import api from '../api/client';
@@ -11,6 +11,7 @@ import {
   EmptyState,
   TruncatedText,
   ProgressBar,
+  SkeletonList,
 } from '../components/mes';
 
 function todayStr() {
@@ -34,18 +35,26 @@ const STATUS_OPTIONS = [
 export default function ProductionBoardPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const highlightCardId = searchParams.get('highlightCard');
+  const cardQuery = searchParams.get('card') || '';
   const { subscribe } = useSocket();
-  const [filters, setFilters] = useState({
-    from: addDays(todayStr(), -7),
-    to: addDays(todayStr(), 7),
-    work_center_id: '',
-    status: searchParams.get('status') || '',
-    search: '',
+  const [filters, setFilters] = useState(() => {
+    const today = todayStr();
+    const highlighting = Boolean(searchParams.get('highlightCard') || searchParams.get('card'));
+    return {
+      from: highlighting ? addDays(today, -90) : addDays(today, -7),
+      to: highlighting ? addDays(today, 30) : addDays(today, 7),
+      work_center_id: '',
+      status: searchParams.get('status') || '',
+      search: searchParams.get('card') || '',
+    };
   });
   const [commitments, setCommitments] = useState([]);
   const [workCenters, setWorkCenters] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [highlightId, setHighlightId] = useState(highlightCardId);
+  const highlightRowRef = useRef(null);
 
   const load = useCallback(
     async ({ silent = false } = {}) => {
@@ -85,6 +94,18 @@ export default function ProductionBoardPage() {
   useEffect(() => {
     return subscribe('production:updated', () => load({ silent: true }));
   }, [subscribe, load]);
+
+  useEffect(() => {
+    setHighlightId(highlightCardId);
+    if (cardQuery) {
+      setFilters((f) => (f.search === cardQuery ? f : { ...f, search: cardQuery }));
+    }
+  }, [highlightCardId, cardQuery]);
+
+  useEffect(() => {
+    if (!highlightId || !highlightRowRef.current) return;
+    highlightRowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [highlightId, commitments]);
 
   const metrics = useMemo(() => {
     const open = commitments.filter((c) =>
@@ -209,7 +230,7 @@ export default function ProductionBoardPage() {
       {error ? <p className="error-message">{error}</p> : null}
 
       {loading && !commitments.length ? (
-        <p className="muted">Loading daily cards…</p>
+        <SkeletonList embedded showHeader={false} showFilters={false} />
       ) : !commitments.length ? (
         <EmptyState
           icon={Package}
@@ -245,10 +266,19 @@ export default function ProductionBoardPage() {
                   const progress =
                     c.committed_qty > 0 ? (c.good_qty / c.committed_qty) * 100 : 0;
                   const isToday = String(c.work_date || '').slice(0, 10) === today;
+                  const isHighlighted =
+                    highlightId && String(c.id) === String(highlightId);
+                  const rowClass = [
+                    isToday ? 'is-today' : '',
+                    isHighlighted ? 'is-alert-highlight' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ');
                   return (
                     <tr
                       key={c.id}
-                      className={isToday ? 'is-today' : undefined}
+                      ref={isHighlighted ? highlightRowRef : undefined}
+                      className={rowClass || undefined}
                       onClick={() => navigate(`/production/cards/${c.id}`)}
                       style={{ cursor: 'pointer' }}
                     >

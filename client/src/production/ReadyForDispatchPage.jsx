@@ -11,6 +11,7 @@ import {
   StatusBadge,
   EmptyState,
   TruncatedText,
+  SkeletonList,
 } from '../components/mes';
 import { appAlert, appPrompt } from '../components/dialog';
 
@@ -667,7 +668,7 @@ export default function ReadyForDispatchPage() {
       />
 
       {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading…</p> : null}
+      {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
 
       {!loading && !lots.length ? (
         <EmptyState

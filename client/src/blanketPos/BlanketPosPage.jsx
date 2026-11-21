@@ -9,6 +9,8 @@ import {
   ProgressBar,
   EmptyState,
   TruncatedText,
+  SkeletonList,
+  SkeletonDetail,
 } from '../components/mes';
 
 function formatMoney(n) {
@@ -110,7 +112,7 @@ export default function BlanketPosPage() {
       {error ? <p className="error-message">{error}</p> : null}
 
       {loading ? (
-        <p className="muted">Loading contracts…</p>
+        <SkeletonList embedded showHeader={false} showFilters={false} />
       ) : !rows.length ? (
         <EmptyState
           icon={FileText}
@@ -179,7 +181,7 @@ export default function BlanketPosPage() {
             {!selected ? (
               <EmptyState title="Select a contract" description="Choose a blanket PO from the list." />
             ) : detailLoading ? (
-              <p className="muted">Loading details…</p>
+              <SkeletonDetail showHeader={false} showTabs={false} showMetrics={false} />
             ) : (
               <>
                 <div className="mes-list-item-top">

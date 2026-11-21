@@ -19,6 +19,8 @@ const {
 } = require('../services/invoiceTallyAlertEngine');
 const { evaluateProductionAlerts } = require('../services/productionAlertEngine');
 const { evaluateReorderAlerts } = require('../services/reorderAlertEngine');
+const { isAdminUser } = require('../utils/accessLevel');
+const { purgeOpenedNotifications } = require('../services/notificationPurgeEngine');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
@@ -41,8 +43,8 @@ function verifyEmployeeAuth(req, res, next) {
 }
 
 function isAdmin(user) {
-  const level = String(user?.job_description || user?.accessLevel || '').toUpperCase();
-  return level === 'ADMIN';
+  // JWT carries access_level; job_description may be "Managing Director" etc.
+  return isAdminUser(user);
 }
 
 function wrap(fn) {
@@ -226,6 +228,39 @@ router.post(
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Notification not found' });
     res.json({ notification: data });
+  })
+);
+
+router.post(
+  '/purge-opened',
+  wrap(async (req, res) => {
+    if (!isAdmin(req.user)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    const olderThanDays = Math.min(365, Math.max(1, Number(req.body?.olderThanDays) || 30));
+    const summary = await purgeOpenedNotifications({ olderThanDays });
+    res.json({
+      message: `Purged opened notifications older than ${olderThanDays} days`,
+      ...summary,
+    });
+  })
+);
+
+/** Permanently delete every opened (read) notification in the admin inbox. */
+router.post(
+  '/delete-opened',
+  wrap(async (req, res) => {
+    if (!isAdmin(req.user)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    const { data, error } = await supabase
+      .from('notifications')
+      .delete()
+      .eq('audience', 'admin')
+      .eq('status', 'read')
+      .select('id');
+    if (error) throw error;
+    res.json({ deleted: (data || []).length });
   })
 );
 

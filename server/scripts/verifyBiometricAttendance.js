@@ -16,7 +16,13 @@ const {
   parseLocalTimestamp,
   deviceCapturedAt,
 } = require('../services/attendanceEngine');
-const { nextSyncCursor } = require('../services/biometricSync');
+const {
+  nextSyncCursor,
+  cappedSyncCursor,
+  classifyInOutPunchRow,
+  isMissingOutTime,
+  parseClockToMinutes,
+} = require('../services/biometricSync');
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -98,6 +104,24 @@ function run() {
     'evening CHECK_OUT'
   );
 
+  // Late arrival after noon is CHECK_IN, not lunch
+  assert(
+    classifyPunchForSession(dayShift, null, '2026-01-27 13:10:00') === 'CHECK_IN',
+    'first punch after 12 is late CHECK_IN'
+  );
+
+  // 15:40 is past lunch band (ends 15:30) — live path treats as DUPLICATE until evening;
+  // INOUT recheck covers late lunch / missing outs.
+  assert(!isInLunchBand(15 * 60 + 40), '15:40 outside lunch band (ends 15:30)');
+  assert(
+    classifyPunchForSession(
+      dayShift,
+      { punched_in_at: dayIn, punched_out_at: null },
+      '2026-01-27 15:40:00'
+    ) === 'DUPLICATE_CHECK_IN',
+    '15:40 with morning IN is DUPLICATE_CHECK_IN (INOUT double-checks lunch)'
+  );
+
   // Mid-morning second punch must NOT checkout
   assert(
     classifyPunchForSession(
@@ -153,11 +177,70 @@ function run() {
     'PunchDate wins over a swapped captured_at'
   );
 
+  // Helper still stops at retriable; live sync uses MaxRecord so the plant never freezes.
   const cursor = nextSyncCursor('100', [
     { punch_id: 101, success: true, applied: true, terminal: true },
     { punch_id: 102, success: false, error: 'UNRESOLVABLE_SHIFT_TIME', terminal: false },
   ]);
   assert(cursor === '101', `cursor ${cursor}`);
+
+  const capped = cappedSyncCursor(
+    '100',
+    [
+      { punch_id: 101, success: true, applied: true, terminal: true },
+      { punch_id: 102, success: false, error: 'UNRESOLVABLE_SHIFT_TIME', terminal: false },
+    ],
+    '500'
+  );
+  assert(capped === '101', `capped helper stops at retriable (${capped})`);
+
+  // InOutPunchData helpers
+  assert(isMissingOutTime('--'), 'missing --');
+  assert(isMissingOutTime('00:00'), 'missing 00:00');
+  assert(parseClockToMinutes('09:16') === 9 * 60 + 16, 'parse 09:16');
+  assert(parseClockToMinutes('13:10') === 13 * 60 + 10, 'parse 13:10');
+
+  const okRow = classifyInOutPunchRow({
+    Empcode: '982',
+    INTime: '09:16',
+    OUTTime: '19:44',
+    DateString: '18/11/2026',
+    Name: 'Nayana IK',
+  });
+  assert(okRow.resolvedAction === 'ok' && !okRow.missingOut && !okRow.postNoonIn, 'ok inout row');
+
+  const missingOutRow = classifyInOutPunchRow({
+    Empcode: '0562',
+    INTime: '09:16',
+    OUTTime: '--',
+    DateString: '18/11/2026',
+  });
+  assert(missingOutRow.missingOut && missingOutRow.resolvedAction === 'missing_out', 'missing out flagged');
+
+  const lateArrival = classifyInOutPunchRow({
+    Empcode: '0562',
+    INTime: '13:10',
+    OUTTime: '19:44',
+    DateString: '18/11/2026',
+  });
+  assert(
+    lateArrival.postNoonIn && lateArrival.resolvedAction === 'late_check_in',
+    'post-12 IN alone is late_check_in, not auto lunch'
+  );
+
+  const lunchMisread = classifyInOutPunchRow(
+    {
+      Empcode: '0562',
+      INTime: '13:10',
+      OUTTime: '19:44',
+      DateString: '18/11/2026',
+    },
+    { punched_in_at: '2026-11-18 08:30:00' }
+  );
+  assert(
+    lunchMisread.postNoonIn && lunchMisread.resolvedAction === 'lunch_break_out',
+    'post-12 IN with morning punched_in_at resolves to lunch_break_out'
+  );
 
   console.log('verifyBiometricAttendance: all checks passed');
 }

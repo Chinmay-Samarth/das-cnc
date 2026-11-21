@@ -21,6 +21,7 @@ import {
   MetricCard,
   StatusBadge,
   TruncatedText,
+  SkeletonList,
 } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import { formatDisplayDate } from '../utils/dateFormat';
@@ -472,7 +473,9 @@ export default function CampaignReviewPage() {
       />
 
       {error ? <p className="error-message">{error}</p> : null}
-      {!accessReady ? <p className="muted">Loading work centers…</p> : null}
+      {!accessReady ? (
+        <SkeletonList embedded showHeader={false} showFilters={false} rows={4} cols={4} />
+      ) : null}
 
       {accessReady && workCenters.length === 0 ? (
         <EmptyState
@@ -542,7 +545,9 @@ export default function CampaignReviewPage() {
             ) : null}
           </div>
 
-          {loading && !review ? <p className="muted">Loading wave review…</p> : null}
+          {loading && !review ? (
+            <SkeletonList embedded showHeader={false} showFilters={false} />
+          ) : null}
 
           {!loading && review && !wave ? (
             <EmptyState

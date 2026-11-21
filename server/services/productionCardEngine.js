@@ -947,6 +947,25 @@ async function reportProgress(cardId, payload, actorEmployeeId, { isManager = fa
       console.error('Op1 close after complete:', e.message);
     }
 
+    {
+      const cardLabel = completed.card_number || card.card_number || cardId;
+      const { recordActivityEvent, EVENT_TYPES } = require('./activityFeedEngine');
+      void recordActivityEvent({
+        eventType: EVENT_TYPES.JOB_CARD_COMPLETED,
+        title: 'Job card completed',
+        body: String(cardLabel),
+        entityType: 'production_card',
+        entityId: cardId,
+        href: `/production/cards/${cardId}`,
+        actorId: actorEmployeeId || card.assigned_employee_id || null,
+        payload: {
+          card_number: cardLabel,
+          good_qty: newGood,
+          scrap_qty: newScrap,
+        },
+      });
+    }
+
     const [enriched] = await enrichCards([completed]);
     const lotPayload = formatMintedLotPayload(mintedLot);
     return {
@@ -1117,6 +1136,24 @@ async function completeMachiningOp(cardId, nodeId, payload, actorEmployeeId, opt
     .select('*')
     .single();
   if (qErr) throw qErr;
+
+  if (cardComplete && card.status !== 'COMPLETED') {
+    const cardLabel = qtyUpdated.card_number || card.card_number || cardId;
+    const { recordActivityEvent, EVENT_TYPES } = require('./activityFeedEngine');
+    void recordActivityEvent({
+      eventType: EVENT_TYPES.JOB_CARD_COMPLETED,
+      title: 'Job card completed',
+      body: String(cardLabel),
+      entityType: 'production_card',
+      entityId: cardId,
+      href: `/production/cards/${cardId}`,
+      actorId: actorEmployeeId || card.assigned_employee_id || null,
+      payload: {
+        card_number: cardLabel,
+        good_qty: newGood,
+      },
+    });
+  }
 
   const minted = await mintLotFromScheduleCard(
     { ...card, activity_flow_version_id: card.activity_flow_version_id },

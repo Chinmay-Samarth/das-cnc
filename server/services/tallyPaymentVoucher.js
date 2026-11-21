@@ -185,11 +185,10 @@ async function syncPaymentVoucher(opts) {
 
   try {
     const xml = buildPaymentVoucherXml(opts);
-    const { tallyUrl } = require('./tallyClient');
-    console.log(
-      `[tally] posting Payment voucher ${opts.voucherNumber || opts.reference} bank=${opts.bankLedger} → ${tallyUrl()}`
-    );
     await postTallyXml(xml);
+    console.log(
+      `[tally] Payment synced: ${opts.voucherNumber || opts.reference || '—'}`
+    );
     return {
       status: 'synced',
       error: null,
@@ -197,7 +196,7 @@ async function syncPaymentVoucher(opts) {
       syncedAt: new Date().toISOString(),
     };
   } catch (err) {
-    console.error('[tally] payment sync failed:', err.message);
+    console.error('[tally] Payment sync failed:', err.message);
     return {
       status: 'failed',
       error: err.message || 'Tally payment sync failed',

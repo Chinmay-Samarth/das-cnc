@@ -11,6 +11,7 @@ import {
   ProgressBar,
   MetricCard,
   AlertBanner,
+  SkeletonList,
 } from '../components/mes';
 import { appAlert } from '../components/dialog';
 
@@ -221,7 +222,7 @@ export default function OutsourcingPage() {
         </div>
       ) : null}
 
-      {loading ? <p className="muted">Loading…</p> : null}
+      {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
 
       {!loading ? (
         <div className="mes-kanban os-kanban">

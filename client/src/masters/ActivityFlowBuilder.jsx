@@ -12,6 +12,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import api from '../api/client';
 import { appConfirm } from '../components/dialog';
+import { SkeletonForm } from '../components/mes';
 import ActivityFlowNode from './ActivityFlowNode';
 import { ACTIVITY_TYPES, SCHEDULABLE_TYPES, getActivityTypeMeta } from './activityFlowTypes';
 import { formatDisplayDate } from '../utils/dateFormat';
@@ -801,7 +802,7 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
   }
 
   if (loading) {
-    return <p className="muted">Loading activity flow...</p>;
+    return <SkeletonForm embedded showHeader={false} />;
   }
 
   return (

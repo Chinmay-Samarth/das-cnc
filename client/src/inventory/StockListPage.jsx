@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import { GIRN_CATEGORIES } from '../girn/girnCategoryConfig';
 import StatTile from '../components/shared/StatTile';
-import { ListPage, EmptyState } from '../components/mes';
+import { ListPage, EmptyState, SkeletonList } from '../components/mes';
 import { useSocket } from '../socket/socketContext';
 import { formatDisplayDateTime } from '../utils/dateFormat';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
@@ -189,7 +189,7 @@ export default function StockListPage() {
         </div>
       </div>
 
-      {loading ? <p className="muted">Loading stock...</p> : null}
+      {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
 
       {!loading && rows.length === 0 ? (
         <EmptyState title="No stock rows found" description="Try adjusting your search or category filter." />

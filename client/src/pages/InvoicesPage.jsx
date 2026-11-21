@@ -4,7 +4,7 @@ import { Download, Receipt, RefreshCw, Trash2, X } from 'lucide-react';
 import AddInvoiceButton from '../components/Invoices/AddInvoiceButton';
 import api from '../api/client';
 import { formatDisplayDate, toISODateString } from '../utils/dateFormat';
-import { PageHeader, EmptyState, StatusBadge, AlertBanner } from '../components/mes';
+import { PageHeader, EmptyState, StatusBadge, AlertBanner, SkeletonList } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import { useAuth } from '../auth/authContext';
 import PurchaseOrdersTab from '../procurement/PurchaseOrdersTab';
@@ -12,6 +12,8 @@ import FormSearchSelect from '../components/shared/FormSearchSelect';
 import TableColumnPicker from '../components/shared/TableColumnPicker';
 import useTableColumns from '../components/shared/useTableColumns';
 import { sortBy } from '../utils/listHelpers';
+
+const INVOICE_STATUS_FILTER_KEY = 'das-cnc-purchase-invoice-status';
 
 const STATUS_OPTIONS = [
   { value: 'needs_review', label: 'Needs review' },
@@ -304,7 +306,13 @@ export default function InvoicesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState(() => {
+    try {
+      return sessionStorage.getItem(INVOICE_STATUS_FILTER_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
   const [sortKey, setSortKey] = useState('invoice_date');
   const [sortAsc, setSortAsc] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -317,6 +325,15 @@ export default function InvoicesPage() {
     'das-cnc-purchase-invoice-columns',
     INVOICE_COLUMNS
   );
+
+  useEffect(() => {
+    try {
+      if (statusFilter) sessionStorage.setItem(INVOICE_STATUS_FILTER_KEY, statusFilter);
+      else sessionStorage.removeItem(INVOICE_STATUS_FILTER_KEY);
+    } catch {
+      /* ignore private-mode storage failures */
+    }
+  }, [statusFilter]);
 
   const exportDateError = useMemo(() => {
     if (!exportOpen) return '';
@@ -522,7 +539,7 @@ export default function InvoicesPage() {
     : 'Upload a vendor invoice to start the accounts-payable list.';
 
   return (
-    <main className="mes-shell">
+    <main className="mes-shell invoice-list-page">
       {pageTab === 'purchase-orders' && isAdmin() ? (
         <PurchaseOrdersTab />
       ) : (
@@ -558,7 +575,7 @@ export default function InvoicesPage() {
               aria-expanded={exportOpen}
             >
               <Download size={15} />
-              Export to Excel
+              Export to XLS
             </button>
             <AddInvoiceButton onUploaded={loadInvoices} />
           </>
@@ -630,7 +647,7 @@ export default function InvoicesPage() {
             aria-label="Search invoices"
           />
         </label>
-        <label>
+        <label className={statusFilter ? 'invoice-status-filter is-active' : 'invoice-status-filter'}>
           Status
           <FormSearchSelect
             value={statusFilter}
@@ -656,7 +673,7 @@ export default function InvoicesPage() {
       
 
       {error ? <AlertBanner title="Unable to load invoices">{error}</AlertBanner> : null}
-      {loading ? <p className="muted">Loading invoices…</p> : null}
+      {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
 
       {!loading && !filteredInvoices.length ? (
         <EmptyState

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { PackageCheck } from 'lucide-react';
 import api from '../api/client';
 import { useSocket } from '../socket/socketContext';
-import { EmptyState, StatusBadge, TruncatedText } from '../components/mes';
+import { EmptyState, StatusBadge, TruncatedText, SkeletonList } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 
@@ -120,7 +120,7 @@ export default function DispatchShortfallTab({ initialStatus = 'pending' }) {
       </div>
 
       {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading requests…</p> : null}
+      {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
 
       {!loading && requests.length === 0 ? (
         <EmptyState

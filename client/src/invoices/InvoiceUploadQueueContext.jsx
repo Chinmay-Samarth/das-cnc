@@ -165,7 +165,9 @@ export function InvoiceUploadQueueProvider({ children }) {
           throw new Error('OCR processing failed');
         }
 
-        const finalStatus = result.needs_review ? 'needs_review' : 'done';
+        // GIRN uploads always require the invoice editor before register.
+        const finalStatus =
+          source === 'girn' || result.needs_review ? 'needs_review' : 'done';
         patchJob(jobId, {
           status: finalStatus,
           pct: 100,

@@ -7,7 +7,17 @@ import ImageLightbox from '../components/shared/ImageLightBox';
 import AttendanceGauge from '../components/shared/AttendanceGauge';
 import StatTile from '../components/shared/StatTile';
 import { ChevronLeft, ChevronRight, Factory, Pencil, TrendingUp } from 'lucide-react';
-import { EmptyState, MetricCard, StatusBadge, TruncatedText, AlertBanner, FilePicker, FormActions } from '../components/mes';
+import {
+  EmptyState,
+  MetricCard,
+  StatusBadge,
+  TruncatedText,
+  AlertBanner,
+  FilePicker,
+  FormActions,
+  SkeletonDetail,
+  SkeletonList,
+} from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import FormSearchSelect from '../components/shared/FormSearchSelect';
 import EmployeeMinutesBarChart from './EmployeeMinutesBarChart';
@@ -657,7 +667,7 @@ export default function EmployeeDetailsPage() {
 
         {/* Loading / error guards */}
         {loading ? (
-          <p className="muted">Loading employee details...</p>
+          <SkeletonDetail showHeader={false} showTabs={false} showMetrics />
         ) : error && tab !== 'edit' ? (
           <p className="error-message">{error}</p>
         ) : !employee ? (
@@ -717,7 +727,7 @@ export default function EmployeeDetailsPage() {
                     <h2>Attendance &amp; report</h2>
                     <p className="text-sm" style={{ margin: '2px 0 0', color: '#6b7280' }}>
                       {attendanceLoading
-                        ? 'Loading...'
+                        ? '…'
                         : `${attendanceSummary.totalWorkingDays} days ${isNextMonthDisabled ? 'so far this month' : 'this month'} (including Sundays)`}
                     </p>
                   </div>
@@ -729,7 +739,7 @@ export default function EmployeeDetailsPage() {
                   </div>
 
                   {attendanceLoading ? (
-                    <p className="muted">Loading attendance for {formatMonthLabel(selectedMonth)}...</p>
+                    <SkeletonList embedded showHeader={false} showFilters={false} rows={4} cols={4} />
                   ) : attendanceError ? (
                     <p className="error-message">{attendanceError}</p>
                   ) : (
@@ -811,18 +821,32 @@ export default function EmployeeDetailsPage() {
                               <tr><th className="col-sno">#</th><th>Date</th><th>Shift</th><th>In</th><th>Out</th><th>Status</th><th>Minutes</th><th>OT</th></tr>
                             </thead>
                             <tbody>
-                              {attendanceRecords.map((row, index) => (
+                              {attendanceRecords.map((row, index) => {
+                                const atLunch = Boolean(row.break_punch_out && !row.punched_out_at);
+                                const outLabel = row.punched_out_at
+                                  ? toDisplayTime(row.punched_out_at)
+                                  : atLunch
+                                    ? `Lunch ${toDisplayTime(row.break_punch_out)}${
+                                        row.break_punch_in ? ` · back ${toDisplayTime(row.break_punch_in)}` : ''
+                                      }`
+                                    : '--';
+                                return (
                                 <tr key={`${row.shift_date}-${row.punched_in_at || ''}-${row.punched_out_at || ''}`}>
                                   <td className="col-sno">{index + 1}</td>
                                   <td>{formatDisplayDate(row.shift_date)}</td>
                                   <td>{row.shift || '--'}</td>
                                   <td>{toDisplayTime(row.punched_in_at)}</td>
-                                  <td>{toDisplayTime(row.punched_out_at)}</td>
-                                  <td><span className={`status-chip ${getStatusChipClass(row.status)}`}>{row.status || '--'}</span></td>
+                                  <td>{outLabel}</td>
+                                  <td>
+                                    <span className={`status-chip ${getStatusChipClass(atLunch ? 'LATE' : row.status)}`}>
+                                      {atLunch ? 'LUNCH' : row.status || '--'}
+                                    </span>
+                                  </td>
                                   <td>{row.minutes_worked ?? '--'}</td>
                                   <td>{row.overtime_minutes ?? '--'}</td>
                                 </tr>
-                              ))}
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>
@@ -1011,7 +1035,9 @@ export default function EmployeeDetailsPage() {
                     </p>
                   ) : null}
 
-                  {payrollLoading ? <p className="muted">Loading monthly salary…</p> : null}
+                  {payrollLoading ? (
+                    <SkeletonList embedded showHeader={false} showFilters={false} rows={3} cols={4} />
+                  ) : null}
                   {payrollError ? <AlertBanner tone="danger">{payrollError}</AlertBanner> : null}
 
                   {!payrollLoading && !payrollLine ? (
@@ -1061,7 +1087,7 @@ export default function EmployeeDetailsPage() {
             {tab === 'efficiency' && (
               <div className="emp-efficiency" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {efficiencyLoading ? (
-                  <p className="muted">Loading efficiency…</p>
+                  <SkeletonList embedded showHeader={false} showFilters={false} rows={3} cols={3} />
                 ) : efficiencyError ? (
                   <p className="error-message">{efficiencyError}</p>
                 ) : (

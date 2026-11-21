@@ -197,6 +197,15 @@ function emitInventoryUpdated(payload) {
 }
 
 /**
+ * Admin live activity feed fan-out.
+ * @param {object} payload — full admin_activity_events row
+ */
+function emitActivityCreated(payload) {
+  if (!io) return;
+  io.to('activity').emit('activity:created', payload);
+}
+
+/**
  * Emit directly to an employee's connected sockets (and their employee room).
  */
 function emitToEmployee(employeeId, event, payload) {
@@ -227,5 +236,6 @@ module.exports = {
   emitBoardUpdate,
   emitDeliveryScheduleUpdated,
   emitInventoryUpdated,
+  emitActivityCreated,
   emitToEmployee,
 };

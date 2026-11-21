@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { FileText, Plus, RefreshCw, Settings, Banknote } from 'lucide-react';
 import api from '../api/client';
-import { PageHeader, EmptyState, StatusBadge, AlertBanner } from '../components/mes';
+import { PageHeader, EmptyState, StatusBadge, AlertBanner, SkeletonList } from '../components/mes';
 import { formatDisplayDate } from '../utils/dateFormat';
 import { formatInr } from './downloadSalesInvoicePdf';
 import { openSalesPaymentDialog } from './salesPaymentDialog';
@@ -209,7 +209,7 @@ export default function SalesInvoicesPage() {
   }, [statusFilter]);
 
   return (
-    <main className="mes-shell">
+    <main className="mes-shell invoice-list-page">
       <PageHeader
         eyebrow="Accounts receivable"
         title="Sales Invoices"
@@ -265,7 +265,7 @@ export default function SalesInvoicesPage() {
             aria-label="Search sales invoices"
           />
         </label>
-        <label>
+        <label className={statusFilter ? 'invoice-status-filter is-active' : 'invoice-status-filter'}>
           Status
           <FormSearchSelect
             value={statusFilter}
@@ -278,7 +278,7 @@ export default function SalesInvoicesPage() {
       </div>
 
       {error ? <AlertBanner title="Unable to load invoices">{error}</AlertBanner> : null}
-      {loading ? <p className="muted">Loading invoices…</p> : null}
+      {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
 
       {!loading && !filteredRows.length ? (
         <EmptyState

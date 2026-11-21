@@ -331,19 +331,18 @@ async function evaluateAttendanceAlerts() {
   const list = (employees || []).filter(isWorkforceEmployee);
   const employeesById = new Map(list.map((e) => [e.id, e]));
 
+  // Attendance inbox: missing punch-out only (no consecutive-absent / low-attendance alerts).
   const openResult = await evaluateOpenPunchOuts(employeesById);
   const openCreated = Number(openResult?.created || 0);
-  const lowCreated = await evaluateLowAttendance(list, threshold);
-  const absentCreated = await evaluateConsecutiveAbsent(list);
 
   return {
     ok: true,
     threshold,
     created: {
       open_punch_out: openCreated,
-      low_attendance: lowCreated,
-      consecutive_absent: absentCreated,
-      total: openCreated + lowCreated + absentCreated,
+      low_attendance: 0,
+      consecutive_absent: 0,
+      total: openCreated,
     },
     open_punch_out_meta: {
       skipped: openResult?.skipped || null,

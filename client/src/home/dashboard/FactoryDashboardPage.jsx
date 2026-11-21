@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, LayoutGrid, Pencil, Printer, RefreshCw } from 'lucide-react';
-import { AlertBanner, EmptyState, PageHeader } from '../../components/mes';
+import { AlertBanner, PageHeader, SkeletonDashboard } from '../../components/mes';
 import { formatDisplayDate } from '../../utils/dateFormat';
 import useFactoryDashboard from './useFactoryDashboard';
 import { allowedSizesFor, readLayout, saveLayout, resetLayout } from './widgetOrder';
@@ -21,6 +21,7 @@ import WcLoadPanel from './WcLoadPanel';
 import YieldTrendPanel from './YieldTrendPanel';
 import RevenuePulsePanel from './RevenuePulsePanel';
 import ProcurementSpendPanel from './ProcurementSpendPanel';
+import LiveActivityPanel from './LiveActivityPanel';
 
 export default function FactoryDashboardPage() {
   const navigate = useNavigate();
@@ -67,6 +68,10 @@ export default function FactoryDashboardPage() {
   const analytics = data?.analytics;
 
   const widgets = {
+    activity: {
+      title: 'Live updates',
+      body: <LiveActivityPanel />,
+    },
     revenue: {
       title: 'Revenue pulse',
       to: '/sales-invoices',
@@ -187,7 +192,7 @@ export default function FactoryDashboardPage() {
       {error ? <AlertBanner title="Unable to load dashboard">{error}</AlertBanner> : null}
 
       {loading && !data ? (
-        <EmptyState title="Loading factory dashboard" description="Pulling live attendance, production, and supply signals." />
+        <SkeletonDashboard showHeader={false} />
       ) : (
         <>
           {editing ? (

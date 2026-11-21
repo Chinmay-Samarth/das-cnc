@@ -1,5 +1,6 @@
 import PageHeader from './PageHeader';
 import AlertBanner from './AlertBanner';
+import { SkeletonList } from './SkeletonLayouts';
 
 export default function ListPage({
   eyebrow,
@@ -8,6 +9,7 @@ export default function ListPage({
   actions,
   error,
   filters,
+  loading = false,
   children,
 }) {
   return (
@@ -21,7 +23,11 @@ export default function ListPage({
       {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
       <section className="mes-card list-page-card">
         {filters ? <div className="list-page-filters">{filters}</div> : null}
-        {children}
+        {loading ? (
+          <SkeletonList embedded showHeader={false} showFilters={!filters} />
+        ) : (
+          children
+        )}
       </section>
     </main>
   );

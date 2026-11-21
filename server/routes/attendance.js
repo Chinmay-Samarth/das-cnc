@@ -16,6 +16,7 @@ const {
   reprocessOpenPunchOuts,
   repairLunchFalseOuts,
 } = require('../services/attendanceEngine');
+const { recheckInOutPunchData } = require('../services/biometricSync');
 const { emitAttendanceUpdated } = require('../socket/emitter');
 const { isAdminJob, isWorkforceEmployee, computeAccessLevel } = require('../utils/accessLevel');
 
@@ -345,6 +346,9 @@ router.get('/daily', verifyEmployeeAuth, async (req, res) => {
           status,
           punched_in_at,
           punched_out_at,
+          break_punch_out,
+          break_punch_in,
+          break_minutes,
           minutes_worked,
           overtime_minutes,
           supervisor_note
@@ -398,6 +402,15 @@ router.get('/daily', verifyEmployeeAuth, async (req, res) => {
 
         local_out:
           attendance?.punched_out_at || null,
+
+        break_out:
+          attendance?.break_punch_out || null,
+
+        break_in:
+          attendance?.break_punch_in || null,
+
+        break_minutes:
+          attendance?.break_minutes || 0,
 
         minutes_worked:
           attendance?.minutes_worked || 0,
@@ -643,6 +656,9 @@ router.get(
           status,
           punched_in_at,
           punched_out_at,
+          break_punch_out,
+          break_punch_in,
+          break_minutes,
           minutes_worked,
           overtime_minutes,
           supervisor_note,
@@ -661,6 +677,9 @@ router.get(
         status: r.status,
         punched_in_at: r.punched_in_at,
         punched_out_at: r.punched_out_at,
+        break_punch_out: r.break_punch_out,
+        break_punch_in: r.break_punch_in,
+        break_minutes: r.break_minutes,
         minutes_worked: r.minutes_worked,
         overtime_minutes: r.overtime_minutes,
         supervisor_note: r.supervisor_note,
@@ -729,6 +748,49 @@ router.post('/repair-lunch-false-outs', verifyEmployeeAuth, async (req, res) => 
     });
   } catch (err) {
     console.error('Repair lunch false outs error:', err);
+    return res.status(500).json({
+      error: 'Internal server error',
+      message: err.message,
+    });
+  }
+});
+
+// ─────────────────────────────────────────────
+// POST /api/attendance/recheck-inout
+// Admin: reconcile missing outs via etimeoffice DownloadInOutPunchData
+// ─────────────────────────────────────────────
+
+router.post('/recheck-inout', verifyEmployeeAuth, async (req, res) => {
+  try {
+    const level = computeAccessLevel(req.user?.job_description || req.user?.access_level);
+    if (level !== 'ADMIN') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const fromDate = req.body?.fromDate;
+    const toDate = req.body?.toDate || fromDate;
+    if (!fromDate) {
+      return res.status(400).json({ error: 'fromDate is required (YYYY-MM-DD or DD/MM/YYYY)' });
+    }
+
+    const lookbackDays = Math.min(60, Math.max(1, Number(req.body?.lookbackDays) || 14));
+    const repair = req.body?.repair !== false;
+    const empcode = String(req.body?.empcode || 'ALL').trim() || 'ALL';
+
+    const summary = await recheckInOutPunchData({
+      fromDate,
+      toDate,
+      empcode,
+      repair,
+      lookbackDays,
+    });
+
+    return res.json({
+      message: `Rechecked InOut punch data (${summary.fromDate} → ${summary.toDate})`,
+      ...summary,
+    });
+  } catch (err) {
+    console.error('Recheck InOut punch data error:', err);
     return res.status(500).json({
       error: 'Internal server error',
       message: err.message,

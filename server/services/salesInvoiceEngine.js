@@ -1588,6 +1588,28 @@ async function issueInvoice(id, actorId) {
   const invoiceForTally = await attachComponentItemName(issued);
   const customer = invoiceForTally.customer || null;
 
+  {
+    const customerName =
+      customer?.name ||
+      issued.customer_name ||
+      issued.customer_snapshot?.name ||
+      'Customer';
+    const { recordActivityEvent, EVENT_TYPES } = require('./activityFeedEngine');
+    void recordActivityEvent({
+      eventType: EVENT_TYPES.SALES_INVOICE_ISSUED,
+      title: 'Sales invoice issued',
+      body: `${invoiceNumber} · ${customerName}`,
+      entityType: 'sales_invoice',
+      entityId: id,
+      href: `/sales-invoices/${id}`,
+      actorId: actorId || null,
+      payload: {
+        invoice_number: invoiceNumber,
+        customer_id: issued.customer_id || null,
+      },
+    });
+  }
+
   if (isTallyEnabled()) {
     const block = assertReadyForSalesTallySync(invoiceForTally, customer);
     if (block) {

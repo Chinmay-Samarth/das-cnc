@@ -821,9 +821,18 @@ export default function CreateGIRNPage() {
     if (reviewLoadedRef.current) return;
 
     const state = location.state;
-    if (state?.invoice && (state.invoice.review_status === 'confirmed' || reviewedFlag === '1')) {
+    // Only continue GIRN register after the invoice editor was explicitly confirmed.
+    if (state?.invoice?.review_status === 'confirmed') {
       reviewLoadedRef.current = true;
       applyReviewConfirmed(state.invoice, state.draft_girn || {});
+      return;
+    }
+
+    if (state?.invoice && reviewedFlag === '1' && state.invoice.review_status !== 'confirmed') {
+      navigate(
+        `/invoices/${state.invoice.id || invoiceIdFromQuery}/review?context=girn&return=${encodeURIComponent(reviewReturnPath)}`,
+        { replace: true }
+      );
       return;
     }
 
@@ -834,8 +843,11 @@ export default function CreateGIRNPage() {
       try {
         const { data } = await api.get(`/invoices/${invoiceIdFromQuery}`);
         if (cancelled || !data.invoice) return;
-        if (data.invoice.review_status !== 'confirmed' && data.invoice.status === 'needs_review') {
-          navigate(`/invoices/${invoiceIdFromQuery}/review?context=girn&return=${encodeURIComponent(reviewReturnPath)}`);
+        if (data.invoice.review_status !== 'confirmed') {
+          navigate(
+            `/invoices/${invoiceIdFromQuery}/review?context=girn&return=${encodeURIComponent(reviewReturnPath)}`,
+            { replace: true }
+          );
           return;
         }
         reviewLoadedRef.current = true;

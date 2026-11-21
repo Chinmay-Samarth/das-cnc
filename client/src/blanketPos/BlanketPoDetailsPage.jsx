@@ -27,6 +27,7 @@ import {
   ProgressBar,
   EmptyState,
   TruncatedText,
+  SkeletonDetail,
 } from '../components/mes';
 
 function formatMoney(n) {
@@ -458,7 +459,7 @@ export default function BlanketPoDetailsPage() {
         }
       />
 
-      {loading ? <p className="muted">Loading contract…</p> : null}
+      {loading ? <SkeletonDetail showHeader={false} /> : null}
       {error ? <p className="error-message">{error}</p> : null}
 
       {!loading && blanket ? (

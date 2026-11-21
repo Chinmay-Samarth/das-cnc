@@ -64,9 +64,14 @@ export function resolveParentPath(pathname, searchParams) {
   // Sales invoice wizard
   if (pathname === '/sales-invoices/new') return '/production/dispatch';
 
-  // Invoice OCR review
+  // Invoice review (needs review and saved-invoice edit) returns to the purchase invoice table.
+  // GIRN keeps its own return path.
   const invoiceReview = pathname.match(/^\/invoices\/([^/]+)\/review$/);
-  if (invoiceReview) return `/invoices/${invoiceReview[1]}`;
+  if (invoiceReview) {
+    const back = searchParams?.get('return');
+    if (back && back.startsWith('/') && !back.startsWith('//')) return back;
+    return '/invoices';
+  }
 
   // Production sub-routes
   if (pathname.startsWith('/production/')) {

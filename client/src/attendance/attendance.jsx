@@ -1,15 +1,67 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import api from '../api/client';
 import { appAlert } from '../components/dialog';
 import useDailyAttendance, { toDisplayTime, toISODateString } from './useDailyAttendance';
 import { formatDisplayDate } from '../utils/dateFormat';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import AttendanceGauge from '../components/shared/AttendanceGauge';
 import StatTile from '../components/shared/StatTile';
 import { Download, ChevronLeft, ChevronRight, RefreshCw, UserX, List } from 'lucide-react';
-import { PageHeader } from '../components/mes';
+import { PageHeader, Skeleton, SkeletonList } from '../components/mes';
 import { getVisiblePages } from '../utils/listHelpers';
+
+function AttendancePageSkeleton() {
+  return (
+    <div className="attendance-skeleton fade-up" aria-busy="true" aria-label="Loading attendance">
+      <div className="summary-metrics-grid">
+        {Array.from({ length: 5 }, (_, i) => (
+          <div key={i} className="summary-metric">
+            <div className="attendance-skeleton-stat">
+              <Skeleton height={28} width="42%" />
+              <Skeleton height={12} width="58%" />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="attendance-content-grid">
+        <div className="attendance-main-column">
+          <section className="card attendance-records-card">
+            <div className="section-header attendance-records-header">
+              <Skeleton height={22} width={220} />
+              <Skeleton height={36} width={96} radius={10} />
+            </div>
+            <SkeletonList embedded showHeader={false} showFilters={false} rows={6} cols={5} />
+          </section>
+          <section className="card absentees-card">
+            <div className="absentees-header">
+              <Skeleton height={22} width={160} />
+            </div>
+            <div className="attendance-skeleton-people">
+              {Array.from({ length: 4 }, (_, i) => (
+                <div key={i} className="attendance-skeleton-person">
+                  <Skeleton circle height={36} width={36} />
+                  <div className="attendance-skeleton-person-copy">
+                    <Skeleton height={14} width="55%" />
+                    <Skeleton height={11} width="35%" />
+                  </div>
+                  <Skeleton height={22} width={64} radius={999} />
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+        <aside className="attendance-side-column">
+          <section className="card attendance-health-panel attendance-skeleton-gauge">
+            <Skeleton circle height={220} width={220} />
+            <Skeleton height={14} width="48%" />
+            <Skeleton height={12} width="36%" />
+          </section>
+        </aside>
+      </div>
+    </div>
+  );
+}
 
 const RECORDS_PAGE_SIZE = 10;
 const ABSENTEES_PREVIEW = 4;
@@ -20,7 +72,10 @@ function formatEmployeeCode(code) {
   return code.startsWith('#') ? code : `#${code}`;
 }
 
-function formatRecordStatus(status) {
+function formatRecordStatus(status, row = null) {
+  if (row?.break_out && !row?.local_out) {
+    return { label: 'LUNCH', className: 'late' };
+  }
   switch (status) {
     case 'PRESENT':
       return { label: 'ON TIME', className: 'present' };
@@ -39,15 +94,31 @@ function formatRecordStatus(status) {
   }
 }
 
+function formatOutCell(row) {
+  if (row.local_out) return toDisplayTime(row.local_out);
+  if (row.break_out) {
+    const back = row.break_in ? ` · back ${toDisplayTime(row.break_in)}` : '';
+    return `Lunch ${toDisplayTime(row.break_out)}${back}`;
+  }
+  return '--';
+}
+
 function getCheckInClass(status) {
   return status === 'LATE' ? 'check-in-late' : 'check-in-ontime';
 }
 
 export default function AttendancePage() {
+  const [searchParams] = useSearchParams();
+  const dateParam = searchParams.get('date');
+  const highlightEmployeeId = searchParams.get('highlightEmployee');
+
   const [isExporting, setIsExporting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [recordsPage, setRecordsPage] = useState(1);
   const [showAllAbsentees, setShowAllAbsentees] = useState(false);
+  const [highlightId, setHighlightId] = useState(highlightEmployeeId);
+  const highlightRowRef = useRef(null);
+  const skipPageResetRef = useRef(false);
   const {
     daily,
     loading,
@@ -62,13 +133,24 @@ export default function AttendancePage() {
     setDate,
     refresh,
     lateArrivals,
-  } = useDailyAttendance();
+  } = useDailyAttendance(dateParam);
 
 
   // local selectedDate mirrors the current query date shown in the date input
-  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedDate, setSelectedDate] = useState(dateParam || '');
 
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (dateParam) {
+      setDate(dateParam);
+      setSelectedDate(dateParam);
+    }
+  }, [dateParam, setDate]);
+
+  useEffect(() => {
+    setHighlightId(highlightEmployeeId);
+  }, [highlightEmployeeId]);
 
   useEffect(() => {
     // initialize selected date when daily payload arrives
@@ -76,11 +158,32 @@ export default function AttendancePage() {
   }, [daily?.date]);
 
   useEffect(() => {
+    if (skipPageResetRef.current) {
+      skipPageResetRef.current = false;
+      setShowAllAbsentees(false);
+      return;
+    }
     setRecordsPage(1);
     setShowAllAbsentees(false);
   }, [selectedDate, daily?.date]);
 
-  const recordsTotalPages = Math.max(1, Math.ceil(latestRecords.length / RECORDS_PAGE_SIZE));
+  const displayRecords = useMemo(() => {
+    if (!highlightId) return latestRecords;
+    const idx = latestRecords.findIndex((row) => String(row.id) === String(highlightId));
+    if (idx <= 0) return latestRecords;
+    const pinned = latestRecords[idx];
+    return [pinned, ...latestRecords.slice(0, idx), ...latestRecords.slice(idx + 1)];
+  }, [latestRecords, highlightId]);
+
+  useEffect(() => {
+    if (!highlightId || !displayRecords.length) return;
+    const idx = displayRecords.findIndex((row) => String(row.id) === String(highlightId));
+    if (idx < 0) return;
+    skipPageResetRef.current = true;
+    setRecordsPage(1);
+  }, [highlightId, displayRecords]);
+
+  const recordsTotalPages = Math.max(1, Math.ceil(displayRecords.length / RECORDS_PAGE_SIZE));
 
   useEffect(() => {
     if (recordsPage > recordsTotalPages) {
@@ -90,8 +193,13 @@ export default function AttendancePage() {
 
   const paginatedRecords = useMemo(() => {
     const start = (recordsPage - 1) * RECORDS_PAGE_SIZE;
-    return latestRecords.slice(start, start + RECORDS_PAGE_SIZE);
-  }, [latestRecords, recordsPage]);
+    return displayRecords.slice(start, start + RECORDS_PAGE_SIZE);
+  }, [displayRecords, recordsPage]);
+
+  useEffect(() => {
+    if (!highlightId || !highlightRowRef.current) return;
+    highlightRowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [highlightId, recordsPage, paginatedRecords]);
 
   const visibleAbsentees = useMemo(() => {
     if (showAllAbsentees) return absentees;
@@ -102,10 +210,10 @@ export default function AttendancePage() {
     ? Math.min(100, Math.round((presentCount / totalCount) * 100))
     : 0;
 
-  const recordsRangeStart = latestRecords.length === 0
+  const recordsRangeStart = displayRecords.length === 0
     ? 0
     : (recordsPage - 1) * RECORDS_PAGE_SIZE + 1;
-  const recordsRangeEnd = Math.min(recordsPage * RECORDS_PAGE_SIZE, latestRecords.length);
+  const recordsRangeEnd = Math.min(recordsPage * RECORDS_PAGE_SIZE, displayRecords.length);
   const visiblePages = getVisiblePages(recordsPage, recordsTotalPages);
 
   function shiftDateStr(dateStr, delta) {
@@ -227,7 +335,7 @@ export default function AttendancePage() {
         subtitle={`Shift-wise monitoring for ${daily?.date ? formatDisplayDate(daily.date) : 'today'}`}
         actions={
           <div className="btn-corner">
-            <div className="date-controls w-50" style={{ marginTop: 8, display: 'flex', gap: 0, alignItems: 'center' }}>
+            <div className="date-controls">
               <button type="button" className="date-pickers" onClick={prevDay} aria-label="Previous day"><ChevronLeft size={16} /></button>
               <input
                 type="date"
@@ -246,8 +354,8 @@ export default function AttendancePage() {
               onClick={downloadAttendanceExcel}
               disabled={loading || isExporting}
             >
-              <Download size={16} style={{ display: 'inline' }} />
-              <span style={{ marginLeft: '4px' }}>{isExporting ? 'Preparing File...' : 'Export to XLS'}</span>
+              <Download size={15} />
+              {isExporting ? 'Exporting…' : 'Export to XLS'}
             </button>
           </div>
         }
@@ -265,6 +373,9 @@ export default function AttendancePage() {
       </div> */}
 
 
+      {loading ? <AttendancePageSkeleton /> : null}
+
+      {!loading ? (
       <div className="summary-metrics-grid ">
         <div className="summary-metric ">
           <StatTile value={totalCount} label="Total Employees" accent="#1b54cf" />
@@ -282,7 +393,9 @@ export default function AttendancePage() {
           <StatTile value={lateArrivals} label="Late Arrivals" accent="#f5a114" />
         </div>
       </div>
+      ) : null}
 
+      {!loading ? (
       <div className="attendance-content-grid">
         <div className="attendance-main-column">
           <section className="card attendance-records-card">
@@ -290,27 +403,26 @@ export default function AttendancePage() {
               <div className="attendance-records-title">
                 <List size={20} className="attendance-records-icon" aria-hidden="true" />
                 <h2>Latest Attendance Records</h2>
-                <span className="count-chip">{latestRecords.length}</span>
+                <span className="count-chip">{displayRecords.length}</span>
               </div>
 
                 <div className="last-btn" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
                   <button
                     type="button"
-                    className="neutral-button"
+                    className="mes-btn mes-btn-secondary"
                     onClick={handleSyncBiometric}
-                    disabled={loading || syncing}
+                    disabled={syncing}
                   >
-                    <RefreshCw size={16}  style={{display: 'inline', marginRight: 6}}/>
-                    {syncing ? 'Syncing...' : 'Sync'}
+                    <RefreshCw size={15} />
+                    {syncing ? 'Syncing…' : 'Sync'}
                   </button>
                 </div>
             </div>
-            {loading ? <p className="muted">Loading attendance data...</p> : null}
             {error ? <p className="error-message">{error}</p> : null}
-            {!loading && !error && latestRecords.length === 0 ? (
+            {!error && displayRecords.length === 0 ? (
               <p className="muted">No punch records available yet for today.</p>
             ) : null}
-            {!loading && !error && latestRecords.length > 0 ? (
+            {!error && displayRecords.length > 0 ? (
               <div className="attendance-table-wrap">
                 <table className="app-table">
                   <thead>
@@ -325,9 +437,15 @@ export default function AttendancePage() {
                   </thead>
                   <tbody>
                     {paginatedRecords.map((row, index) => {
-                      const statusMeta = formatRecordStatus(row.status);
+                      const statusMeta = formatRecordStatus(row.status, row);
+                      const isHighlighted = highlightId && String(row.id) === String(highlightId);
                       return (
-                      <tr key={`${row.employee_code}-${row.local_in}-${row.local_out}`} onClick={()=>{navigate(`/employees/${row.id}`)}}>
+                      <tr
+                        key={`${row.employee_code}-${row.local_in}-${row.local_out}-${row.id}`}
+                        ref={isHighlighted ? highlightRowRef : undefined}
+                        className={isHighlighted ? 'is-punch-highlight' : undefined}
+                        onClick={() => navigate(`/employees/${row.id}`)}
+                      >
                         <td className="col-sno">{(recordsPage - 1) * RECORDS_PAGE_SIZE + index + 1}</td>
                         <td className='name-column'>
                           <div className="table-avatar">
@@ -346,7 +464,7 @@ export default function AttendancePage() {
                         </td>
                         <td>{row.shift || '--'}</td>
                         <td className={getCheckInClass(row.status)}>{toDisplayTime(row.local_in)}</td>
-                        <td className="check-out-time">{toDisplayTime(row.local_out)}</td>
+                        <td className="check-out-time">{formatOutCell(row)}</td>
                         <td>
                           <span className={`status-chip ${statusMeta.className}`}>{statusMeta.label}</span>
                         </td>
@@ -357,10 +475,10 @@ export default function AttendancePage() {
                 </table>
               </div>
             ) : null}
-            {!loading && !error && latestRecords.length > 0 ? (
+            {!error && displayRecords.length > 0 ? (
               <div className="attendance-pagination">
                 <span className="attendance-page-summary">
-                  Showing {recordsRangeStart} to {recordsRangeEnd} of {latestRecords.length} records
+                  Showing {recordsRangeStart} to {recordsRangeEnd} of {displayRecords.length} records
                 </span>
                 {recordsTotalPages > 1 ? (
                   <div className="attendance-page-controls">
@@ -420,12 +538,11 @@ export default function AttendancePage() {
                 </button>
               ) : null}
             </div>
-            {loading ? <p className="muted">Loading attendance data...</p> : null}
             {error ? <p className="error-message">{error}</p> : null}
-            {!loading && !error && absentees.length === 0 ? (
+            {!error && absentees.length === 0 ? (
               <p className="muted">No absentees today.</p>
             ) : null}
-            {!loading && !error && absentees.length > 0 ? (
+            {!error && absentees.length > 0 ? (
               <ul className="absentees-grid">
                 {visibleAbsentees.map((row) => (
                   <li
@@ -467,10 +584,10 @@ export default function AttendancePage() {
                 </span>
               </div>
             </div>
-            {!loading && !error && onLeave.length === 0 ? (
+            {!error && onLeave.length === 0 ? (
               <p className="muted">No approved leave today.</p>
             ) : null}
-            {!loading && !error && onLeave.length > 0 ? (
+            {!error && onLeave.length > 0 ? (
               <ul className="absentees-grid">
                 {onLeave.map((row) => (
                   <li
@@ -517,6 +634,7 @@ export default function AttendancePage() {
           </section>
         </aside>
       </div>
+      ) : null}
     </main>
   );
 }

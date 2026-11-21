@@ -1,31 +1,44 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Banknote, RefreshCw } from 'lucide-react';
+import { Banknote, Eye, RefreshCw, Search } from 'lucide-react';
 import api from '../api/client';
-import { PageHeader, EmptyState, StatusBadge } from '../components/mes';
+import { PageHeader, EmptyState, StatusBadge, SkeletonList } from '../components/mes';
 import { appAlert } from '../components/dialog';
 import { formatDisplayDate } from '../utils/dateFormat';
-import FormSearchSelect from '../components/shared/FormSearchSelect';
 import {
   openPurchasePaymentDialog,
   formatInr,
   invoiceDueAmount,
 } from './purchasePaymentDialog';
 
+function todayYmd() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isPaymentOverdue(inv) {
+  const due = String(inv?.due_date || '').slice(0, 10);
+  if (!due) return false;
+  return due < todayYmd();
+}
+
 export default function PurchasePaymentsPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const preselectedSupplierId = searchParams.get('supplierId');
+  const highlightInvoiceId = searchParams.get('highlightInvoice');
 
   const [rows, setRows] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
-  const [supplierId, setSupplierId] = useState(preselectedSupplierId || '');
+  const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(() => new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [tallyEnabled, setTallyEnabled] = useState(false);
   const [outstanding, setOutstanding] = useState(null);
+  const [highlightId, setHighlightId] = useState(highlightInvoiceId);
+  const highlightRowRef = useRef(null);
+  const skipClearSelectionRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,44 +65,44 @@ export default function PurchasePaymentsPage() {
   }, [load]);
 
   useEffect(() => {
-    if (preselectedSupplierId) setSupplierId(preselectedSupplierId);
-  }, [preselectedSupplierId]);
+    if (highlightInvoiceId) return;
+    if (!preselectedSupplierId || !suppliers.length) return;
+    const match = suppliers.find((s) => s.id === preselectedSupplierId);
+    if (match?.name) setSearch(match.name);
+  }, [preselectedSupplierId, suppliers, highlightInvoiceId]);
 
   useEffect(() => {
-    setSelected(new Set());
-  }, [supplierId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadOutstanding() {
-      if (!tallyEnabled || !supplierId) {
-        setOutstanding(null);
-        return;
-      }
-      try {
-        const { data } = await api.get(
-          `/invoices/tally/supplier-outstanding/${supplierId}`
-        );
-        if (!cancelled) setOutstanding(data);
-      } catch (err) {
-        if (!cancelled) {
-          setOutstanding({
-            outstanding: null,
-            error: err.response?.data?.error || 'Unable to load Tally payable',
-          });
-        }
-      }
+    if (skipClearSelectionRef.current) {
+      skipClearSelectionRef.current = false;
+      return;
     }
-    loadOutstanding();
-    return () => {
-      cancelled = true;
-    };
-  }, [supplierId, tallyEnabled]);
+    setSelected(new Set());
+  }, [search]);
+
+  useEffect(() => {
+    setHighlightId(highlightInvoiceId);
+  }, [highlightInvoiceId]);
+
+  useEffect(() => {
+    if (!highlightInvoiceId || !rows.length) return;
+    const inv = rows.find((r) => String(r.id) === String(highlightInvoiceId));
+    if (!inv) return;
+    skipClearSelectionRef.current = true;
+    setSearch(inv.invoice_number || inv.supplier_name || '');
+    setSelected(new Set([inv.id]));
+    setHighlightId(inv.id);
+  }, [highlightInvoiceId, rows]);
 
   const filtered = useMemo(() => {
-    if (!supplierId) return rows;
-    return rows.filter((r) => r.supplier_id === supplierId);
-  }, [rows, supplierId]);
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => {
+      const supplier = String(r.supplier_name || r.suppliers?.name || '').toLowerCase();
+      const ledger = String(r.ledger_name || r.suppliers?.ledger_name || '').toLowerCase();
+      const invoice = String(r.invoice_number || '').toLowerCase();
+      return supplier.includes(q) || ledger.includes(q) || invoice.includes(q);
+    });
+  }, [rows, search]);
 
   const grouped = useMemo(() => {
     const map = new Map();
@@ -107,6 +120,43 @@ export default function PurchasePaymentsPage() {
     }
     return [...map.values()];
   }, [filtered]);
+
+  useEffect(() => {
+    if (!highlightId || !highlightRowRef.current) return;
+    highlightRowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [highlightId, grouped]);
+
+  const activeSupplierId = useMemo(() => {
+    if (grouped.length === 1) return grouped[0].supplier_id || null;
+    return null;
+  }, [grouped]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadOutstanding() {
+      if (!tallyEnabled || !activeSupplierId) {
+        setOutstanding(null);
+        return;
+      }
+      try {
+        const { data } = await api.get(
+          `/invoices/tally/supplier-outstanding/${activeSupplierId}`
+        );
+        if (!cancelled) setOutstanding(data);
+      } catch (err) {
+        if (!cancelled) {
+          setOutstanding({
+            outstanding: null,
+            error: err.response?.data?.error || 'Unable to load Tally payable',
+          });
+        }
+      }
+    }
+    loadOutstanding();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSupplierId, tallyEnabled]);
 
   const selectedInvoices = useMemo(
     () => filtered.filter((r) => selected.has(r.id)),
@@ -189,11 +239,10 @@ export default function PurchasePaymentsPage() {
   }
 
   return (
-    <main className="mes-shell">
+    <main className="mes-shell payments-page">
       <PageHeader
         eyebrow="Accounts payable"
         title="Purchase payments"
-        subtitle="Record bulk payments when settling several supplier invoices together"
         actions={
           <>
             <button
@@ -218,26 +267,25 @@ export default function PurchasePaymentsPage() {
         }
       />
 
-      <div className="mes-filters" style={{ marginBottom: 16 }}>
-        <label className="prod-filter-wc">
-          Supplier
-          <FormSearchSelect
-            value={supplierId}
-            onChange={(value) => setSupplierId(value || '')}
-            options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
-            placeholder="All suppliers"
-            searchable={suppliers.length > 6}
-            emptyMessage="No suppliers"
+      <div className="payments-toolbar">
+        <label className="payments-search">
+          <Search size={16} aria-hidden />
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search suppliers or invoice numbers…"
+            aria-label="Search suppliers or invoices"
           />
         </label>
         {selectedInvoices.length ? (
-          <p className="muted" style={{ margin: 0, alignSelf: 'center' }}>
-            Selected total: <strong>₹{formatInr(selectedTotal)}</strong>
+          <p className="payments-meta">
+            Selected · <strong>₹{formatInr(selectedTotal)}</strong>
           </p>
         ) : null}
-        {supplierId && outstanding ? (
-          <p className="muted" style={{ margin: 0 }}>
-            Payable (Tally):{' '}
+        {activeSupplierId && outstanding ? (
+          <p className="payments-meta">
+            Tally payable ·{' '}
             <strong>
               {outstanding.outstanding != null
                 ? `₹${formatInr(outstanding.outstanding)}`
@@ -248,102 +296,133 @@ export default function PurchasePaymentsPage() {
       </div>
 
       {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading…</p> : null}
+      {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
 
       {!loading && !filtered.length ? (
         <EmptyState
           icon={Banknote}
-          title="No due invoices"
-          description="Unpaid purchase invoices appear here for bulk payment."
-          actionLabel="Purchase invoices"
-          onAction={() => navigate('/invoices')}
+          title={search.trim() ? 'No matching invoices' : 'No due invoices'}
+          description={
+            search.trim()
+              ? 'Try a different supplier name or invoice number.'
+              : 'Unpaid purchase invoices appear here for bulk payment.'
+          }
+          actionLabel={search.trim() ? 'Clear search' : 'Purchase invoices'}
+          onAction={() => (search.trim() ? setSearch('') : navigate('/invoices'))}
         />
       ) : null}
 
       {!loading &&
-        grouped.map((group) => (
-          <section
-            key={group.supplier_id || group.supplier_name}
-            className="mes-card"
-            style={{ marginBottom: 16, padding: 16 }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                gap: 12,
-                flexWrap: 'wrap',
-                marginBottom: 10,
-              }}
+        grouped.map((group) => {
+          const allSelected = group.invoices.every((inv) => selected.has(inv.id));
+          return (
+            <section
+              key={group.supplier_id || group.supplier_name}
+              className="mes-card payments-group"
             >
-              <div>
-                <h2 style={{ margin: 0, fontSize: '1.05rem' }}>{group.supplier_name}</h2>
-                <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>
-                  {group.invoices.length} due invoice(s) · ₹
-                  {formatInr(
-                    group.invoices.reduce((s, inv) => s + invoiceDueAmount(inv), 0)
-                  )}
-                </p>
+              <div className="payments-group-head">
+                <div>
+                  <h2>{group.supplier_name}</h2>
+                  <p>
+                    {group.invoices.length} due · ₹
+                    {formatInr(
+                      group.invoices.reduce((s, inv) => s + invoiceDueAmount(inv), 0)
+                    )}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="mes-btn mes-btn-secondary"
+                  onClick={() => toggleGroup(group.invoices)}
+                >
+                  {allSelected ? 'Clear' : 'Select all'}
+                </button>
               </div>
-              <button
-                type="button"
-                className="mes-btn mes-btn-secondary"
-                onClick={() => toggleGroup(group.invoices)}
-              >
-                {group.invoices.every((inv) => selected.has(inv.id))
-                  ? 'Clear selection'
-                  : 'Select all'}
-              </button>
-            </div>
-            <div className="attendance-table-wrap">
-              <table className="app-table">
-                <thead>
-                  <tr>
-                    <th className="col-sno">#</th>
-                    <th style={{ width: 40 }} />
-                    <th>Invoice</th>
-                    <th>Due</th>
-                    <th>Amount due</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {group.invoices.map((inv, index) => (
-                    <tr key={inv.id}>
-                      <td className="col-sno">{index + 1}</td>
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={selected.has(inv.id)}
-                          onChange={() => toggle(inv.id)}
-                        />
-                      </td>
-                      <td>
-                        <strong>{inv.invoice_number || '—'}</strong>
-                        {Number(inv.po_advance_amount) > 0 ? (
-                          <StatusBadge status="completed">Advance</StatusBadge>
-                        ) : null}
-                      </td>
-                      <td>
-                        {inv.due_date ? formatDisplayDate(inv.due_date) : '—'}
-                      </td>
-                      <td>₹{formatInr(invoiceDueAmount(inv))}</td>
-                      <td>
-                        <button
-                          type="button"
-                          className="mes-btn mes-btn-secondary"
-                          onClick={() => navigate(`/invoices/${inv.id}`)}
-                        >
-                          Open
-                        </button>
-                      </td>
+
+              <div className="payments-table-wrap">
+                <table className="app-table payments-table">
+                  <thead>
+                    <tr>
+                      <th className="col-sno">#</th>
+                      <th className="payments-check-col" aria-label="Select" />
+                      <th>Invoice</th>
+                      <th>Due</th>
+                      <th>Amount due</th>
+                      <th className="payments-view-col" aria-label="View" />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        ))}
+                  </thead>
+                  <tbody>
+                    {group.invoices.map((inv, index) => {
+                      const isSelected = selected.has(inv.id);
+                      const isOverdue = isPaymentOverdue(inv);
+                      const isHighlighted =
+                        highlightId && String(inv.id) === String(highlightId);
+                      const rowClass = [
+                        isSelected ? 'is-selected' : '',
+                        isOverdue ? 'is-overdue' : '',
+                        isHighlighted ? 'is-alert-highlight' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ');
+                      return (
+                        <tr
+                          key={inv.id}
+                          ref={isHighlighted ? highlightRowRef : undefined}
+                          className={rowClass || undefined}
+                          onClick={() => toggle(inv.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              toggle(inv.id);
+                            }
+                          }}
+                          tabIndex={0}
+                          role="button"
+                          aria-pressed={isSelected}
+                        >
+                          <td className="col-sno">{index + 1}</td>
+                          <td className="payments-check-col">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggle(inv.id)}
+                              onClick={(e) => e.stopPropagation()}
+                              aria-label={`Select ${inv.invoice_number || 'invoice'}`}
+                            />
+                          </td>
+                          <td>
+                            <span className="payments-invoice">
+                              <strong>{inv.invoice_number || '—'}</strong>
+                              {Number(inv.po_advance_amount) > 0 ? (
+                                <StatusBadge status="completed">Advance</StatusBadge>
+                              ) : null}
+                            </span>
+                          </td>
+                          <td>{inv.due_date ? formatDisplayDate(inv.due_date) : '—'}</td>
+                          <td>₹{formatInr(invoiceDueAmount(inv))}</td>
+                          <td className="payments-view-col">
+                            <button
+                              type="button"
+                              className="payments-eye"
+                              title="View invoice"
+                              aria-label={`View invoice ${inv.invoice_number || ''}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/invoices/${inv.id}`);
+                              }}
+                            >
+                              <Eye size={16} strokeWidth={1.75} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          );
+        })}
     </main>
   );
 }

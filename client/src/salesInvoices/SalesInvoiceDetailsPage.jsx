@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { pdf } from '@react-pdf/renderer';
 import api from '../api/client';
-import { PageHeader, StatusBadge } from '../components/mes';
+import { PageHeader, StatusBadge, SkeletonDetail } from '../components/mes';
 import { appAlert, appConfirm, appPrompt } from '../components/dialog';
 import InvoicePdfViewer from '../components/Invoices/InvoicePdfViewer';
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
@@ -294,7 +294,7 @@ export default function SalesInvoiceDetailsPage() {
   if (loading) {
     return (
       <main className="mes-shell">
-        <p className="muted">Loading…</p>
+        <SkeletonDetail />
       </main>
     );
   }

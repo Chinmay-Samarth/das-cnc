@@ -12,6 +12,7 @@
 import { useState, useEffect } from 'react'
 import api from '../api/client'
 import { formatDisplayDate } from '../utils/dateFormat'
+import { SkeletonDetail } from '../components/mes'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -253,11 +254,7 @@ export default function MasterDetail({ slug, recordId, onEdit, onBack }) {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   if (loading) {
-    return (
-      <div className="md-loading">
-        <i className="ti ti-loader-2 md-spin" /> Loading record…
-      </div>
-    )
+    return <SkeletonDetail showHeader={false} />
   }
 
   if (error) {

@@ -12,6 +12,7 @@ import {
   StatusBadge,
   EmptyState,
   TruncatedText,
+  SkeletonList,
 } from '../components/mes';
 
 const BULK_RELOAD_ACTIONS = new Set([
@@ -749,7 +750,7 @@ export default function WorkCenterBoardPage() {
       </div>
 
       {error ? <p className="error-message">{error}</p> : null}
-      {loading ? <p className="muted">Loading stations…</p> : null}
+      {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
 
       {!loading && !workCenters.length ? (
         <EmptyState
