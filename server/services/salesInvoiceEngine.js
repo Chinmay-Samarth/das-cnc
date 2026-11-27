@@ -1827,6 +1827,13 @@ async function recordPayment(id, actorId, body = {}) {
     .single();
   if (error) throw error;
 
+  try {
+    const { dismissNotificationsForKeys } = require('./notificationStore');
+    await dismissNotificationsForKeys([`invoice_overdue:${id}`]);
+  } catch (nagErr) {
+    console.error('Clear sales overdue notifications failed:', nagErr.message);
+  }
+
   const paidInvoice = await getInvoiceById(data.id);
 
   if (isTallyEnabled()) {
@@ -1940,6 +1947,13 @@ async function recordBulkPayments(actorId, body = {}) {
       .update(patch)
       .eq('id', inv.id);
     if (upErr) throw upErr;
+
+    try {
+      const { dismissNotificationsForKeys } = require('./notificationStore');
+      await dismissNotificationsForKeys([`invoice_overdue:${inv.id}`]);
+    } catch (nagErr) {
+      console.error('Clear sales overdue notifications failed:', nagErr.message);
+    }
   }
 
   let receiptResult = {

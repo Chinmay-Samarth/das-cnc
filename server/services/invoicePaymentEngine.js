@@ -205,6 +205,13 @@ async function recordVendorInvoicePayment(id, actorId, body = {}) {
   const { error } = await supabase.from('invoices').update(paidPatch).eq('id', id);
   if (error) throw httpError(error.message, 500);
 
+  try {
+    const { dismissNotificationsForKeys } = require('./notificationStore');
+    await dismissNotificationsForKeys([`purchase_invoice_overdue:${id}`]);
+  } catch (nagErr) {
+    console.error('Clear purchase overdue notifications failed:', nagErr.message);
+  }
+
   const { syncPoPaidFromInvoice } = require('./purchaseOrderEngine');
   await syncPoPaidFromInvoice(id).catch((e) =>
     console.error('PO paid sync failed:', e.message)
@@ -587,6 +594,13 @@ async function recordBulkVendorPayments(actorId, body = {}) {
       .update(paidPatch)
       .eq('id', inv.id);
     if (upErr) throw httpError(upErr.message, 500);
+
+    try {
+      const { dismissNotificationsForKeys } = require('./notificationStore');
+      await dismissNotificationsForKeys([`purchase_invoice_overdue:${inv.id}`]);
+    } catch (nagErr) {
+      console.error('Clear purchase overdue notifications failed:', nagErr.message);
+    }
 
     const { syncPoPaidFromInvoice } = require('./purchaseOrderEngine');
     await syncPoPaidFromInvoice(inv.id).catch((e) =>
