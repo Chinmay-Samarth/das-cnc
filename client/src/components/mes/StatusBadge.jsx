@@ -5,6 +5,7 @@ const TONE_MAP = {
   inactive: 'mes-badge-danger',
   closed: 'mes-badge-danger',
   blocked: 'mes-badge-danger',
+  retired: 'mes-badge-danger',
   ot_required: 'mes-badge-danger',
 
   completed: 'mes-badge-success',

@@ -513,7 +513,7 @@ async function confirmReview(invoiceId, body, actorId) {
     throw err;
   }
 
-  const normalizedLines = lines.map((line) => {
+  const baseLines = lines.map((line) => {
     const scanned = line.scanned_description || line.description || '';
     const category = line.item_category || 'other';
     const cfg = getCategoryConfig(category);
@@ -532,6 +532,15 @@ async function confirmReview(invoiceId, body, actorId) {
       match_confidence: 'none',
     };
   });
+
+  let normalizedLines = baseLines;
+  try {
+    const { mapInvoiceLinesToRawMaterials } = require('./rmLineMapper');
+    normalizedLines = await mapInvoiceLinesToRawMaterials(baseLines);
+  } catch (mapErr) {
+    console.error('RM line mapping failed:', mapErr.message || mapErr);
+    normalizedLines = baseLines;
+  }
 
   const now = new Date().toISOString();
 
@@ -646,6 +655,16 @@ async function confirmReview(invoiceId, body, actorId) {
   await upsertAliases(supplierId, normalizedLines, actorId);
 
   const confirmed = await getInvoice(invoiceId);
+
+  try {
+    const { applyInvoiceLineRates } = require('./rmCommercialRateEngine');
+    await applyInvoiceLineRates({
+      invoice: confirmed,
+      lines: confirmed?.line_items || normalizedLines,
+    });
+  } catch (rateErr) {
+    console.error('RM commercial rate sync failed:', rateErr.message || rateErr);
+  }
 
   if (wasDraft) {
     const supplierName =

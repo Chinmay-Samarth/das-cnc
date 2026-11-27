@@ -396,6 +396,24 @@ router.get('/:slug/records', wrap(async (req, res) => {
  
 // GET /api/masters/:slug/records/:id
 // Fetch a single record with all its values (flat + repeatable sections)
+// GET /api/masters/:slug/records/:id/rate-history
+router.get('/:slug/records/:id/rate-history', wrap(async (req, res) => {
+  const master = await getMaster(req.params.slug)
+  if (master.slug !== 'raw-material') {
+    throw { status: 404, message: 'Rate history is only available for raw materials' }
+  }
+  if (!isValidUUID(req.params.id)) {
+    throw { status: 400, message: 'Invalid record id' }
+  }
+
+  const { listRateHistoryForRecord, listCurrentCommercialRates } = require('../services/rmCommercialRateEngine')
+  const [history, current] = await Promise.all([
+    listRateHistoryForRecord(req.params.id, { limit: req.query.limit }),
+    listCurrentCommercialRates(req.params.id),
+  ])
+  res.json({ current, history })
+}))
+
 router.get('/:slug/records/:id', wrap(async (req, res) => {
   const master = await getMaster(req.params.slug)
   const { id }  = req.params

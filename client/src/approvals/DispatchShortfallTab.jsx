@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { PackageCheck } from 'lucide-react';
 import api from '../api/client';
 import { useSocket } from '../socket/socketContext';
-import { EmptyState, StatusBadge, TruncatedText, SkeletonList } from '../components/mes';
+import { EmptyState, StatusBadge, TruncatedText, SkeletonList, SlidingPillBar } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 
@@ -106,7 +106,7 @@ export default function DispatchShortfallTab({ initialStatus = 'pending' }) {
 
   return (
     <>
-      <div className="mes-view-toggle" role="group" aria-label="Status filter" style={{ marginBottom: 16 }}>
+      <SlidingPillBar className="mes-view-toggle" role="group" aria-label="Status filter" style={{ marginBottom: 16 }}>
         {['pending', 'approved', 'denied', 'consumed', 'all'].map((s) => (
           <button
             key={s}
@@ -117,7 +117,7 @@ export default function DispatchShortfallTab({ initialStatus = 'pending' }) {
             {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
           </button>
         ))}
-      </div>
+      </SlidingPillBar>
 
       {error ? <p className="error-message">{error}</p> : null}
       {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}

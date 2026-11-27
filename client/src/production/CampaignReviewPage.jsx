@@ -22,6 +22,7 @@ import {
   StatusBadge,
   TruncatedText,
   SkeletonList,
+  SlidingPillBar,
 } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import { formatDisplayDate } from '../utils/dateFormat';
@@ -520,7 +521,7 @@ export default function CampaignReviewPage() {
         <>
           <div className="hp-wc-bar" style={{ marginBottom: 12 }}>
             {workCenters.length > 1 ? (
-              <div className="mes-view-toggle hp-wc-chips" role="group" aria-label="Work center">
+              <SlidingPillBar className="mes-view-toggle hp-wc-chips" role="group" aria-label="Work center">
                 {workCenters.map((wc) => (
                   <button
                     key={wc.id}
@@ -531,7 +532,7 @@ export default function CampaignReviewPage() {
                     {wc.code || wc.name}
                   </button>
                 ))}
-              </div>
+              </SlidingPillBar>
             ) : (
               <p className="muted" style={{ margin: 0, fontSize: 13 }}>
                 {review?.work_center?.code ? `${review.work_center.code} — ` : ''}

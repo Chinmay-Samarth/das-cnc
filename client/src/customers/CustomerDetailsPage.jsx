@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Pencil, Banknote } from 'lucide-react';
 import api from '../api/client';
 import { formatDisplayDateTime } from '../utils/dateFormat';
-import { AlertBanner, FormActions, PageHeader, SkeletonDetail } from '../components/mes';
+import { AlertBanner, FormActions, PageHeader, SkeletonDetail, SlidingPillBar } from '../components/mes';
 import { formatInr } from '../salesInvoices/downloadSalesInvoicePdf';
 import { openSalesPaymentDialog } from '../salesInvoices/salesPaymentDialog';
 import { appAlert } from '../components/dialog';
@@ -223,7 +223,7 @@ export default function CustomerDetailsPage() {
         }
       />
 
-      <div className="pill-tabs" style={{ marginBottom: 16 }}>
+      <SlidingPillBar variant="brand" className="pill-tabs" style={{ marginBottom: 16 }}>
         <button
           type="button"
           className={`pill-tab ${tab === 'details' ? 'pill-tab-active' : ''}`}
@@ -233,7 +233,7 @@ export default function CustomerDetailsPage() {
         >
           Details
         </button>
-      </div>
+      </SlidingPillBar>
 
       <section className="mes-card employee-main">
         {loading ? (

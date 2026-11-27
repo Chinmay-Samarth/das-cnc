@@ -4,7 +4,7 @@ import { CalendarOff } from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
 import { useSocket } from '../socket/socketContext';
-import { PageHeader, EmptyState, StatusBadge, TruncatedText, SkeletonList } from '../components/mes';
+import { PageHeader, EmptyState, StatusBadge, TruncatedText, SkeletonList, SlidingPillBar } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 
@@ -329,7 +329,7 @@ function AdminLeaveView({ initialStatus = 'pending' }) {
 
   return (
     <>
-      <div className="mes-view-toggle" role="group" aria-label="Status filter" style={{ marginBottom: 16 }}>
+      <SlidingPillBar className="mes-view-toggle" role="group" aria-label="Status filter" style={{ marginBottom: 16 }}>
         {['pending', 'approved', 'denied', 'all'].map((s) => (
           <button
             key={s}
@@ -340,7 +340,7 @@ function AdminLeaveView({ initialStatus = 'pending' }) {
             {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
           </button>
         ))}
-      </div>
+      </SlidingPillBar>
 
       {error ? <p className="error-message">{error}</p> : null}
       {loading ? <SkeletonList embedded showHeader={false} showFilters={false} /> : null}
@@ -412,7 +412,7 @@ function AdminLeaveView({ initialStatus = 'pending' }) {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 200 }}>
                           {drafting ? (
                             <>
-                              <div className="mes-view-toggle" role="group" aria-label="Leave pay type">
+                              <SlidingPillBar className="mes-view-toggle" role="group" aria-label="Leave pay type">
                                 {['paid', 'unpaid'].map((t) => (
                                   <button
                                     key={t}
@@ -423,7 +423,7 @@ function AdminLeaveView({ initialStatus = 'pending' }) {
                                     {t === 'paid' ? 'Paid leave' : 'Unpaid leave'}
                                   </button>
                                 ))}
-                              </div>
+                              </SlidingPillBar>
                               <div style={{ display: 'flex', gap: 8 }}>
                                 <button
                                   type="button"

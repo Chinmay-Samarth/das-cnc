@@ -17,6 +17,7 @@ import {
   FormActions,
   SkeletonDetail,
   SkeletonList,
+  SlidingPillBar,
 } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import FormSearchSelect from '../components/shared/FormSearchSelect';
@@ -602,7 +603,7 @@ export default function EmployeeDetailsPage() {
             </button>
           </div>
         </div>
-        <div className="pill-tabs" >
+        <SlidingPillBar variant="brand" className="pill-tabs" >
           <button
             type="button"
             className={`pill-tab ${tab === 'details' ? 'pill-tab-active' : ''}`}
@@ -657,7 +658,7 @@ export default function EmployeeDetailsPage() {
           >
             Efficiency
           </button>
-        </div>
+        </SlidingPillBar>
       </header>
 
       <section className="card employee-main">

@@ -10,6 +10,7 @@ import {
   StatusBadge,
   TruncatedText,
   SkeletonList,
+  SlidingPillBar,
 } from '../components/mes';
 import FormSearchSelect from '../components/shared/FormSearchSelect';
 import { appAlert, appConfirm } from '../components/dialog';
@@ -496,7 +497,7 @@ export default function HorizonPlannerPage() {
                 </select>
               </label>
             </div>
-            <div className="mes-view-toggle" role="group" aria-label="View mode">
+            <SlidingPillBar className="mes-view-toggle" role="group" aria-label="View mode">
               <button
                 type="button"
                 className={`mes-view-toggle-btn${view === 'table' ? ' is-active' : ''}`}
@@ -513,7 +514,7 @@ export default function HorizonPlannerPage() {
                 <CalendarRange size={16} />
                 Gantt
               </button>
-            </div>
+            </SlidingPillBar>
           </section>
 
           {loading && !preview ? (

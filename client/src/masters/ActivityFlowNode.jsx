@@ -10,10 +10,10 @@ function ActivityFlowNode({ data, selected }) {
     subtitle.push(data.work_center_code);
   }
   if (data.activity_type === 'outsource' && data.lead_time_days != null) {
-    subtitle.push(`LT: ${data.lead_time_days}d`);
+    subtitle.push(`${data.lead_time_days}d lead`);
   }
   if (data.activity_type === 'outsource' && data.min_ship_qty != null) {
-    subtitle.push(`Min ship: ${Number(data.min_ship_qty)}`);
+    subtitle.push(`min ${Number(data.min_ship_qty)}`);
   }
   if (data.activity_type === 'inspection' && data.inspection_kind) {
     subtitle.push(data.inspection_kind === 'final' ? 'Final' : 'In-process');
@@ -22,16 +22,14 @@ function ActivityFlowNode({ data, selected }) {
   return (
     <div
       className={`af-node${selected ? ' is-selected' : ''}`}
-      style={{ borderColor: meta.color }}
+      style={{ '--af-node-accent': meta.color }}
     >
       <Handle type="target" position={Position.Top} className="af-handle" />
-      <div className="af-node-type" style={{ background: meta.color }}>
-        {meta.label}
+      <div className="af-node-body">
+        <span className="af-node-type">{meta.label}</span>
+        <div className="af-node-label">{data.label || meta.label}</div>
+        {subtitle.length ? <div className="af-node-meta">{subtitle.join(' · ')}</div> : null}
       </div>
-      <div className="af-node-label">{data.label || meta.label}</div>
-      {subtitle.length ? (
-        <div className="af-node-meta">{subtitle.join(' · ')}</div>
-      ) : null}
       <Handle type="source" position={Position.Bottom} className="af-handle" />
     </div>
   );

@@ -28,6 +28,7 @@ import {
   EmptyState,
   TruncatedText,
   SkeletonDetail,
+  SlidingPillBar,
 } from '../components/mes';
 
 function formatMoney(n) {
@@ -544,7 +545,7 @@ export default function BlanketPoDetailsPage() {
             ) : null}
           </div>
 
-          <div className="pill-tabs" style={{ marginBottom: 16 }} role="tablist">
+          <SlidingPillBar variant="brand" className="pill-tabs" style={{ marginBottom: 16 }} role="tablist">
             {TABS.map((t) => {
               const Icon = t.icon;
               return (
@@ -561,7 +562,7 @@ export default function BlanketPoDetailsPage() {
                 </button>
               );
             })}
-          </div>
+          </SlidingPillBar>
 
           {tab === 'lines' ? (
             <section className="mes-card">

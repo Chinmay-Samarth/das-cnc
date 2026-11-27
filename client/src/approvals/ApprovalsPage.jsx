@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/authContext';
-import { PageHeader } from '../components/mes';
+import { PageHeader, SlidingPillBar } from '../components/mes';
 import DispatchShortfallTab from './DispatchShortfallTab';
 import GirnApprovalsTab from './GirnApprovalsTab';
 
@@ -49,7 +49,7 @@ export default function ApprovalsPage() {
     <main className="mes-shell">
       <PageHeader eyebrow="Shop floor" title="Approvals" subtitle={null} />
 
-      <div className="mes-view-toggle" role="tablist" aria-label="Approval type" style={{ marginBottom: 20 }}>
+      <SlidingPillBar className="mes-view-toggle" role="tablist" aria-label="Approval type" style={{ marginBottom: 20 }}>
         {TABS.map(({ key, label }) => (
           <button
             key={key}
@@ -62,7 +62,7 @@ export default function ApprovalsPage() {
             {label}
           </button>
         ))}
-      </div>
+      </SlidingPillBar>
 
       {activeTab === 'dispatch' ? (
         <DispatchShortfallTab initialStatus={initialDispatchStatus} />

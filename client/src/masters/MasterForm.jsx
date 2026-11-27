@@ -14,7 +14,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Plus, X, Check } from 'lucide-react'
 import api from '../api/client'   // your existing axios instance
-import { PageHeader, AlertBanner, SkeletonForm } from '../components/mes'
+import { PageHeader, AlertBanner, SkeletonForm, SlidingPillBar } from '../components/mes'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -350,18 +350,69 @@ function FlatSection({ section, values, onChange, disabled, existingFiles }) {
   )
 }
 
-// Repeatable section — renders rows as a table
+function isCompactCommercialSection(section) {
+  const slug = String(section?.slug || '')
+  if (slug !== 'commercials' && slug !== 'sources') return false
+  const fieldSlugs = (section.fields || []).map((f) => f.slug)
+  return fieldSlugs.includes('source') || fieldSlugs.includes('rate') || fieldSlugs.includes('tax_gst')
+}
+
+// Repeatable section — compact table for commercials, cards otherwise
 function RepeatableSection({ section, rows, onRowChange, onAddRow, onRemoveRow, disabled, existingFiles }) {
-  const singular = section.name.replace(/s$/i, '') || section.name;
+  const singular = section.name.replace(/s$/i, '') || section.name
+  const compact = isCompactCommercialSection(section)
 
   return (
-    <div className="mf-repeat-section">
+    <div className={`mf-repeat-section${compact ? ' is-compact' : ''}`}>
       {rows.length === 0 ? (
         <div className="mf-repeat-empty">
           <p className="mf-repeat-empty-title">No {section.name.toLowerCase()} yet</p>
           <p className="mf-repeat-empty-desc">
             Add a {singular.toLowerCase()} using the same fields as a new record.
           </p>
+        </div>
+      ) : compact ? (
+        <div className="mf-commercial-table-wrap">
+          <table className="app-table mf-commercial-table">
+            <thead>
+              <tr>
+                <th className="col-sno">#</th>
+                {section.fields.map((field) => (
+                  <th key={field.id}>{field.label}</th>
+                ))}
+                <th aria-label="Remove" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIdx) => (
+                <tr key={rowIdx}>
+                  <td className="col-sno">{rowIdx + 1}</td>
+                  {section.fields.map((field) => (
+                    <td key={field.id}>
+                      <FieldInput
+                        field={field}
+                        value={row[field.slug]}
+                        onChange={(val) => onRowChange(section.slug, rowIdx, field.slug, val)}
+                        disabled={disabled}
+                        existingFile={existingFiles?.[rowIdx]?.[field.slug]}
+                      />
+                    </td>
+                  ))}
+                  <td>
+                    <button
+                      type="button"
+                      className="mf-icon-btn mf-danger"
+                      disabled={disabled}
+                      onClick={() => onRemoveRow(section.slug, rowIdx)}
+                      title={`Remove ${singular.toLowerCase()}`}
+                    >
+                      <X size={16} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : (
         <div className="mf-repeat-cards">
@@ -961,7 +1012,7 @@ export default function MasterForm({ slug, recordId, onSave, onCancel, variant }
 
       {/* Pill tab bar */}
       {sections.length > 1 && (
-        <div className="mrd-tab-bar" role="tablist">
+        <SlidingPillBar variant="brand" className="mrd-tab-bar" role="tablist">
           {sections.map((section, idx) => {
             const hasError = section.fields.some(
               f => errors[`${section.slug}__${f.slug}`]
@@ -985,7 +1036,7 @@ export default function MasterForm({ slug, recordId, onSave, onCancel, variant }
               </button>
             )
           })}
-        </div>
+        </SlidingPillBar>
       )}
 
       {/* Tab content */}

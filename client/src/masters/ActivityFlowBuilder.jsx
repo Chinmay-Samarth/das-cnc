@@ -3,33 +3,34 @@ import {
   ReactFlow,
   Background,
   Controls,
-  MiniMap,
   addEdge,
   useEdgesState,
   useNodesState,
   MarkerType,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { CirclePlay, GripVertical, History, Trash2, Workflow } from 'lucide-react';
 import api from '../api/client';
 import { appConfirm } from '../components/dialog';
-import { SkeletonForm } from '../components/mes';
+import {
+  AlertBanner,
+  EmptyState,
+  SkeletonForm,
+  SlidingPillBar,
+  StatusBadge,
+} from '../components/mes';
 import ActivityFlowNode from './ActivityFlowNode';
 import { ACTIVITY_TYPES, SCHEDULABLE_TYPES, getActivityTypeMeta } from './activityFlowTypes';
 import { formatDisplayDate } from '../utils/dateFormat';
 
 const nodeTypes = { activity: ActivityFlowNode };
 
-function StatusBadge({ status, revision }) {
-  const styles = {
-    draft: { background: '#f3f4f6', color: '#374151' },
-    active: { background: '#dcfce7', color: '#166534' },
-    retired: { background: '#fee2e2', color: '#991b1b' },
-  };
-  const style = styles[status] || styles.draft;
+function FlowStatusBadge({ status, revision }) {
+  if (!status) return null;
   return (
-    <span className="bom-status-badge" style={style}>
-      {status} · rev {revision}
-    </span>
+    <StatusBadge status={status}>
+      {status} · rev {revision ?? '—'}
+    </StatusBadge>
   );
 }
 
@@ -91,15 +92,14 @@ function WorkCenterSelect({ value, label, onChange, disabled }) {
   }, [open, search]);
 
   return (
-    <div ref={wrapRef} style={{ position: 'relative' }}>
+    <div ref={wrapRef} className="af-select">
       <button
         type="button"
         className="af-select-btn"
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        style={{color: 'black'}}
       >
-        {label || (value ? 'Selected work center' : 'Select work center...')}
+        {label || (value ? 'Selected work center' : 'Select work center…')}
       </button>
       {open && !disabled ? (
         <div className="af-dropdown">
@@ -108,8 +108,7 @@ function WorkCenterSelect({ value, label, onChange, disabled }) {
             autoFocus
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search..."
-
+            placeholder="Search…"
           />
           {options.map((o) => (
             <button
@@ -119,12 +118,11 @@ function WorkCenterSelect({ value, label, onChange, disabled }) {
                 onChange({ id: o.id, label: o.label });
                 setOpen(false);
               }}
-              style={{color: 'black'}}
             >
               {o.label}
             </button>
           ))}
-          {!options.length ? <p className="muted" style={{ padding: 8, margin: 0 }}>No results</p> : null}
+          {!options.length ? <p className="af-dropdown-empty">No results</p> : null}
         </div>
       ) : null}
     </div>
@@ -157,15 +155,14 @@ function SupplierSelect({ value, label, onChange, disabled }) {
   );
 
   return (
-    <div ref={wrapRef} style={{ position: 'relative' }}>
+    <div ref={wrapRef} className="af-select">
       <button
         type="button"
         className="af-select-btn"
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        style={{color: 'black'}}
       >
-        {label || (value ? 'Selected supplier' : 'Select supplier (optional)...')}
+        {label || (value ? 'Selected supplier' : 'Select supplier (optional)…')}
       </button>
       {open && !disabled ? (
         <div className="af-dropdown">
@@ -175,7 +172,6 @@ function SupplierSelect({ value, label, onChange, disabled }) {
               onChange({ id: null, label: '' });
               setOpen(false);
             }}
-            style={{color: 'black'}}
           >
             — None —
           </button>
@@ -187,7 +183,6 @@ function SupplierSelect({ value, label, onChange, disabled }) {
                 onChange({ id: s.id, label: s.name });
                 setOpen(false);
               }}
-              style={{color: 'black'}}
             >
               {s.name}
             </button>
@@ -228,7 +223,8 @@ function NodeInspector({ node, readOnly, saving, onSave, onDelete }) {
   if (!node || !form) {
     return (
       <div className="af-inspector-empty">
-        <p className="muted">Select a node to edit its properties.</p>
+        <Workflow size={22} strokeWidth={1.5} />
+        <p>Select a step on the canvas</p>
       </div>
     );
   }
@@ -276,12 +272,12 @@ function NodeInspector({ node, readOnly, saving, onSave, onDelete }) {
 
   return (
     <form className="af-inspector" onSubmit={handleSave}>
-      <div className="af-inspector-type" style={{ borderColor: meta.color }}>
+      <div className="af-inspector-type" style={{ '--af-node-accent': meta.color }}>
         {meta.label}
       </div>
 
-      <label>
-        <span className="employee-detail-label">Label</span>
+      <label className="af-field">
+        <span className="af-field-label">Label</span>
         <input
           value={form.label}
           onChange={(e) => setField('label', e.target.value)}
@@ -292,8 +288,8 @@ function NodeInspector({ node, readOnly, saving, onSave, onDelete }) {
 
       {needsWc ? (
         <>
-          <label>
-            <span className="employee-detail-label">Work center</span>
+          <label className="af-field">
+            <span className="af-field-label">Work center</span>
             <WorkCenterSelect
               value={form.work_center_id}
               label={form.work_center_label}
@@ -304,45 +300,50 @@ function NodeInspector({ node, readOnly, saving, onSave, onDelete }) {
               }}
             />
           </label>
-          <label>
-            <span className="employee-detail-label">Setup (min)</span>
-            <input
-              type="number"
-              min="0"
-              step="any"
-              value={form.setup_time_minutes}
-              onChange={(e) => setField('setup_time_minutes', e.target.value)}
-              disabled={readOnly || saving}
-            />
-          </label>
-          <label>
-            <span className="employee-detail-label">Run / unit (min)</span>
-            <input
-              type="number"
-              min="0"
-              step="any"
-              value={form.run_time_per_unit_minutes}
-              onChange={(e) => setField('run_time_per_unit_minutes', e.target.value)}
-              disabled={readOnly || saving}
-            />
-          </label>
-          <label>
-            <span className="employee-detail-label">Queue (min)</span>
-            <input
-              type="number"
-              min="0"
-              step="any"
-              value={form.queue_time_minutes}
-              onChange={(e) => setField('queue_time_minutes', e.target.value)}
-              disabled={readOnly || saving}
-            />
-          </label>
+          <div className="af-field-row">
+            <label className="af-field">
+              <span className="af-field-label">Setup</span>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={form.setup_time_minutes}
+                onChange={(e) => setField('setup_time_minutes', e.target.value)}
+                disabled={readOnly || saving}
+                placeholder="min"
+              />
+            </label>
+            <label className="af-field">
+              <span className="af-field-label">Run / unit</span>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={form.run_time_per_unit_minutes}
+                onChange={(e) => setField('run_time_per_unit_minutes', e.target.value)}
+                disabled={readOnly || saving}
+                placeholder="min"
+              />
+            </label>
+            <label className="af-field">
+              <span className="af-field-label">Queue</span>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={form.queue_time_minutes}
+                onChange={(e) => setField('queue_time_minutes', e.target.value)}
+                disabled={readOnly || saving}
+                placeholder="min"
+              />
+            </label>
+          </div>
         </>
       ) : null}
 
       {isInspection ? (
-        <label>
-          <span className="employee-detail-label">Inspection kind</span>
+        <label className="af-field">
+          <span className="af-field-label">Inspection kind</span>
           <select
             value={form.inspection_kind}
             onChange={(e) => setField('inspection_kind', e.target.value)}
@@ -357,8 +358,8 @@ function NodeInspector({ node, readOnly, saving, onSave, onDelete }) {
 
       {isOutsource ? (
         <>
-          <label>
-            <span className="employee-detail-label">Supplier</span>
+          <label className="af-field">
+            <span className="af-field-label">Supplier</span>
             <SupplierSelect
               value={form.supplier_id}
               label={form.supplier_label}
@@ -369,41 +370,39 @@ function NodeInspector({ node, readOnly, saving, onSave, onDelete }) {
               }}
             />
           </label>
-          <label>
-            <span className="employee-detail-label">
-              Lead time (days) <span style={{ color: '#b91c1c' }}>*</span>
-            </span>
-            <input
-              type="number"
-              min="0"
-              step="any"
-              value={form.lead_time_days}
-              onChange={(e) => setField('lead_time_days', e.target.value)}
-              disabled={readOnly || saving}
-              required
-            />
-          </label>
-          <label>
-            <span className="employee-detail-label">
-              Minimum components to send <span style={{ color: '#b91c1c' }}>*</span>
-            </span>
-            <input
-              type="number"
-              min="0.0001"
-              step="any"
-              value={form.min_ship_qty}
-              onChange={(e) => setField('min_ship_qty', e.target.value)}
-              disabled={readOnly || saving}
-              required
-            />
-          </label>
+          <div className="af-field-row">
+            <label className="af-field">
+              <span className="af-field-label">Lead days *</span>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={form.lead_time_days}
+                onChange={(e) => setField('lead_time_days', e.target.value)}
+                disabled={readOnly || saving}
+                required
+              />
+            </label>
+            <label className="af-field">
+              <span className="af-field-label">Min ship *</span>
+              <input
+                type="number"
+                min="0.0001"
+                step="any"
+                value={form.min_ship_qty}
+                onChange={(e) => setField('min_ship_qty', e.target.value)}
+                disabled={readOnly || saving}
+                required
+              />
+            </label>
+          </div>
         </>
       ) : null}
 
-      <label>
-        <span className="employee-detail-label">Notes</span>
+      <label className="af-field">
+        <span className="af-field-label">Notes</span>
         <textarea
-          rows={3}
+          rows={2}
           value={form.notes}
           onChange={(e) => setField('notes', e.target.value)}
           disabled={readOnly || saving}
@@ -413,15 +412,17 @@ function NodeInspector({ node, readOnly, saving, onSave, onDelete }) {
       {!readOnly ? (
         <div className="af-inspector-actions">
           <button type="submit" className="primary-button" disabled={saving}>
-            {saving ? 'Saving...' : 'Save'}
+            {saving ? 'Saving…' : 'Save'}
           </button>
           <button
             type="button"
-            className="neutral-button"
+            className="af-icon-danger"
             disabled={saving}
             onClick={() => onDelete(node.id)}
+            title="Delete node"
+            aria-label="Delete node"
           >
-            Delete node
+            <Trash2 size={16} />
           </button>
         </div>
       ) : null}
@@ -452,6 +453,8 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
   /** True while keyboard/API node delete is in flight — skip cascade edge DELETE calls */
   const deletingNodesRef = useRef(false);
   const [flowDeleteKeys, setFlowDeleteKeys] = useState(['Backspace', 'Delete']);
+  const [rfInstance, setRfInstance] = useState(null);
+  const [draggingType, setDraggingType] = useState(null);
 
   // Don't let Delete/Backspace remove canvas nodes while typing in the inspector
   useEffect(() => {
@@ -541,7 +544,7 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
     }
   }
 
-  async function handleAddType(activityType) {
+  async function handleAddType(activityType, position) {
     const ok = readOnly ? await ensureEditable() : true;
     if (!ok && readOnly) return;
 
@@ -552,8 +555,10 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
       const payload = {
         activity_type: activityType,
         label: meta.label,
-        position_x: 280,
-        position_y: 40 + apiNodes.length * 140,
+        position_x: Number.isFinite(position?.x) ? position.x : 280,
+        position_y: Number.isFinite(position?.y)
+          ? position.y
+          : 40 + apiNodes.length * 140,
       };
       if (activityType === 'outsource') {
         payload.lead_time_days = 1;
@@ -570,6 +575,38 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
     } finally {
       setSaving(false);
     }
+  }
+
+  function onPaletteDragStart(event, activityType) {
+    if (saving) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.setData('application/af-activity', activityType);
+    event.dataTransfer.effectAllowed = 'move';
+    setDraggingType(activityType);
+  }
+
+  function onPaletteDragEnd() {
+    setDraggingType(null);
+  }
+
+  function onCanvasDragOver(event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }
+
+  function onCanvasDrop(event) {
+    event.preventDefault();
+    setDraggingType(null);
+    const activityType = event.dataTransfer.getData('application/af-activity');
+    if (!activityType || saving) return;
+
+    const position = rfInstance?.screenToFlowPosition
+      ? rfInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      : { x: event.clientX, y: event.clientY };
+
+    handleAddType(activityType, position);
   }
 
   async function handleConnect(connection) {
@@ -805,122 +842,178 @@ export default function ActivityFlowBuilder({ slug, recordId }) {
     return <SkeletonForm embedded showHeader={false} />;
   }
 
+  const viewTab = showHistory ? 'history' : 'flow';
+
   return (
     <div className="af-builder">
       <div className="af-toolbar">
         <div className="af-toolbar-left">
-          <h2 style={{ margin: 0, fontSize: 18 }}>Activity Flow</h2>
+          <h2 className="af-title">Flow Chart</h2>
           {version ? (
-            <StatusBadge status={version.status} revision={version.revision} />
+            <FlowStatusBadge status={version.status} revision={version.revision} />
           ) : (
-            <span className="muted">No flow yet</span>
+            <span className="af-empty-chip">No flow yet</span>
           )}
-          {hasActive && version?.status === 'draft' ? (
-            <span className="muted" style={{ fontSize: 12 }}>Active version exists</span>
-          ) : null}
         </div>
+
         <div className="af-toolbar-right">
-          <button type="button" className="neutral-button" onClick={() => setShowHistory((v) => !v)}>
-            History
-          </button>
-          {!apiNodes.length ? (
-            <button type="button" className="neutral-button" onClick={handleSkeleton} disabled={saving}>
-              Insert skeleton
+          <SlidingPillBar className="mes-view-toggle" role="group" aria-label="Flow view">
+            <button
+              type="button"
+              className={`mes-view-toggle-btn${viewTab === 'flow' ? ' is-active' : ''}`}
+              onClick={() => setShowHistory(false)}
+            >
+              Flow
             </button>
-          ) : null}
-          {version?.status === 'draft' ? (
-            <button type="button" className="primary-button" onClick={handleActivate} disabled={saving}>
-              Activate
+            <button
+              type="button"
+              className={`mes-view-toggle-btn${viewTab === 'history' ? ' is-active' : ''}`}
+              onClick={() => setShowHistory(true)}
+            >
+              History
             </button>
-          ) : null}
-          {readOnly && version?.status === 'active' ? (
-            <button type="button" className="neutral-button" onClick={ensureEditable} disabled={saving}>
-              Edit (new draft)
-            </button>
+          </SlidingPillBar>
+
+          {!showHistory ? (
+            <div className="af-toolbar-actions">
+              {!apiNodes.length ? (
+                <button type="button" className="neutral-button" onClick={handleSkeleton} disabled={saving}>
+                  Insert skeleton
+                </button>
+              ) : null}
+              {version?.status === 'draft' ? (
+                <button type="button" className="primary-button" onClick={handleActivate} disabled={saving}>
+                  <CirclePlay size={16} />
+                  Activate
+                </button>
+              ) : null}
+              {readOnly && version?.status === 'active' ? (
+                <button type="button" className="neutral-button" onClick={ensureEditable} disabled={saving}>
+                  Edit draft
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </div>
       </div>
 
-      {error ? <p className="error-message">{error}</p> : null}
-
-      {showHistory ? (
-        <div className="bom-history-panel card" style={{ marginBottom: 16, padding: 12 }}>
-          <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>Revision History</h3>
-          {history.length === 0 ? (
-            <p className="muted" style={{ margin: 0 }}>No revisions yet.</p>
-          ) : (
-            <ul className="bom-history-list">
-              {history.map((rev) => (
-                <li key={rev.id}>
-                  <button type="button" className="bom-history-item" onClick={() => handleViewVersion(rev.id)}>
-                    <StatusBadge status={rev.status} revision={rev.revision} />
-                    <span className="muted" style={{ fontSize: 12 }}>
-                      {formatDate(rev.valid_from)} — {formatDate(rev.valid_to) || 'present'}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+      {error ? <AlertBanner tone="danger">{error}</AlertBanner> : null}
+      {hasActive && version?.status === 'draft' && !showHistory ? (
+        <AlertBanner tone="amber">
+          An active version is live. Activate this draft when ready to replace it.
+        </AlertBanner>
       ) : null}
 
-      <div className="af-workspace">
-        <aside className="af-palette">
-          <div className="af-palette-title">Activities</div>
-          {ACTIVITY_TYPES.map((t) => (
-            <button
-              key={t.value}
-              type="button"
-              className="af-palette-item"
-              style={{ borderLeftColor: t.color, color: 'black' }}
-              disabled={saving}
-              onClick={() => handleAddType(t.value)}
-              title={readOnly ? 'Will create a new draft' : 'Add to canvas'}
+      {showHistory ? (
+        <section className="af-history">
+          {history.length === 0 ? (
+            <EmptyState
+              icon={History}
+              title="No revisions yet"
+              description="Save and activate a flow to start revision history."
+            />
+          ) : (
+            <div className="af-history-list">
+              {history.map((rev) => (
+                <button
+                  key={rev.id}
+                  type="button"
+                  className={`af-history-row${rev.id === version?.id ? ' is-current' : ''}`}
+                  onClick={() => handleViewVersion(rev.id)}
+                >
+                  <div className="af-history-title-row">
+                    <strong>Revision {rev.revision}</strong>
+                    <FlowStatusBadge status={rev.status} revision={rev.revision} />
+                    {rev.id === version?.id ? <span className="af-history-current">Current</span> : null}
+                  </div>
+                  <span className="af-history-meta">
+                    {formatDate(rev.valid_from) || '—'} — {formatDate(rev.valid_to) || 'present'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : (
+        <>
+          <div className="af-add-row" role="group" aria-label="Drag activities onto canvas">
+            <span className="af-add-label">
+              <GripVertical size={14} />
+              Drag
+            </span>
+            <div className="af-add-chips">
+              {ACTIVITY_TYPES.map((t) => (
+                <div
+                  key={t.value}
+                  className={`af-chip${draggingType === t.value ? ' is-dragging' : ''}${saving ? ' is-disabled' : ''}`}
+                  style={{ '--af-chip-color': t.color }}
+                  draggable={!saving}
+                  onDragStart={(e) => onPaletteDragStart(e, t.value)}
+                  onDragEnd={onPaletteDragEnd}
+                  title={readOnly ? `Drag to canvas (creates a new draft)` : `Drag ${t.label} onto the canvas`}
+                >
+                  <GripVertical size={12} className="af-chip-grip" aria-hidden />
+                  {t.label}
+                </div>
+              ))}
+            </div>
+          </div>
 
+          <div className="af-workspace">
+            <div
+              className={`af-canvas-wrap${draggingType ? ' is-drop-target' : ''}`}
+              onDragOver={onCanvasDragOver}
+              onDrop={onCanvasDrop}
             >
-              {t.label}
-            </button>
-          ))}
-        </aside>
+              {!apiNodes.length ? (
+                <div className="af-canvas-empty">
+                  <EmptyState
+                    icon={Workflow}
+                    title="Drop activities here"
+                    description="Drag a task from above onto the canvas, or insert a starter skeleton."
+                    actionLabel="Insert skeleton"
+                    onAction={handleSkeleton}
+                  />
+                </div>
+              ) : null}
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={handleNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onNodesDelete={handleNodesDelete}
+                onEdgesDelete={handleEdgesDelete}
+                onSelectionChange={({ nodes: sel }) => {
+                  setSelectedNodeId(sel?.[0]?.id || null);
+                }}
+                onInit={setRfInstance}
+                nodeTypes={nodeTypes}
+                fitView
+                nodesDraggable={!readOnly}
+                nodesConnectable={!readOnly}
+                elementsSelectable
+                deleteKeyCode={readOnly ? null : flowDeleteKeys}
+                proOptions={{ hideAttribution: true }}
+              >
+                <Background gap={20} size={1} color="#e2e8f0" />
+                <Controls showInteractive={false} />
+              </ReactFlow>
+            </div>
 
-        <div className="af-canvas-wrap">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={handleNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodesDelete={handleNodesDelete}
-            onEdgesDelete={handleEdgesDelete}
-            onSelectionChange={({ nodes: sel }) => {
-              setSelectedNodeId(sel?.[0]?.id || null);
-            }}
-            nodeTypes={nodeTypes}
-            fitView
-            nodesDraggable={!readOnly}
-            nodesConnectable={!readOnly}
-            elementsSelectable
-            deleteKeyCode={readOnly ? null : flowDeleteKeys}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background gap={16} size={1} />
-            <Controls />
-            <MiniMap zoomable pannable />
-          </ReactFlow>
-        </div>
-
-        <aside className="af-inspector-panel">
-          <div className="af-palette-title">Inspector</div>
-          <NodeInspector
-            node={selectedNode}
-            readOnly={readOnly}
-            saving={saving}
-            onSave={handleSaveNode}
-            onDelete={handleDeleteNode}
-          />
-        </aside>
-      </div>
+            <aside className="af-inspector-panel">
+              <div className="af-panel-title">Properties</div>
+              <NodeInspector
+                node={selectedNode}
+                readOnly={readOnly}
+                saving={saving}
+                onSave={handleSaveNode}
+                onDelete={handleDeleteNode}
+              />
+            </aside>
+          </div>
+        </>
+      )}
     </div>
   );
 }

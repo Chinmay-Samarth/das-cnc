@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../auth/authContext';
-import { PageHeader, EmptyState, Skeleton } from '../components/mes';
+import { PageHeader, EmptyState, Skeleton, SlidingPillBar } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import { formatDisplayDate, formatDisplayDateTime } from '../utils/dateFormat';
 import { useSocket } from '../socket/socketContext';
@@ -51,6 +51,7 @@ const TYPE_META = {
   purchase_invoice_overdue: { icon: FileText, label: 'Purchase due', category: 'finance' },
   purchase_invoice_tally_unsynced: { icon: FileText, label: 'Purchase Tally sync', category: 'finance' },
   sales_invoice_tally_unsynced: { icon: FileText, label: 'Sales Tally sync', category: 'finance' },
+  rm_rate_increase: { icon: FileText, label: 'RM rate increase', category: 'finance' },
   op1_schedule_delay: { icon: Timer, label: 'Op1 delay', category: 'production' },
   outsource_lead_delay: { icon: Truck, label: 'Outsource delay', category: 'production' },
   horizon_wave_renewed: { icon: Waves, label: 'Wave renew', category: 'production' },
@@ -138,6 +139,14 @@ function tileSummary(n) {
   } else if (n.type === 'purchase_invoice_tally_unsynced' || n.type === 'sales_invoice_tally_unsynced') {
     const label = TYPE_META[n.type]?.label || 'Tally sync';
     line = supplier ? `${supplier} · ${label}` : label;
+  } else if (n.type === 'rm_rate_increase') {
+    const prev = p.previous_rate != null ? Number(p.previous_rate) : null;
+    const next = p.new_rate != null ? Number(p.new_rate) : null;
+    const rateBit =
+      Number.isFinite(prev) && Number.isFinite(next)
+        ? ` · ₹${prev} → ₹${next}`
+        : '';
+    line = supplier ? `${supplier} · RM rate up${rateBit}` : `RM rate increased${rateBit}`;
   } else if (n.type === 'insufficient_stock' || n.type === 'reorder_purchase_required' || n.type === 'predictive_reorder') {
     if (component && onHand !== '') {
       line = `${component} · ${onHand}${unit} left`;
@@ -241,6 +250,19 @@ function navigateForNotification(navigate, n) {
     return;
   }
   if (n.category === 'finance' || n.type === 'invoice_overdue') {
+    if (n.type === 'rm_rate_increase') {
+      if (p.href) {
+        navigate(p.href);
+        return;
+      }
+      const recordId = p.master_record_id;
+      navigate(
+        recordId
+          ? `/masters/raw-material/records/${recordId}?tab=commercials`
+          : '/masters/raw-material'
+      );
+      return;
+    }
     if (n.type === 'purchase_invoice_tally_unsynced') {
       const invId = p.invoice_id;
       navigate(invId ? `/invoices/${invId}` : '/invoices');
@@ -461,7 +483,8 @@ export default function NotificationsPage() {
       n.type === 'purchase_invoice_overdue' ||
       n.type === 'invoice_overdue' ||
       n.type === 'purchase_invoice_tally_unsynced' ||
-      n.type === 'sales_invoice_tally_unsynced';
+      n.type === 'sales_invoice_tally_unsynced' ||
+      n.type === 'rm_rate_increase';
     const isDue =
       n.type === 'purchase_invoice_overdue' || n.type === 'invoice_overdue';
 
@@ -608,7 +631,7 @@ export default function NotificationsPage() {
       ) : null}
 
       <div className="notif-toolbar">
-        <div className="mes-view-toggle" role="group" aria-label="Inbox tab">
+        <SlidingPillBar className="mes-view-toggle" role="group" aria-label="Inbox tab">
           <button
             type="button"
             className={`mes-view-toggle-btn${viewTab === 'unread' ? ' is-active' : ''}`}
@@ -630,8 +653,8 @@ export default function NotificationsPage() {
           >
             All
           </button>
-        </div>
-        <div className="mes-view-toggle" role="group" aria-label="Category filter">
+        </SlidingPillBar>
+        <SlidingPillBar className="mes-view-toggle" role="group" aria-label="Category filter">
           {[
             ['all', 'All types'],
             ['attendance', 'Attendance'],
@@ -648,7 +671,7 @@ export default function NotificationsPage() {
               {label}
             </button>
           ))}
-        </div>
+        </SlidingPillBar>
       </div>
 
       {error ? <p className="error-message">{error}</p> : null}

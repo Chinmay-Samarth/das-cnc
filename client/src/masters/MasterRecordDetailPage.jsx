@@ -1,17 +1,18 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import api from '../api/client'
 import ImageLightbox from '../components/shared/ImageLightBox'
 import InspectionPlanBuilder from './InspectionPlanBuilder'
 import BomBuilder from './BomBuilder'
 import ActivityFlowBuilder from './ActivityFlowBuilder'
+import RmCommercialRateTracker from './RmCommercialRateTracker'
 import { isInspectableMasterSlug } from './inspectableMasterSlugs'
 import { isStockableMasterSlug } from './stockableMasterSlugs'
 import { isBomsMasterSlug } from './bomsMasterSlugs'
 import { isRoutableMasterSlug } from './routableMasterSlugs'
 import { Pencil } from 'lucide-react'
 import { formatDisplayDate } from '../utils/dateFormat'
-import { SkeletonDetail, SkeletonList } from '../components/mes'
+import { PageHeader, SkeletonDetail, SkeletonList, SlidingPillBar } from '../components/mes'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -307,6 +308,7 @@ function getRecordTitle(schema, flatValues) {
 export default function MasterRecordDetailPage() {
   const { slug, id } = useParams()
   const navigate     = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const [schema,     setSchema]     = useState(null)
   const [flatValues, setFlatValues] = useState({})
@@ -333,11 +335,17 @@ export default function MasterRecordDetailPage() {
       setFlatValues(flat || {})
       setRepValues(repeatable || {})
 
+      const tabSlug = String(searchParams.get('tab') || '').trim()
+      if (tabSlug) {
+        const idx = (sections || []).findIndex((s) => s.slug === tabSlug)
+        if (idx >= 0) setActiveTab(idx)
+      }
+
       resolveRelationLabels(sections, flat || {}, repeatable || {})
     }).catch(err => {
       setError(err?.response?.data?.error || 'Failed to load record.')
     }).finally(() => setLoading(false))
-  }, [slug, id])
+  }, [slug, id, searchParams])
 
   async function resolveRelationLabels(sections, flat, repeatable) {
     const lookupCache = {}
@@ -427,125 +435,133 @@ export default function MasterRecordDetailPage() {
   const showRecordTabs       = showInspectionPlan || showStockTab || showBomsTab || showActivityFlowTab
   const recordTitle          = getRecordTitle(schema, flatValues)
 
+  const isCommercialsSection =
+    activeSection?.slug === 'commercials' || activeSection?.slug === 'sources'
+
   return (
-    <div className="mes-shell employee-shell">
+    <main className="mes-shell employee-shell mrd-page">
+      <PageHeader
+        title={recordTitle || master.name}
+        subtitle={`#${id.slice(0, 8)}`}
+        actions={
+          <button
+            type="button"
+            className="neutral-button"
+            onClick={() => navigate(`/masters/${slug}/records/${id}/edit`)}
+          >
+            <Pencil size={16} />
+            Edit
+          </button>
+        }
+      />
 
-      {/* ── Page header ── */}
-      <header className="app-header employee-card">
-        <div className="employee-title-block">
-          <div className="">
-            <h1 className="">{recordTitle || master.name}</h1>
-            <p className="muted">#{id.slice(0, 8)}</p>
-          </div>
-          <div className="employee-top-bar">
-            <button
-              type="button"
-              onClick={() => navigate(`/masters/${slug}/records/${id}/edit`)}
-              style={{ whiteSpace: 'nowrap' }}
-              className='neutral-button'
-            >
-              <Pencil size={16} style={{display: 'inline', marginRight:4}}/> Edit
-            </button>
-          </div>
+      {showRecordTabs || (pageTab === 'details' && sections.length > 1) ? (
+        <div className="mrd-pill-stack">
+          {showRecordTabs ? (
+            <SlidingPillBar variant="brand" className="mrd-tab-bar mrd-tab-bar-primary">
+              <button
+                type="button"
+                className={`mrd-tab${pageTab === 'details' ? ' is-active' : ''}`}
+                onClick={() => setPageTab('details')}
+              >
+                Details
+              </button>
+              {showInspectionPlan ? (
+                <button
+                  type="button"
+                  className={`mrd-tab${pageTab === 'inspection-plan' ? ' is-active' : ''}`}
+                  onClick={() => setPageTab('inspection-plan')}
+                >
+                  Inspection Plan
+                </button>
+              ) : null}
+              {showStockTab ? (
+                <button
+                  type="button"
+                  className={`mrd-tab${pageTab === 'stock' ? ' is-active' : ''}`}
+                  onClick={() => setPageTab('stock')}
+                >
+                  Stock
+                </button>
+              ) : null}
+              {showBomsTab ? (
+                <button
+                  type="button"
+                  className={`mrd-tab${pageTab === 'boms' ? ' is-active' : ''}`}
+                  onClick={() => setPageTab('boms')}
+                >
+                  BOMs
+                </button>
+              ) : null}
+              {showActivityFlowTab ? (
+                <button
+                  type="button"
+                  className={`mrd-tab${pageTab === 'activity-flow' ? ' is-active' : ''}`}
+                  onClick={() => setPageTab('activity-flow')}
+                >
+                  Flow Chart
+                </button>
+              ) : null}
+            </SlidingPillBar>
+          ) : null}
+
+          {pageTab === 'details' && sections.length > 1 ? (
+            <SlidingPillBar variant="slate" className="mrd-tab-bar mrd-tab-bar-secondary" role="tablist">
+              {sections.map((section, idx) => (
+                <button
+                  key={section.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === idx}
+                  className={`mrd-tab${activeTab === idx ? ' is-active' : ''}`}
+                  onClick={() => setActiveTab(idx)}
+                >
+                  {section.name}
+                  {section.is_repeatable ? (
+                    <span className="mrd-tab-count">
+                      {(repValues[section.slug] || []).length}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </SlidingPillBar>
+          ) : null}
         </div>
-
-        {showRecordTabs ? (
-          <div className="mrd-tab-bar" style={{ marginTop: 12 }}>
-            <button
-              type="button"
-              className={`mrd-tab${pageTab === 'details' ? ' is-active' : ''}`}
-              onClick={() => setPageTab('details')}
-            >
-              Details
-            </button>
-            {showInspectionPlan ? (
-              <button
-                type="button"
-                className={`mrd-tab${pageTab === 'inspection-plan' ? ' is-active' : ''}`}
-                onClick={() => setPageTab('inspection-plan')}
-              >
-                Inspection Plan
-              </button>
-            ) : null}
-            {showStockTab ? (
-              <button
-                type="button"
-                className={`mrd-tab${pageTab === 'stock' ? ' is-active' : ''}`}
-                onClick={() => setPageTab('stock')}
-              >
-                Stock
-              </button>
-            ) : null}
-            {showBomsTab ? (
-              <button
-                type="button"
-                className={`mrd-tab${pageTab === 'boms' ? ' is-active' : ''}`}
-                onClick={() => setPageTab('boms')}
-              >
-                BOMs
-              </button>
-            ) : null}
-            {showActivityFlowTab ? (
-              <button
-                type="button"
-                className={`mrd-tab${pageTab === 'activity-flow' ? ' is-active' : ''}`}
-                onClick={() => setPageTab('activity-flow')}
-              >
-                Flow Chart
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-
-          {pageTab === 'details' && sections.length > 1 && (
-          <div className="mrd-tab-bar" role="tablist">
-            {sections.map((section, idx) => (
-              <button
-                key={section.id}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === idx}
-                className={`mrd-tab${activeTab === idx ? ' is-active' : ''}`}
-                onClick={() => setActiveTab(idx)}
-              >
-                {section.name}
-                {section.is_repeatable && (
-                  <span className="mrd-tab-count">
-                    {(repValues[section.slug] || []).length}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-        )}
-      </header>
+      ) : null}
 
       {pageTab === 'inspection-plan' ? (
-        <div className="card" style={{ marginTop: 0 }}>
+        <div className="card mrd-panel mrd-panel-insp">
           <InspectionPlanBuilder slug={slug} recordId={id} />
         </div>
       ) : pageTab === 'boms' ? (
-        <div className="card" style={{ marginTop: 0 }}>
+        <div className="card mrd-panel">
           <BomBuilder slug={slug} recordId={id} recordTitle={recordTitle} />
         </div>
       ) : pageTab === 'activity-flow' ? (
-        <div className="card" style={{ marginTop: 0 }}>
+        <div className="card mrd-panel mrd-panel-af">
           <ActivityFlowBuilder slug={slug} recordId={id} />
         </div>
       ) : pageTab === 'stock' ? (
-        <div className="card" style={{ marginTop: 0 }}>
+        <div className="card mrd-panel">
           <div className="mrd-section-title">Stock</div>
           <MasterRecordStockTab recordId={id} />
         </div>
       ) : activeSection ? (
-        <div className="card" style={{ marginTop: 0 }}>
+        <div className="card mrd-panel">
           <div className="mrd-section-title">{activeSection.name}</div>
-          {activeSection.is_repeatable
-            ? <RepeatableSectionView section={activeSection} repeatableValues={repValues} />
-            : <FlatSectionView       section={activeSection} flatValues={flatValues} />
-          }
+          {isCommercialsSection && slug === 'raw-material' ? (
+            <RmCommercialRateTracker
+              slug={slug}
+              recordId={id}
+              repeatableRows={repValues[activeSection.slug] || []}
+            />
+          ) : activeSection.is_repeatable ? (
+            <RepeatableSectionView section={activeSection} repeatableValues={repValues} />
+          ) : (
+            <FlatSectionView section={activeSection} flatValues={flatValues} />
+          )}
         </div>
       ) : null}
-    </div>
+    </main>
   )
 }

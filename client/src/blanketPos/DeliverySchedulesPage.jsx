@@ -19,6 +19,7 @@ import {
   EmptyState,
   TruncatedText,
   SkeletonList,
+  SlidingPillBar,
 } from '../components/mes';
 
 const STATUS_OPTIONS = [
@@ -347,7 +348,7 @@ export default function DeliverySchedulesPage() {
         title="Delivery Schedules"
         actions={
           <>
-            <div className="mes-view-toggle" role="group" aria-label="View mode">
+            <SlidingPillBar className="mes-view-toggle" role="group" aria-label="View mode">
               <button
                 type="button"
                 className={`mes-view-toggle-btn${view === 'list' ? ' is-active' : ''}`}
@@ -364,7 +365,7 @@ export default function DeliverySchedulesPage() {
                 <CalendarDays size={16} />
                 Calendar
               </button>
-            </div>
+            </SlidingPillBar>
             <button
               type="button"
               className="mes-btn mes-btn-secondary"

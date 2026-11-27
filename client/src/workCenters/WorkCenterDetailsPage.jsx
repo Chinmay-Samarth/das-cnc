@@ -22,6 +22,7 @@ import {
   StatusBadge,
   TruncatedText,
   SkeletonDetail,
+  SlidingPillBar,
 } from '../components/mes';
 
 function initials(name) {
@@ -434,7 +435,7 @@ export default function WorkCenterDetailsPage() {
           </div>
         </div>
 
-        <div className="pill-tabs">
+        <SlidingPillBar variant="brand" className="pill-tabs">
           <button
             type="button"
             className={`pill-tab ${tab === 'details' ? 'pill-tab-active' : ''}`}
@@ -462,7 +463,7 @@ export default function WorkCenterDetailsPage() {
               <span style={{ marginLeft: 6, opacity: 0.75 }}>({operators.length})</span>
             ) : null}
           </button>
-        </div>
+        </SlidingPillBar>
       </header>
 
       <section className="card employee-main">

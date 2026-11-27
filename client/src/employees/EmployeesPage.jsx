@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Download, UserPlus } from 'lucide-react';
 import api from '../api/client';
-import { ListPage, EmptyState } from '../components/mes';
+import { ListPage, EmptyState, SlidingPillBar } from '../components/mes';
 import { appAlert, appConfirm } from '../components/dialog';
 import { sortBy, getVisiblePages } from '../utils/listHelpers';
 
@@ -152,7 +152,7 @@ export default function EmployeesPage() {
       loading={loading}
       filters={
         <div className="employees-actions">
-          <div className="mes-view-toggle" role="group" aria-label="Employee status">
+          <SlidingPillBar className="mes-view-toggle" role="group" aria-label="Employee status">
             {[
               { id: 'active', label: 'Active' },
               { id: 'inactive', label: 'Inactive' },
@@ -167,7 +167,7 @@ export default function EmployeesPage() {
                 {opt.label}
               </button>
             ))}
-          </div>
+          </SlidingPillBar>
           <input
             type="search"
             placeholder="Search employees..."

@@ -26,6 +26,7 @@ import {
   StatusBadge,
   ShopCardPrintDialog,
   GirnTagSheet,
+  SlidingPillBar,
 } from '../components/mes';
 
 const fmt = (val) =>
@@ -930,7 +931,7 @@ export default function GIRNDetailPage() {
         }
       />
 
-      <div className="mes-view-toggle" role="tablist" aria-label="GIRN sections">
+      <SlidingPillBar className="mes-view-toggle" role="tablist" aria-label="GIRN sections">
         {[
           { id: 'overview', label: 'Overview' },
           { id: 'items', label: `Items${items.length ? ` (${items.length})` : ''}` },
@@ -953,7 +954,7 @@ export default function GIRNDetailPage() {
             {t.label}
           </button>
         ))}
-      </div>
+      </SlidingPillBar>
 
       <section className="mes-card form-card">
         {actionError ? <AlertBanner tone="danger">{actionError}</AlertBanner> : null}

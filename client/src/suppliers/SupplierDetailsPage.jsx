@@ -10,6 +10,7 @@ import {
   FormActions,
   SkeletonDetail,
   SkeletonList,
+  SlidingPillBar,
 } from '../components/mes';
 import { appAlert } from '../components/dialog';
 import {
@@ -340,7 +341,7 @@ export default function SupplierDetailsPage() {
           </div>
         </div>
 
-        <div className='pill-tabs'>
+        <SlidingPillBar variant="brand" className='pill-tabs'>
           <button
             type="button"
             className={`pill-tab ${tab === 'details' ? 'pill-tab-active' : ''}`}
@@ -365,7 +366,7 @@ export default function SupplierDetailsPage() {
           >
             Invoices
           </button>
-        </div>
+        </SlidingPillBar>
       </header>
 
       <section className="card employee-main">
