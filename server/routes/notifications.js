@@ -1,10 +1,9 @@
 /**
- * Notifications API — Admin (MD) inbox
+ * Notifications API — Admin inbox with per-user ledgers
  */
 
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const { createClient } = require('@supabase/supabase-js');
 const {
   evaluateAttendanceAlerts,
   getNotificationSettings,
@@ -21,13 +20,16 @@ const { evaluateProductionAlerts } = require('../services/productionAlertEngine'
 const { evaluateReorderAlerts } = require('../services/reorderAlertEngine');
 const { isAdminUser } = require('../utils/accessLevel');
 const { purgeOpenedNotifications } = require('../services/notificationPurgeEngine');
+const {
+  listNotificationsForUser,
+  unreadCountForUser,
+  setUserNotificationStatus,
+  markAllUnreadReadForUser,
+  deleteOpenedForUser,
+} = require('../services/notificationLedger');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-env';
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
 
 function verifyEmployeeAuth(req, res, next) {
   try {
@@ -43,8 +45,11 @@ function verifyEmployeeAuth(req, res, next) {
 }
 
 function isAdmin(user) {
-  // JWT carries access_level; job_description may be "Managing Director" etc.
   return isAdminUser(user);
+}
+
+function employeeId(user) {
+  return user?.sub || null;
 }
 
 function wrap(fn) {
@@ -70,12 +75,7 @@ router.get(
     if (!isAdmin(req.user)) {
       return res.json({ count: 0 });
     }
-    const { count, error } = await supabase
-      .from('notifications')
-      .select('id', { count: 'exact', head: true })
-      .eq('audience', 'admin')
-      .eq('status', 'unread');
-    if (error) throw error;
+    const count = await unreadCountForUser(employeeId(req.user));
     res.json({ count: count || 0 });
   })
 );
@@ -99,9 +99,8 @@ router.put(
     }
     const settings = await updateNotificationSettings(
       { attendance_pct_threshold: req.body?.attendance_pct_threshold },
-      req.user?.sub || null
+      employeeId(req.user)
     );
-    // Re-run eval so new threshold can create alerts promptly
     try {
       await evaluateAttendanceAlerts();
     } catch (err) {
@@ -145,24 +144,13 @@ router.get(
       return res.status(403).json({ error: 'Admin access required' });
     }
 
-    let query = supabase
-      .from('notifications')
-      .select('*')
-      .eq('audience', 'admin')
-      .order('priority', { ascending: true })
-      .order('created_at', { ascending: false })
-      .limit(Math.min(200, Number(req.query.limit) || 100));
-
-    if (req.query.category) query = query.eq('category', req.query.category);
-    if (req.query.priority) query = query.eq('priority', Number(req.query.priority));
-    if (req.query.status === 'unread') query = query.eq('status', 'unread');
-    else if (req.query.status === 'read') query = query.eq('status', 'read');
-    else if (req.query.status === 'dismissed') query = query.eq('status', 'dismissed');
-    else query = query.in('status', ['unread', 'read']); // hide dismissed by default
-
-    const { data, error } = await query;
-    if (error) throw error;
-    res.json({ notifications: data || [] });
+    const notifications = await listNotificationsForUser(employeeId(req.user), {
+      status: req.query.status || undefined,
+      category: req.query.category || undefined,
+      priority: req.query.priority || undefined,
+      limit: Number(req.query.limit) || 100,
+    });
+    res.json({ notifications });
   })
 );
 
@@ -172,15 +160,8 @@ router.post(
     if (!isAdmin(req.user)) {
       return res.status(403).json({ error: 'Admin access required' });
     }
-    const now = new Date().toISOString();
-    const { data, error } = await supabase
-      .from('notifications')
-      .update({ status: 'read', read_at: now })
-      .eq('audience', 'admin')
-      .eq('status', 'unread')
-      .select('id');
-    if (error) throw error;
-    res.json({ updated: (data || []).length });
+    const result = await markAllUnreadReadForUser(employeeId(req.user));
+    res.json(result);
   })
 );
 
@@ -193,18 +174,12 @@ router.post(
     if (!isValidUUID(req.params.id)) {
       return res.status(400).json({ error: 'Invalid notification id' });
     }
-    const now = new Date().toISOString();
-    const { data, error } = await supabase
-      .from('notifications')
-      .update({ status: 'read', read_at: now })
-      .eq('id', req.params.id)
-      .eq('audience', 'admin')
-      .neq('status', 'dismissed')
-      .select('*')
-      .maybeSingle();
-    if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Notification not found' });
-    res.json({ notification: data });
+    const notification = await setUserNotificationStatus(
+      employeeId(req.user),
+      req.params.id,
+      'read'
+    );
+    res.json({ notification });
   })
 );
 
@@ -217,17 +192,12 @@ router.post(
     if (!isValidUUID(req.params.id)) {
       return res.status(400).json({ error: 'Invalid notification id' });
     }
-    const now = new Date().toISOString();
-    const { data, error } = await supabase
-      .from('notifications')
-      .update({ status: 'dismissed', dismissed_at: now, read_at: now })
-      .eq('id', req.params.id)
-      .eq('audience', 'admin')
-      .select('*')
-      .maybeSingle();
-    if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Notification not found' });
-    res.json({ notification: data });
+    const notification = await setUserNotificationStatus(
+      employeeId(req.user),
+      req.params.id,
+      'dismissed'
+    );
+    res.json({ notification });
   })
 );
 
@@ -246,21 +216,15 @@ router.post(
   })
 );
 
-/** Permanently delete every opened (read) notification in the admin inbox. */
+/** Clear this admin's opened (read) items from their personal ledger only. */
 router.post(
   '/delete-opened',
   wrap(async (req, res) => {
     if (!isAdmin(req.user)) {
       return res.status(403).json({ error: 'Admin access required' });
     }
-    const { data, error } = await supabase
-      .from('notifications')
-      .delete()
-      .eq('audience', 'admin')
-      .eq('status', 'read')
-      .select('id');
-    if (error) throw error;
-    res.json({ deleted: (data || []).length });
+    const result = await deleteOpenedForUser(employeeId(req.user));
+    res.json(result);
   })
 );
 

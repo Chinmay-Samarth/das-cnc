@@ -1,5 +1,6 @@
 /**
  * Shared insert helper for persisted admin notifications (dedupe by key).
+ * User read/dismiss lives in notification_user_states (see notificationLedger.js).
  */
 
 const { createClient } = require('@supabase/supabase-js');
@@ -20,9 +21,22 @@ function todayYmd(tz = TZ) {
   }).format(new Date());
 }
 
+async function resetLedgers(notificationIds) {
+  try {
+    const { resetUserStatesForNotificationIds } = require('./notificationLedger');
+    await resetUserStatesForNotificationIds(notificationIds);
+  } catch (err) {
+    // Table may not exist until migration is applied — don't break alert eval.
+    if (!/notification_user_states|does not exist|42P01/i.test(String(err.message || ''))) {
+      throw err;
+    }
+  }
+}
+
 /**
  * Insert if dedupe_key does not already exist (any status).
- * Once dismissed, same key will not re-fire until period key changes.
+ * Once dismissed at master level (business resolved), same key will not re-fire
+ * unless a new insert is allowed after that row is gone.
  */
 async function ensureNotification(row) {
   const { data: existing, error: exErr } = await supabase
@@ -61,6 +75,7 @@ async function ensureNotification(row) {
 /**
  * One logical alert that reappears once per calendar day until the business
  * condition clears (e.g. invoice paid). Use a stable dedupe_key without a date.
+ * Daily refresh clears per-user ledgers so every admin sees it unread again.
  */
 async function ensureDailyRecurringNotification(row, { today = todayYmd() } = {}) {
   const payload = { ...(row.payload || {}), nag_date: today };
@@ -99,31 +114,11 @@ async function ensureDailyRecurringNotification(row, { today = todayYmd() } = {}
   }
 
   const lastNag = existing.payload?.nag_date || null;
-
-  if (existing.status === 'unread') {
-    if (lastNag !== today) {
-      const { error: upErr } = await supabase
-        .from('notifications')
-        .update({
-          title: row.title,
-          body: row.body,
-          payload,
-          severity: row.severity || 'warning',
-          priority: Number.isFinite(Number(row.priority)) ? Number(row.priority) : 2,
-        })
-        .eq('id', existing.id);
-      if (upErr) throw upErr;
-      return { created: false, refreshed: true, id: existing.id, status: 'unread' };
-    }
+  if (lastNag === today && existing.status !== 'dismissed') {
     return { created: false, id: existing.id, status: existing.status };
   }
 
-  // Read or dismissed — bring back once per day until paid / cleared.
-  if (lastNag === today) {
-    return { created: false, id: existing.id, status: existing.status };
-  }
-
-  const { error: reviveErr } = await supabase
+  const { error: upErr } = await supabase
     .from('notifications')
     .update({
       status: 'unread',
@@ -136,9 +131,17 @@ async function ensureDailyRecurringNotification(row, { today = todayYmd() } = {}
       dismissed_at: null,
     })
     .eq('id', existing.id);
-  if (reviveErr) throw reviveErr;
+  if (upErr) throw upErr;
 
-  return { created: true, revived: true, id: existing.id, status: 'unread' };
+  await resetLedgers([existing.id]);
+
+  return {
+    created: true,
+    revived: existing.status !== 'unread' || lastNag !== today,
+    refreshed: true,
+    id: existing.id,
+    status: 'unread',
+  };
 }
 
 /**
@@ -151,6 +154,7 @@ async function dismissNotificationsForKeys(keys = []) {
 
   const now = new Date().toISOString();
   let updated = 0;
+  const ids = [];
 
   for (const key of list) {
     const { data: exact, error: exactErr } = await supabase
@@ -161,8 +165,8 @@ async function dismissNotificationsForKeys(keys = []) {
       .select('id');
     if (exactErr) throw exactErr;
     updated += (exact || []).length;
+    for (const row of exact || []) ids.push(row.id);
 
-    // Legacy daily keys: purchase_invoice_overdue:<id>:YYYY-MM-DD
     const { data: dated, error: datedErr } = await supabase
       .from('notifications')
       .update({ status: 'dismissed', dismissed_at: now, read_at: now })
@@ -171,7 +175,10 @@ async function dismissNotificationsForKeys(keys = []) {
       .select('id');
     if (datedErr) throw datedErr;
     updated += (dated || []).length;
+    for (const row of dated || []) ids.push(row.id);
   }
+
+  if (ids.length) await resetLedgers(ids);
 
   return { updated };
 }
